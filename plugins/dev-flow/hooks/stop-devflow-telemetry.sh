@@ -80,6 +80,11 @@ PER_KEY_TELEMETRY_KEYS=(
 )
 per_key_keys_json=$(printf '%s\n' "${PER_KEY_TELEMETRY_KEYS[@]}" | jq -R . | jq -sc .)
 
+# passthrough は null 値を落とすが、ここに挙げたキーは null も JSON null として記録する。
+# plugin_commit（skills#785）: null は「取得を試みて決められなかった」で、キー欠落（#785 以前の entry）と区別する
+PASSTHROUGH_NULLABLE_KEYS=(plugin_commit)
+nullable_keys_json=$(printf '%s\n' "${PASSTHROUGH_NULLABLE_KEYS[@]}" | jq -R . | jq -sc .)
+
 # Process each *.json in pending dir
 for f in "${PENDING_DIR}"/*.json; do
   # No files matched (glob literal returned)
@@ -158,8 +163,8 @@ for f in "${PENDING_DIR}"/*.json; do
     eval_confidence: ((.telemetry // {}) | if has("eval_confidence") then (.eval_confidence | tojson) else null end),
     review_confidence: ((.telemetry // {}) | if has("review_confidence") then (.review_confidence | tojson) else null end),
     review_decision: .telemetry.review_decision,
-    passthrough_telemetry: ((.telemetry // {}) | with_entries(select((.value != null) and ((.key as $k | $perkey | index($k)) == null))))
-  }' --argjson perkey "$per_key_keys_json" "$claimed" 2>/dev/null); then
+    passthrough_telemetry: ((.telemetry // {}) | with_entries(select(((.value != null) or ((.key as $k | $nullable | index($k)) != null)) and ((.key as $k | $perkey | index($k)) == null))))
+  }' --argjson perkey "$per_key_keys_json" --argjson nullable "$nullable_keys_json" "$claimed" 2>/dev/null); then
     # JSON parse error
     mkdir -p "${PENDING_DIR}/malformed"
     mv "$claimed" "${PENDING_DIR}/malformed/$(basename "$f")"
