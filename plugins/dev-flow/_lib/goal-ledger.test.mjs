@@ -2,7 +2,7 @@ import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import {
   makeLedger, topicKey, canAppend, appendItem,
-  checkItem, nextRound, setCheck, triageItem, setFinalResolution,
+  checkItem, nextRound, setCheck, triageItem, setFinalResolution, reopenItem,
 } from './goal-ledger.mjs';
 import { gateLane, DEFAULT_GATE_POLICY } from './gate-policy.mjs';
 
@@ -157,10 +157,11 @@ test('setFinalResolution: enum 外 resolution は throw', () => {
   assert.throws(() => setFinalResolution(ledger, 'A', 'partially', 'e'), /不正な final_resolution/);
 });
 
-test('U2: 単調不可逆性（checked を true→false に戻す経路が無い）', () => {
+test('U2: 単調不可逆性（決定論 item の checked を true→false に戻す経路が無い）', () => {
   let { ledger } = appendItem(makeLedger(), { id: 'AC-1', text: 'a', dimension: 'ac', severity: 'major', source: 'ac', check: { kind: 'inspection' } });
   ledger = setCheck(ledger, 'AC-1', { kind: 'deterministic' });
   const l1 = checkItem(ledger, 'AC-1', 'red→green 実証: t.test.mjs');
+  assert.throws(() => reopenItem(l1, 'AC-1', 'x'), /決定論 item "AC-1" は reopen しない/);
 
   // checkItem を別 evidence で再適用しても checked/check.kind は保持され evidence のみ変わる
   const l1b = checkItem(l1, 'AC-1', '別の evidence');
@@ -175,4 +176,23 @@ test('U2: 単調不可逆性（checked を true→false に戻す経路が無い
   const { ledger: l3 } = appendItem(roundedLedger, { id: 'X', text: 'a', dimension: 'ac', severity: 'critical', source: 'evaluator', check: { kind: 'inspection' } });
   const item3 = l3.items.find((i) => i.id === 'AC-1');
   assert.equal(item3.checked, true); // merge しても checked は false に戻らない
+});
+
+test('reopenItem: LLM 判断で checked の item を未解消に戻し、evidence を差し替える（元 ledger は不変）', () => {
+  let { ledger } = appendItem(makeLedger(), { id: 'EVAL-1-X', text: 'x', dimension: 'quality', severity: 'critical', source: 'evaluator', check: { kind: 'inspection' } });
+  ledger = checkItem(ledger, 'EVAL-1-X', '取り消し済み');
+  const reopened = reopenItem(ledger, 'EVAL-1-X', '再検証で不成立');
+  const it = reopened.items.find((i) => i.id === 'EVAL-1-X');
+  assert.equal(it.checked, false);
+  assert.equal(it.evidence, '再検証で不成立');
+  assert.equal(ledger.items[0].checked, true);
+  // critical は reopen 後もどの policy でも blocking（未 checked のため収束しない）
+  assert.equal(gateLane(it, DEFAULT_GATE_POLICY), 'blocking');
+});
+
+test('reopenItem: seed（SEC / TESTSURF）は reopen しない（throw）', () => {
+  let { ledger } = appendItem(makeLedger(), { id: 'SEC-AUTH', text: 'auth', dimension: 'security', severity: 'critical', source: 'seed', check: { kind: 'deterministic' } });
+  ledger = checkItem(ledger, 'SEC-AUTH', 'clean');
+  assert.throws(() => reopenItem(ledger, 'SEC-AUTH', 'x'), /決定論 item "SEC-AUTH" は reopen しない/);
+  assert.throws(() => reopenItem(ledger, 'NOPE', 'x'), /未知の item id "NOPE"/);
 });

@@ -52,6 +52,21 @@ export function checkItem(ledger, id, evidence) {
   return { ...ledger, items };
 }
 
+// reopenItem: LLM 判断で checked になった item の解消根拠が、後の変更（post-eval green-fix / pr-iterate fix）で
+// 崩れた・確かめられなかったときに未解消へ戻す。gate を厳しくする方向にだけ動く。決定論で checked になった
+// item（seed / check.kind:'deterministic'）は最終 tree の決定論再判定が担うので戻さない（呼ぶと throw）。
+export function reopenItem(ledger, id, evidence) {
+  const idx = ledger.items.findIndex((it) => it.id === id);
+  if (idx < 0) throw new Error(`goal-ledger: 未知の item id "${id}"`);
+  const it = ledger.items[idx];
+  if (it.source === 'seed' || (it.check && it.check.kind === 'deterministic')) {
+    throw new Error(`goal-ledger: 決定論 item "${id}" は reopen しない`);
+  }
+  const items = ledger.items.slice();
+  items[idx] = { ...it, checked: false, evidence: evidence ?? null };
+  return { ...ledger, items };
+}
+
 // triaged: evaluator が「再検証済み・対応不要」と判断した item に付ける表示専用フラグ（issue #614）。
 // checked / evidence は変えない（ゲート・収束・merge tier・lane 分類の入力にならない）。
 export function triageItem(ledger, id, evidence) {

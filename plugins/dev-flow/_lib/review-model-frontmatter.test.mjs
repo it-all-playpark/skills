@@ -6,7 +6,7 @@
 // だけ（call site 別の挙動は impl-model-opus.test.mjs が pin）。本ファイルの静的検査は品質ゲート agent の call 行に限定する。
 //
 //   (a) DEV_FLOW_SCENARIOS 全 scenario + baseline で観測される pr-reviewer call は opts に `model` キーを持たない
-//   (b) 同じ観測範囲で evaluator call（eval#i / final-ac-reconcile / security-clearance-final）も `model` キーを持たない
+//   (b) 同じ観測範囲で evaluator call（eval#i / eval-green-fix / final-ac-reconcile / security-clearance-final）も `model` キーを持たない
 //   (c) pr-iterate.js の pr-reviewer call（review#i / schema-retry）も `model` キーを持たない
 //   (d) telemetry の review_model_config / eval_model_config / impl_model_config リテラルは各 agent の frontmatter の
 //       model と一致し、journal 経路（dev-flow: 失敗 / 成功 / abort、pr-iterate: 終端 / abort）全てに載る。
@@ -81,9 +81,9 @@ test('[review-model] (b) dev-flow.js: 全 scenario の evaluator call は opts �
   assert.ok(evaluator.length > 0, 'evaluator call が 1 件も観測されない');
   const withModel = evaluator.filter((c) => c.opts && 'model' in c.opts);
   assert.deepEqual(withModel.map((c) => `${c.scenario}:${c.label}=${c.model}`), [], 'evaluator call に model キーが残っている');
-  // 3 call site（eval#i / final-ac-reconcile / security-clearance-final）が観測範囲に含まれること
+  // 4 call site（eval#i / eval-green-fix / final-ac-reconcile / security-clearance-final）が観測範囲に含まれること
   const labels = new Set(evaluator.map((c) => c.label.replace(/#\d+$/, '#i')));
-  for (const l of ['eval#i', 'final-ac-reconcile', 'security-clearance-final']) {
+  for (const l of ['eval#i', 'eval-green-fix', 'final-ac-reconcile', 'security-clearance-final']) {
     assert.ok(labels.has(l), `evaluator call site '${l}' が scenario 集合で観測されない（到達 scenario を追加する）`);
   }
 });
@@ -129,7 +129,7 @@ test('[review-model] (e) 両 workflow の evaluator / pr-reviewer の call site 
     assert.deepEqual(hits, [], `${name}: 品質ゲート agent の call に model が残っている`);
   }
   const evaluatorHits = devFlowSrc.split('\n').filter((l) => l.includes("agentType: 'evaluator'"));
-  assert.equal(evaluatorHits.length, 3, 'evaluator call site は 3 箇所のはず');
+  assert.equal(evaluatorHits.length, 4, 'evaluator call site は 4 箇所のはず');
   // model override を持つ call は dev-implementer（IMPL_AGENT）の call 行だけ
   const modelHits = devFlowSrc.split('\n').filter((l) => /\bagentType:\s*'/.test(l) && /\bmodel:/.test(l));
   assert.deepEqual(modelHits, [], 'dev-flow.js: 文字列 agentType の call 行に model が残っている（model override は IMPL_AGENT の call 行に限る）');
