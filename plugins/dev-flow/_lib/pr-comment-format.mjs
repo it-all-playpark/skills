@@ -91,9 +91,10 @@ function formatCiLastStatusLine(ciLastStatus, ciLastFailedChecks, pr) {
  * @param {number} [opts.ciPollAttempts] - CI ステータス取得の累積ポーリング回数（任意）
  * @param {string|null} [opts.ciLastStatus] - 最後に観測した CI 状態 'passed' | 'failed' | 'pending' | 'no_checks' | 'error' | null（未観測）
  * @param {string[]} [opts.ciLastFailedChecks] - ciLastStatus が failed のとき列挙する check 名
+ * @param {Array} [opts.humanFollowups] - worktree の外を指すとして fix から外した blocking finding（severity, file, line, description, suggestion, iter）
  * @returns {string}
  */
-export function buildTerminalSummaryBody({ pr, status, iterations, lastDecision, lastSummary, lastVerificationEvidence, history, ciWaitSeconds, ciPollAttempts, ciLastStatus = null, ciLastFailedChecks = [] }) {
+export function buildTerminalSummaryBody({ pr, status, iterations, lastDecision, lastSummary, lastVerificationEvidence, history, ciWaitSeconds, ciPollAttempts, ciLastStatus = null, ciLastFailedChecks = [], humanFollowups = [] }) {
   const DECISION_EMOJI = { 'approve': '✅', 'request-changes': '🔴', 'comment': '💬' };
   const lines = [];
 
@@ -154,6 +155,16 @@ export function buildTerminalSummaryBody({ pr, status, iterations, lastDecision,
     lines.push(...formatFindingsList(allBlocking, { withIter: true }));
     lines.push('');
     lines.push('</details>');
+  }
+
+  // 人間側 follow-up: worktree の外を指すとして fix から外した blocking 指摘（issue #793）。自動修正しないので
+  // 折りたたまずに出す。空なら 1 行も足さない。
+  const followups = (humanFollowups || []).filter((f) => f != null);
+  if (followups.length > 0) {
+    lines.push('');
+    lines.push(`### 👤 人間側 follow-up（worktree の外を指す指摘 — 自動修正の対象外・${followups.length} 件）`);
+    lines.push('');
+    lines.push(...formatFindingsList(followups, { withIter: followups.every((f) => f.iter != null) }));
   }
 
   const allMinor = histList.flatMap((r) => (r.minor ?? []).map((f) => ({ iter: r.iteration, ...f })));

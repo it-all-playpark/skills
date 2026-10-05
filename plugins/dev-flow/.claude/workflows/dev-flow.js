@@ -901,8 +901,10 @@ const AC_ACTORS = ['agent', 'human']
 
 const AGENT_AC_REIMPL_MAX = 2
 
+const EXPLICIT_HUMAN_RE = /[（(]\s*人手\s*[)）]/
+
 const HUMAN_AC_PATTERNS = [
-  /[（(]\s*人手\s*[)）]/,
+  EXPLICIT_HUMAN_RE,
   /staging|ステージング/i,
   /本番/,
   /\bprod(uction)?\s*(環境|environment)/i,
@@ -912,13 +914,110 @@ const HUMAN_AC_PATTERNS = [
 
 const INLINE_CODE_RE = /\x60[^\x60]*\x60/g
 
-function classifyAcActor(ac) {
-  const text = String(ac ?? '').replace(INLINE_CODE_RE, ' ')
-  return HUMAN_AC_PATTERNS.some((re) => re.test(text)) ? 'human' : 'agent'
+const AC_SCOPES = ['repo', 'external', 'mixed']
+
+const EXTERNAL_AC_PATTERNS = [
+  { re: /dotfiles/gi, ownedBy: 'dotfiles' },
+  { re: /excludedCommands/g, ownedBy: 'dotfiles' },
+  { re: /settings(\.local)?\.json/g, ownedBy: 'dotfiles' },
+  { re: /~\/\.claude\b/g, ownedBy: null },
+  { re: /(別|他|ほか)の?\s*(repo|リポジトリ)/gi, ownedBy: null },
+]
+
+const CLAUSE_SEP_RE = /[、，,。．；;—–\n]/g
+
+const MENTION_CLAUSE_PATTERNS = [
+  /(が|は|も)\s*(無|な)い/,
+  /[てで]いない/,
+  /しない|せず/,
+  /不要/,
+  /含ま(ない|ず)|を含む行/,
+  /(^|[^\d])0\s*(箇所|件|個|行)|ヒット\s*0/,
+  /必要(なら|に?なった場合|な場合|があれば)/,
+  /記述|言及|理由(として|に)/,
+  /\bgrep\b/i,
+]
+
+const REPO_REF_RE = /github\.com\/([\w.-]+\/[\w.-]+)|(?:^|[^\w./-])([A-Za-z0-9][\w.-]*\/[A-Za-z0-9][\w.-]*)#\d+/g
+
+const REPO_AC_PATTERNS = [
+  /テスト|\btests?\b|vitest|\bbats\b|fixture/i,
+  /README|AGENTS\.md|ドキュメント/,
+  /\brules\b|ルール/,
+  /(repo|リポジトリ|worktree)\s*内/i,
+  /(^|[\s\x60(（、「])(plugins|tools|src|lib|_lib|tests|scripts|docs|\.claude|\.github)[/]/,
+]
+
+function normalizeRepoSlug(s) {
+  return String(s ?? '').trim().toLowerCase().replace(/\.git$/, '')
 }
 
-function acActorsOf(acceptanceCriteria) {
-  return (Array.isArray(acceptanceCriteria) ? acceptanceCriteria : []).map(classifyAcActor)
+function mentionRanges(text) {
+  const ranges = []
+  let start = 0
+  const push = (end) => {
+    const clause = text.slice(start, end)
+    if (MENTION_CLAUSE_PATTERNS.some((re) => re.test(clause))) ranges.push([start, end])
+  }
+  for (const m of text.matchAll(CLAUSE_SEP_RE)) {
+    push(m.index)
+    start = m.index + m[0].length
+  }
+  push(text.length)
+  return ranges
+}
+
+function splitExternalMarkers(ac, repo) {
+  const src = String(ac ?? '')
+  const mentions = mentionRanges(src)
+  const inMention = (off) => mentions.some(([s, e]) => off >= s && off < e)
+  const self = normalizeRepoSlug(repo)
+  const selfName = self.includes('/') ? self.split('/')[1] : ''
+  const markers = []
+  let text = src
+  for (const { re, ownedBy } of EXTERNAL_AC_PATTERNS) {
+    text = text.replace(re, (m, ...args) => {
+      const off = args[args.length - 2]
+      const owned = ownedBy !== null && ownedBy === selfName
+      if (!owned && !inMention(off)) markers.push(m)
+      return ' '.repeat(m.length)
+    })
+  }
+  text = text.replace(REPO_REF_RE, (m, urlSlug, refSlug, off) => {
+    const slug = normalizeRepoSlug(urlSlug ?? refSlug)
+    if (!self || slug === self) return m
+    if (!inMention(off)) markers.push(slug)
+    return ' '.repeat(m.length)
+  })
+  return { rest: text, markers }
+}
+
+function classifyAcScope(ac, opts = {}) {
+  const { rest, markers } = splitExternalMarkers(ac, opts?.repo)
+  if (markers.length === 0) return 'repo'
+  if (!REPO_AC_PATTERNS.some((re) => re.test(rest))) return 'external'
+  return EXPLICIT_HUMAN_RE.test(String(ac ?? '').replace(INLINE_CODE_RE, ' ')) ? 'external' : 'mixed'
+}
+
+function classifyAcActor(ac, opts = {}) {
+  const text = String(ac ?? '').replace(INLINE_CODE_RE, ' ')
+  if (HUMAN_AC_PATTERNS.some((re) => re.test(text))) return 'human'
+  return classifyAcScope(ac, opts) === 'external' ? 'human' : 'agent'
+}
+
+function acActorsOf(acceptanceCriteria, opts = {}) {
+  return (Array.isArray(acceptanceCriteria) ? acceptanceCriteria : []).map((ac) => classifyAcActor(ac, opts))
+}
+
+function mixedScopeAcReasons(acceptanceCriteria, opts = {}) {
+  const acs = Array.isArray(acceptanceCriteria) ? acceptanceCriteria : []
+  const reasons = []
+  acs.forEach((ac, i) => {
+    if (classifyAcScope(ac, opts) !== 'mixed') return
+    const { markers } = splitExternalMarkers(ac, opts?.repo)
+    reasons.push(`AC-${i + 1}「${String(ac)}」は repo 内の作業と repo 外の作業（${[...new Set(markers)].join(' / ')}）が混ざっている — dev-flow は 1 issue = 1 PR・単一 worktree で repo 外の作業を満たせない。この AC を repo 内の AC と repo 外の AC に分割し、repo 外の AC には（人手）と明記してから再起動せよ`)
+  })
+  return reasons
 }
 
 function unsatisfiedAcByActor(acResults, actors) {
@@ -2189,6 +2288,8 @@ function buildDevflowSummaryBody({
   disclosures,
   changedFiles,
   baseFailingTests,
+  humanFollowups,
+  outOfScope,
 }) {
   const EVAL_STALENESS_VALUES = ['none', 'hash_mismatch', 'hash_reconverged', 'iterate_incomplete', 'iterate_fixed'];
   if (evalStaleness != null && !EVAL_STALENESS_VALUES.includes(evalStaleness)) {
@@ -2647,6 +2748,33 @@ function buildDevflowSummaryBody({
         idx++;
       }
     }
+  }
+
+  const followups = Array.isArray(humanFollowups) ? humanFollowups.filter((f) => f != null) : [];
+  if (followups.length > 0) {
+    const SEV_LABEL_FOLLOWUP = { 'critical': '🔴 critical', 'major': '🟠 major', 'minor': '🟡 minor' };
+    lines.push('');
+    lines.push(`### 👤 人間側 follow-up（worktree の外を指す指摘 — 自動修正の対象外・${followups.length} 件）`);
+    lines.push('');
+    followups.forEach((f, i) => {
+      const sev = SEV_LABEL_FOLLOWUP[f.severity] ?? String(f.severity ?? '不明');
+      const loc = (f.file != null && f.file !== '')
+        ? (f.line != null ? `\`${f.file}:${f.line}\`` : `\`${f.file}\``)
+        : '場所指定なし';
+      lines.push(`${i + 1}. ${sev} — ${loc}`);
+      lines.push(`   - 指摘: ${mdCell(f.description)}`);
+      if (f.suggestion != null && f.suggestion !== '') {
+        lines.push(`   - 提案: ${mdCell(f.suggestion)}`);
+      }
+    });
+  }
+
+  const outOfScopeItems = Array.isArray(outOfScope) ? outOfScope.filter((s) => typeof s === 'string' && s.trim().length > 0) : [];
+  if (outOfScopeItems.length > 0) {
+    lines.push('');
+    lines.push('### この PR に含めなかったもの');
+    lines.push('');
+    for (const s of outOfScopeItems) lines.push(`- ${mdCell(s)}`);
   }
 
   if (lines[lines.length - 1] !== '') lines.push('');
@@ -3314,6 +3442,9 @@ const IMPL = {
         properties: { section: { type: 'string', enum: ['verification', 'measurement'] }, text: { type: 'string' } },
       },
     },
+    // issue 本文が挙げたが AC 外・worktree 外として実施しなかった作業（1 項目 1 文）。PR 本文と終端サマリーの
+    // 「この PR に含めなかったもの」に転記する — concerns に書いただけでは人間の目に届かないため。
+    out_of_scope: { type: 'array', items: { type: 'string' } },
     epoch: { type: 'number' },
   },
 }
@@ -3962,6 +4093,8 @@ const PR_BODY_DECISION_MAX = 120;
 const PR_BODY_HIT_ITEMS_MAX = 5;
 const PR_BODY_NOTES_MAX = 5;
 const PR_BODY_NOTE_MAX = 240;
+const PR_BODY_OUT_OF_SCOPE_MAX = 5;
+const PR_BODY_OUT_OF_SCOPE_ITEM_MAX = 200;
 const PR_BODY_MAX_CHARS = 3500;
 const PR_BODY_HIT_PATH_MAX = 80;
 const PR_BODY_AC_MIN = 40;
@@ -4021,6 +4154,7 @@ const PR_NOTE_LABELS = { verification: '検証', measurement: '計測' };
 function adoptImplPrNotes(plan, results) {
   const decisions = [];
   const notes = [];
+  const outOfScope = [];
   for (const r of arr(results)) {
     for (const d of arr(r?.design_decisions)) {
       const title = collapseWhitespace(d?.title);
@@ -4030,12 +4164,26 @@ function adoptImplPrNotes(plan, results) {
       const text = collapseWhitespace(n?.text);
       if (text && PR_NOTE_SECTIONS.includes(n?.section)) notes.push({ section: n.section, text });
     }
+    for (const o of arr(r?.out_of_scope)) {
+      const text = collapseWhitespace(o);
+      if (text && !outOfScope.includes(text)) outOfScope.push(text);
+    }
   }
   return {
     ...plan,
     ...(decisions.length ? { architecture_decisions: decisions } : {}),
     ...(notes.length ? { pr_notes: notes } : {}),
+    ...(outOfScope.length ? { out_of_scope: outOfScope } : {}),
   };
+}
+
+const PR_BODY_OUT_OF_SCOPE_HEADING = '## この PR に含めなかったもの';
+function outOfScopeSection(plan) {
+  const all = arr(plan?.out_of_scope).map(collapseWhitespace).filter(Boolean);
+  if (all.length === 0) return null;
+  const shown = all.slice(0, PR_BODY_OUT_OF_SCOPE_MAX).map((t) => clip(`- ${t}`, PR_BODY_OUT_OF_SCOPE_ITEM_MAX));
+  const excess = all.length - shown.length;
+  return excess > 0 ? `${shown.join('\n')}\n（他 ${excess} 件）` : shown.join('\n');
 }
 
 function noteLines(plan) {
@@ -4075,12 +4223,14 @@ function buildPrBody({ issue, req, plan, ledger, testsurfHits, dangerHits, acRes
       hitLine('test-surface', arr(testsurfHits), (h) => h?.pattern, hitPathMax),
       ...noteLines(plan),
     ].join('\n');
+    const outOfScope = outOfScopeSection(plan);
     const sections = [
       conclusionLine,
       `## 変更\n${changeSection(plan)}`,
       `## 受入条件\n${acceptanceSection(req, ledger, acResults, acMax)}`,
       `## 設計判断\n${decisionsSection(plan)}`,
       `## 検証\n${verify}`,
+      ...(outOfScope ? [`${PR_BODY_OUT_OF_SCOPE_HEADING}\n${outOfScope}`] : []),
       `Closes #${issue}`,
     ];
     return sections.join('\n\n') + '\n';
@@ -4730,7 +4880,7 @@ const UI_VERIFY_CONFIG_PROMPT = `cd ${WT} で作業。${WT}/skill-config.json �
   + `"dev-flow" キー配下の "ui_verify" object を探せ。見つかれば {"found":true,"config":<その object を verbatim>}、`
   + `どちらにも無ければ {"found":false,"config":null} を返せ。値の解釈・補完・生成はするな。`
 
-// clarifyPrompt: Setup 末尾の analyze ゲート（AC 空 / comment_conflicts 非空 / uncertain 非空）が引いたときにだけ
+// clarifyPrompt: Setup 末尾の analyze ゲート（AC 空 / comment_conflicts 非空 / uncertain 非空 / repo 内外が混ざった AC）が引いたときにだけ
 // sonnet（dev-runner）を 1 spawn し、決定論のゲート理由を人間が答えられる質問文（missing_context）へ
 // 書き起こさせる。要件抽出・AC 抽出・issue 転写はさせない（REQ は args.setup.analyze から決定論構成済み。
 // ここで LLM に issue を読み直させて要件を再構成すると、転写事故（title / AC / comment の読み落とし・捏造）に
@@ -4738,7 +4888,7 @@ const UI_VERIFY_CONFIG_PROMPT = `cd ${WT} で作業。${WT}/skill-config.json �
 const clarifyPrompt = (gateReasons) => `cd ${WT} で作業。issue #${ISSUE} は決定論の analyze（analyze-issue --contract + Jev 有界判定）で次の理由により実装に進めないと判定された。\n`
   + `\`Skill: dev-issue-analyze ${ISSUE}${REPO ? ' --repo ' + REPO : ''} --depth comprehensive\` を実行して issue の本文・comments を読み、`
   + `各理由について**人間（issue 作成者）が issue body を直せば解消する具体的な質問文**を missing_context:string[] として返せ（理由 1 件につき 1〜2 文、日本語）。`
-  + `質問には「body のどの記述と comment のどの記述が食い違うか」「後方互換を保たない API / 形式の変更の有無と既存データの変換の要否をどこに明記すべきか」「受け入れ基準をどの見出し形式で書くか」を含めよ。`
+  + `質問には「body のどの記述と comment のどの記述が食い違うか」「後方互換を保たない API / 形式の変更の有無と既存データの変換の要否をどこに明記すべきか」「受け入れ基準をどの見出し形式で書くか」「repo 内外が混ざった AC をどう repo 内の AC と repo 外の AC に分けるか」を含めよ。`
   + `質問文にも記入例にも breaking / incompatible / migration / 破壊的 / 非互換 の語を使うな（人間が body にその語を書くと analyze-issue のキーワード判定が再び Jev 判定を要求する）。`
   + `要件・受け入れ基準を自分で推測して埋めるな。issue の再取得は Skill 経由の 1 回のみ。\n`
   + `ゲート理由（決定論。verbatim で参照し、削除・要約するな）:\n${JSON.stringify(gateReasons)}\n`
@@ -4746,7 +4896,7 @@ const clarifyPrompt = (gateReasons) => `cd ${WT} で作業。issue #${ISSUE} は
 
 // ------------------------------------------------------------
 // Setup 末尾: analyze ゲート。args.setup.analyze（dev-flow-prerun の analyze 段 = analyze-issue --contract +
-// Jev 有界判定、deps install と並列）を whitelist 検証して REQ を組み、3 条件ゲートだけを判定する。
+// Jev 有界判定、deps install と並列）を whitelist 検証して REQ を組み、4 条件ゲートだけを判定する。
 // 通常経路の agent spawn は 0。LLM が issue を転写する工程が無いので provenance 突合 / comment_count 突合 /
 // scope 切断時の再実行は置かない。固有の phase は持たない（純関数の検証とゲート判定だけで agent 応答（epoch）が
 // 無く、所要は常に ≒0）。prerun の analyze 段の所要は prerun_durations.analyze に載せる。
@@ -4769,7 +4919,8 @@ if (!req) {
 }
 // AC ごとの actor（'agent' | 'human'。_lib/ac-actor.mjs）。analyze ゲートで AC と一緒に freeze し、Evaluate の
 // 差し戻し（agent AC の未達だけ）と Merge tier の HOLD 理由（取りこぼし / 人手待ち）を分ける。
-req.ac_actors = acActorsOf(req.acceptance_criteria)
+// repo 外の作業だけを書いた AC は human、repo 内外が混ざった AC は下の analyze ゲートで止める。
+req.ac_actors = acActorsOf(req.acceptance_criteria, { repo: REPO })
 if (req.ac_actors.includes('human')) log(`analyze: 人手 AC ${req.ac_actors.filter((a) => a === 'human').length} 件（AC-${req.ac_actors.map((a, i) => a === 'human' ? i + 1 : null).filter((n) => n != null).join(', AC-')}）— 未達でも差し戻さず Merge tier の人手 AC 待ちへ回す`)
 // analyze 経路（log 表示用）: ANALYZE_PATH は 'contract' | 'jev'。
 // ANALYZE_INELIGIBLE_REASON は Jev に回した理由（prerun の jev_reasons を '; ' 結合。contract 経路は null）。
@@ -4802,17 +4953,21 @@ if (blockedReasons.length) {
   }
 }
 
-// 3 条件ゲート（AC 空 / comment_conflicts 非空 / uncertain 非空）。引いたときだけ sonnet を 1 spawn して
-// 人間向け missing_context を生成し、needs_clarification で終端する（isolation-probe / 実装 agent の spawn 0）。
+// 4 条件ゲート（AC 空 / comment_conflicts 非空 / uncertain 非空 / repo 内外が混ざった AC）。引いたときだけ sonnet を
+// 1 spawn して人間向け missing_context を生成し、needs_clarification で終端する（isolation-probe / 実装 agent の spawn 0）。
+// 混ざった AC は 1 issue = 1 PR・単一 worktree では満たせず、Evaluate 後に agent AC の取りこぼしと誤分類されるため、
+// 実装前に AC の分割を求める。
 const gateReasons = analyzeGateReasons(req)
+const mixedAcReasons = mixedScopeAcReasons(req.acceptance_criteria, { repo: REPO })
+gateReasons.push(...mixedAcReasons)
 if (gateReasons.length) {
-  log(`⚠️ analyze: ゲート（AC 空=${req.acceptance_criteria.length === 0} / comment_conflicts=${req.comment_conflicts.length} / uncertain=${req.uncertain.length}）— sonnet で missing_context を生成して needs_clarification で中断`)
+  log(`⚠️ analyze: ゲート（AC 空=${req.acceptance_criteria.length === 0} / comment_conflicts=${req.comment_conflicts.length} / uncertain=${req.uncertain.length} / repo 内外混在 AC=${mixedAcReasons.length}）— sonnet で missing_context を生成して needs_clarification で中断`)
   const clarify = await failOpenAgent(clarifyPrompt(gateReasons), { agentType: 'dev-runner', schema: CLARIFY, label: `analyze-clarify#${ISSUE}`, phase: 'Setup' })
   const strList = (v) => Array.isArray(v) ? v.filter((s) => typeof s === 'string' && s.trim().length > 0) : []
   const clarified = strList(clarify?.missing_context)
   if (!clarified.length) log('⚠️ analyze: missing_context 生成が null / 空 — ゲート理由をそのまま人間へ返す（fail-open）')
   const missingContext = clarified.length ? clarified.concat(gateReasons) : gateReasons
-  const journalLogStatus = await writeFailureTelemetry({ error_category: 'needs_clarification', error_msg: `analyze: ゲート（AC 空=${req.acceptance_criteria.length === 0} / comment_conflicts=${req.comment_conflicts.length} / uncertain=${req.uncertain.length}）で中断（source=analyze）`, phase: 'Setup' })
+  const journalLogStatus = await writeFailureTelemetry({ error_category: 'needs_clarification', error_msg: `analyze: ゲート（AC 空=${req.acceptance_criteria.length === 0} / comment_conflicts=${req.comment_conflicts.length} / uncertain=${req.uncertain.length} / repo 内外混在 AC=${mixedAcReasons.length}）で中断（source=analyze）`, phase: 'Setup' })
   return {
     status: 'needs_clarification',
     source: 'analyze',
@@ -6874,6 +7029,8 @@ const summaryBody = buildDevflowSummaryBody({
   disclosures: mergeTier.disclosures ?? [],
   changedFiles: changed?.files ?? [],
   baseFailingTests: state.baseFailing.env,
+  humanFollowups: iterate?.human_followups ?? null,
+  outOfScope: state.plan?.out_of_scope ?? null,
 })
 // 終端サマリーコメント投稿: bodySaveInstr で body を worktree の .devflow-tmp/ 固定パスへ保存し
 // gh pr comment --body-file を bare 単文で投稿する。投稿失敗は posted:false で fail-open だが、

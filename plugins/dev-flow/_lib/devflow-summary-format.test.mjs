@@ -2982,3 +2982,22 @@ test('baseFailingTests: 空・未指定ならテスト欄も参考セクショ�
     assert.ok(!body.includes('base でも失敗する既存の失敗'));
   }
 });
+
+// issue #793: 範囲外にした作業（out_of_scope）と人間側 follow-up（pr-iterate が worktree 外として fix から外した指摘）
+test('outOfScope: 非空なら「この PR に含めなかったもの」節に各項目をそのまま出し、空・欠落なら byte 一致', () => {
+  const body = buildDevflowSummaryBody({ ...BASE_INPUT, outOfScope: ['telemetry キーの削除（AC 外）', '  ', 'a|b'] });
+  assert.ok(body.includes('### この PR に含めなかったもの\n\n- telemetry キーの削除（AC 外）\n- a\\|b'), body);
+  for (const outOfScope of [undefined, null, [], ['']]) {
+    assert.equal(buildDevflowSummaryBody({ ...BASE_INPUT, outOfScope }), buildDevflowSummaryBody(BASE_INPUT));
+  }
+});
+
+test('humanFollowups: 非空なら「人間側 follow-up」節に severity・場所・指摘・提案を出し、空・欠落なら byte 一致', () => {
+  const body = buildDevflowSummaryBody({ ...BASE_INPUT, humanFollowups: [
+    { iter: 1, severity: 'major', topic: 'out', file: '~/dotfiles/settings.json', line: 4, description: '許可が無い', suggestion: '人間が足す' },
+  ] });
+  assert.ok(body.includes('### 👤 人間側 follow-up（worktree の外を指す指摘 — 自動修正の対象外・1 件）\n\n1. 🟠 major — `~/dotfiles/settings.json:4`\n   - 指摘: 許可が無い\n   - 提案: 人間が足す'), body);
+  for (const humanFollowups of [undefined, null, []]) {
+    assert.equal(buildDevflowSummaryBody({ ...BASE_INPUT, humanFollowups }), buildDevflowSummaryBody(BASE_INPUT));
+  }
+});

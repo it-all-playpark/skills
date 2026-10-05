@@ -107,6 +107,8 @@ export const PR_BODY_DECISION_MAX = 120;
 export const PR_BODY_HIT_ITEMS_MAX = 5;
 export const PR_BODY_NOTES_MAX = 5;
 export const PR_BODY_NOTE_MAX = 240;
+export const PR_BODY_OUT_OF_SCOPE_MAX = 5;
+export const PR_BODY_OUT_OF_SCOPE_ITEM_MAX = 200;
 export const PR_BODY_MAX_CHARS = 3500;
 // PR_BODY_MAX_CHARS 超過時に buildPrBody が決定論的に詰める順序と刻み（issue #665）:
 // 1. hit item の file path を PR_BODY_HIT_PATH_MAX まで clip
@@ -182,9 +184,12 @@ const PR_NOTE_LABELS = { verification: '検証', measurement: '計測' };
 // 1 回の Implement / reimpl の結果内では連結し、非空なら前回分を置き換える（差し戻し後の報告を最新とする）。
 // 空なら前回分を保持する — 差し戻しが別の指摘だけを直した場合に、先に返した計測値を本文から落とさないため。
 // title / text が空の項目と section が enum 外の項目は捨てる。
+// out_of_scope（[string]。issue 本文にあるが AC 外・worktree 外として実施しなかった作業）も同じ規則で
+// plan.out_of_scope に取り込み、PR body と終端サマリーの「この PR に含めなかったもの」の材料にする（issue #793）。
 export function adoptImplPrNotes(plan, results) {
   const decisions = [];
   const notes = [];
+  const outOfScope = [];
   for (const r of arr(results)) {
     for (const d of arr(r?.design_decisions)) {
       const title = collapseWhitespace(d?.title);
@@ -194,12 +199,28 @@ export function adoptImplPrNotes(plan, results) {
       const text = collapseWhitespace(n?.text);
       if (text && PR_NOTE_SECTIONS.includes(n?.section)) notes.push({ section: n.section, text });
     }
+    for (const o of arr(r?.out_of_scope)) {
+      const text = collapseWhitespace(o);
+      if (text && !outOfScope.includes(text)) outOfScope.push(text);
+    }
   }
   return {
     ...plan,
     ...(decisions.length ? { architecture_decisions: decisions } : {}),
     ...(notes.length ? { pr_notes: notes } : {}),
+    ...(outOfScope.length ? { out_of_scope: outOfScope } : {}),
   };
+}
+
+// `## この PR に含めなかったもの` セクション本文（plan.out_of_scope が空なら null = セクションごと出さない）。
+// 先頭 PR_BODY_OUT_OF_SCOPE_MAX 件を `- <text>` で clip、超過分は `（他 N 件）` 1 行。
+export const PR_BODY_OUT_OF_SCOPE_HEADING = '## この PR に含めなかったもの';
+function outOfScopeSection(plan) {
+  const all = arr(plan?.out_of_scope).map(collapseWhitespace).filter(Boolean);
+  if (all.length === 0) return null;
+  const shown = all.slice(0, PR_BODY_OUT_OF_SCOPE_MAX).map((t) => clip(`- ${t}`, PR_BODY_OUT_OF_SCOPE_ITEM_MAX));
+  const excess = all.length - shown.length;
+  return excess > 0 ? `${shown.join('\n')}\n（他 ${excess} 件）` : shown.join('\n');
 }
 
 // `## 検証` に足す pr_notes 行: 先頭 PR_BODY_NOTES_MAX 件を `- 計測: ...` / `- 検証: ...` で clip、超過分は
@@ -235,7 +256,8 @@ function hitLine(label, hits, keyOf, pathMax = Infinity) {
 }
 
 // PR body: 結論1行 / 変更(component別) / 受入条件(checkbox) / 設計判断(≤5件) / 検証(hit + pr_notes ≤5件) /
-// Closes #<issue> の 6 セクション固定構成。各セクションは PR_BODY_* 定数で決定論 clip する
+// Closes #<issue> の 6 セクション固定構成（plan.out_of_scope が非空のときだけ Closes の前に
+// `## この PR に含めなかったもの` を足す）。各セクションは PR_BODY_* 定数で決定論 clip する
 // （issue #661。旧 `## 要約` 無制限 verbatim + `## 変更 task` table 構成を置き換え）。
 // acResults（[{ac_index, satisfied}]）が指定されればチェック判定に優先利用する。
 // 組み立て後の総長が PR_BODY_MAX_CHARS を超えたら (1) hit item の file path を
@@ -253,12 +275,14 @@ export function buildPrBody({ issue, req, plan, ledger, testsurfHits, dangerHits
       hitLine('test-surface', arr(testsurfHits), (h) => h?.pattern, hitPathMax),
       ...noteLines(plan),
     ].join('\n');
+    const outOfScope = outOfScopeSection(plan);
     const sections = [
       conclusionLine,
       `## 変更\n${changeSection(plan)}`,
       `## 受入条件\n${acceptanceSection(req, ledger, acResults, acMax)}`,
       `## 設計判断\n${decisionsSection(plan)}`,
       `## 検証\n${verify}`,
+      ...(outOfScope ? [`${PR_BODY_OUT_OF_SCOPE_HEADING}\n${outOfScope}`] : []),
       `Closes #${issue}`,
     ];
     return sections.join('\n\n') + '\n';

@@ -2,6 +2,7 @@
 //   (A) 「ローカルで測って PR 本文に書く」型の agent AC が satisfied:false → standard でも reimpl#1 が走り、
 //       fix_feedback に AC-1 未達が載る。reimpl が返した pr_notes / design_decisions が PR 本文に載り、再評価で満たせば HOLD しない
 //   (B) `（人手）` の AC だけが未達 → 差し戻さず HOLD（ac_human_pending = 人手 AC 待ち）
+//   (B2) repo 外の作業だけを書いた AC（dotfiles 等）が未達 → (B) と同じく人手 AC 待ち（issue #793）
 //   (C) agent AC が差し戻し上限後も未達 → HOLD（ac_agent_unsatisfied = 取りこぼし）。返り値で actor 別に数えられる
 
 import { test } from 'vitest';
@@ -110,6 +111,15 @@ test('[agent-ac-reimpl] (B) （人手）の AC だけが未達 → 差し戻さ�
   const { result, calls } = await run([CODE_AC, HUMAN_AC], { 'eval#1': evalWith([true, false]) });
   assert.equal(reimplCalls(calls).length, 0, `人手 AC で差し戻した: ${calls.map((c) => c.label).join(', ')}`);
   assert.equal(evalCalls(calls).length, 1);
+  assert.equal(result?.merge_tier, 'HOLD');
+  assert.deepEqual(plain(result.merge_tier_hold_reasons.map((r) => r.code)), ['ac_human_pending']);
+  assert.deepEqual(plain(result.final_unsatisfied_ac_by_actor), { agent: [], human: [1] });
+});
+
+test('[agent-ac-reimpl] (B2) repo 外の作業だけを書いた AC が未達 → 人手 AC として差し戻さず HOLD（エージェント AC 未達に数えない）', async () => {
+  const EXTERNAL_AC = 'dotfiles の excludedCommands に dev-flow-health の起動形を足す';
+  const { result, calls } = await run([CODE_AC, EXTERNAL_AC], { 'eval#1': evalWith([true, false]) });
+  assert.equal(reimplCalls(calls).length, 0, `repo 外の AC で差し戻した: ${calls.map((c) => c.label).join(', ')}`);
   assert.equal(result?.merge_tier, 'HOLD');
   assert.deepEqual(plain(result.merge_tier_hold_reasons.map((r) => r.code)), ['ac_human_pending']);
   assert.deepEqual(plain(result.final_unsatisfied_ac_by_actor), { agent: [], human: [1] });

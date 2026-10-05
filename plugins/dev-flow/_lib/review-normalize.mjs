@@ -37,3 +37,42 @@ export function classifyReviewRoute(review) {
 
   return { route, blocking, minor };
 }
+
+// finding の file が worktree の外を指すか（issue #793）。fix agent は worktree の外に書けない（fix prompt の Boundary）ので、
+// 外を指す blocking finding を fix に渡すと、fix agent が他 repo へ書きに行くか applied:false で終端する。
+// 外とみなすのは: URL、`~` 始まり、`..` で worktree を出る相対パス、worktree 配下でない絶対パス。
+// worktree が絶対パスでない（pr-meta が cwd を返さなかった）ときは絶対パスを判定できないので外とみなさない
+// （fix に渡す側に倒す — 外とみなして黙って fix 対象から外すより、fix agent の Boundary で止める方が見える）。
+export function isOutsideWorktree(file, worktree) {
+  const f = typeof file === 'string' ? file.trim() : '';
+  if (f === '') return false;
+  if (f.includes('://')) return true;
+  if (f === '~' || f.startsWith('~/')) return true;
+  if (f.startsWith('/')) {
+    const wt = typeof worktree === 'string' ? worktree.trim().replace(/\/+$/, '') : '';
+    if (!wt.startsWith('/')) return false;
+    return !(f === wt || f.startsWith(wt + '/'));
+  }
+  let depth = 0;
+  for (const seg of f.split('/')) {
+    if (seg === '..') depth -= 1;
+    else if (seg !== '' && seg !== '.') depth += 1;
+    if (depth < 0) return true;
+  }
+  return false;
+}
+
+// classifyReviewRoute の結果から worktree の外を指す blocking finding を外す。残りの blocking が 0 件なら
+// route を REVIEW_ROUTE_CI_GATE に倒す（外の指摘は再 review でも消えないため、fix loop に入れると stuck か
+// fix_failed で終わる）。返り値 outside は終端サマリーの人間側 follow-up に回す。
+export function excludeOutsideWorktree(outcome, worktree) {
+  const blocking = Array.isArray(outcome?.blocking) ? outcome.blocking : [];
+  const inside = [];
+  const outside = [];
+  for (const f of blocking) (isOutsideWorktree(f?.file, worktree) ? outside : inside).push(f);
+  if (outside.length === 0) return { outcome, outside };
+  return {
+    outcome: { ...outcome, blocking: inside, route: inside.length === 0 ? REVIEW_ROUTE_CI_GATE : outcome.route },
+    outside,
+  };
+}

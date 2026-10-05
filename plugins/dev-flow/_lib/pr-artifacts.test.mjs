@@ -20,6 +20,8 @@ import {
   PR_BODY_NOTES_MAX,
   PR_NOTE_SECTIONS,
   adoptImplPrNotes,
+  PR_BODY_OUT_OF_SCOPE_HEADING,
+  PR_BODY_OUT_OF_SCOPE_MAX,
 } from './pr-artifacts.mjs';
 
 function req(o = {}) {
@@ -162,6 +164,21 @@ test('[pr-artifacts] adoptImplPrNotes: 空の報告は前回分を保持し、�
   assert.deepEqual(replaced.pr_notes, [{ section: 'measurement', text: 'm2' }]);
   assert.deepEqual(replaced.architecture_decisions, [{ decision: 'A', rationale: 'r' }]);
   assert.deepEqual(adoptImplPrNotes({ serial: [] }, [{ design_decisions: [{ title: '', rationale: 'r' }] }]), { serial: [] });
+});
+
+// issue #793: 範囲外にした作業を PR 本文の「この PR に含めなかったもの」に載せる
+test('[pr-artifacts] adoptImplPrNotes: out_of_scope は plan.out_of_scope に取り込み、PR 本文の Closes 行の前に節を足す（空なら節なし）', () => {
+  const adopted = adoptImplPrNotes({ serial: [] }, [{ task_id: 't', out_of_scope: ['  telemetry キーの削除（AC 外）  ', '', 'dotfiles の変更（worktree 外）', 'dotfiles の変更（worktree 外）'] }]);
+  assert.deepEqual(adopted.out_of_scope, ['telemetry キーの削除（AC 外）', 'dotfiles の変更（worktree 外）']);
+  const body = buildPrBody({ issue: 1, req: req(), plan: plan({ out_of_scope: adopted.out_of_scope }), ledger: ledger(), testsurfHits: [], dangerHits: [] });
+  assert.ok(body.includes(`${PR_BODY_OUT_OF_SCOPE_HEADING}\n- telemetry キーの削除（AC 外）\n- dotfiles の変更（worktree 外）\n\nCloses #1`), body);
+  assert.ok(verifyPrBody(body, 1).ok, '節を足しても構造検証は通る');
+  const kept = adoptImplPrNotes(adopted, [{ task_id: 't', out_of_scope: [] }]);
+  assert.deepEqual(kept.out_of_scope, adopted.out_of_scope, '空の報告は前回分を保持する');
+  assert.ok(!buildPrBody({ issue: 1, req: req(), plan: plan(), ledger: ledger(), testsurfHits: [], dangerHits: [] }).includes(PR_BODY_OUT_OF_SCOPE_HEADING));
+  const many = Array.from({ length: PR_BODY_OUT_OF_SCOPE_MAX + 2 }, (_, i) => `oos-${i}`);
+  const clipped = buildPrBody({ issue: 1, req: req(), plan: plan({ out_of_scope: many }), ledger: ledger(), testsurfHits: [], dangerHits: [] });
+  assert.ok(clipped.includes(`- oos-${PR_BODY_OUT_OF_SCOPE_MAX - 1}\n（他 2 件）`), clipped);
 });
 
 test('[pr-artifacts] PR body: pr_notes は PR_BODY_NOTES_MAX 件まで、超過分は件数だけ出す', () => {
