@@ -3001,3 +3001,93 @@ test('humanFollowups: 非空なら「人間側 follow-up」節に severity・場
     assert.equal(buildDevflowSummaryBody({ ...BASE_INPUT, humanFollowups }), buildDevflowSummaryBody(BASE_INPUT));
   }
 });
+
+// ─── issue #794: 同じ AC に紐づく ledger 未収束・ESCALATE・AC 未達を 1 行にまとめる ───
+
+const AC4_FINAL_794 = { id: 'AC-FINAL-4', text: '[final-reconcile 不成立] dotfiles 側に起動形を足す', severity: 'critical', checked: false, dimension: 'ac', source: 'evaluator' };
+const AC4_ESC_794 = { id: 'EVAL-1-ac4-dotfiles', text: 'ac4-dotfiles', severity: 'major', checked: false, dimension: 'ac', source: 'evaluator', escalate: true, escalate_reason: 'blast-radius', escalate_description: 'dotfiles 側は worktree の外', ac_index: 3 };
+const UNLINKED_B_794 = { id: 'B1', text: 'null deref', severity: 'critical', checked: false, dimension: 'correctness', evidence: 'src/a.ts:10' };
+const UNLINKED_E_794 = { id: 'E1', text: 'naming', severity: 'major', checked: false, dimension: 'design', escalate: true, escalate_reason: 'preference' };
+
+function input794({ blockingItems = [AC4_FINAL_794], advisoryItems = [AC4_ESC_794], agent = [3], human = [] } = {}) {
+  const mt = classifyMergeTier({
+    iterateStatus: 'lgtm', shape: 'standard', converged: false, unresolvedDanger: false, breakingStructured: false,
+    breakingKeyword: false, docsOrTestOnly: false, escalateCount: advisoryItems.filter((it) => it.escalate === true).length,
+    evalStaleness: 'none', unsatisfiedAgentAc: agent.length > 0, unsatisfiedHumanAc: human.length > 0,
+  });
+  return {
+    ...BASE_INPUT,
+    mergeTier: mt.tier, mergeTierReasons: mt.reasons, holdReasons: mt.holdReasons, holdKind: mt.holdKind,
+    blockingItems, advisoryItems, ledgerConverged: false,
+    acResults: [0, 1, 2, 3].map((i) => ({ ac_index: i, satisfied: i !== 3, evidence: i === 3 ? 'dotfiles 側が未変更' : `ev${i}`, verified_by: 'inspection' })),
+    unsatisfiedAcByActor: { agent, human },
+  };
+}
+
+// 節（見出し / 太字の節名 / <details> まで）の表の本文行
+function rows794(body, heading) {
+  const sec = sectionOf(body, heading);
+  assert.ok(sec != null, `${heading} を含む`);
+  const end = sec.indexOf('\n**');
+  return (end >= 0 ? sec.slice(0, end) : sec).split('\n')
+    .filter((l) => l.startsWith('| ') && !l.startsWith('| 理由 |') && !l.startsWith('| 状態 |'));
+}
+
+test('issue #794 AC1: 同じ AC に紐づく ledger 未収束・ESCALATE・AC 未達は HOLD 理由表と要対応表で 1 行にまとまり、reason code が内訳に残る', () => {
+  const input = input794();
+  assert.deepEqual(input.holdReasons.map((r) => r.code), ['ledger_unconverged', 'escalate', 'ac_agent_unsatisfied']);
+  const body = buildDevflowSummaryBody(input);
+  assert.deepEqual(rows794(body, '### HOLD になった理由と現状'), [
+    '| AC#4 未達 — ledger 未収束・ESCALATE・AC 未達（エージェント） を 1 行にまとめた（内訳: ledger_unconverged / escalate / ac_agent_unsatisfied） | 未 checked blocking 1 件・ESCALATE 1 件中 0 件は fix 後 tree で解消確認済み・AC 判定 satisfied:false | 修正が必要・要判断（blast-radius）（下表 AC#4 未達 行） |',
+  ]);
+  assert.deepEqual(rows794(body, '### ⚠️ 要対応'), [
+    '| ❌ 未解消 | 必須（AC#4 未達 に紐づく 3 件 — 内訳: ledger_unconverged / escalate / ac_agent_unsatisfied） | ac | AC#4 未達: [final-reconcile 不成立] dotfiles 側に起動形を足す / ac4-dotfiles — dotfiles 側は worktree の外 | 未解消 / AC 判定 satisfied:false（inspection）: dotfiles 側が未変更 / ESCALATE: 未解消 | 修正が必要・要判断（blast-radius） |',
+  ]);
+  assert.ok(!body.includes('| ❌ 未達 | AC#4 |'), '未達 AC 表に AC#4 を重ねて出さない');
+  // 結論行は変わらない（修正必須の HOLD のまま）
+  assert.ok(conclusionLine(body).includes('修正作業が必要です'), conclusionLine(body));
+});
+
+test('issue #794 AC1: 人手 AC 待ちの AC にまとめた行は対応が「人手で実施して AC を確認する」になる', () => {
+  const body = buildDevflowSummaryBody(input794({ agent: [], human: [3] }));
+  const hold = rows794(body, '### HOLD になった理由と現状');
+  assert.equal(hold.length, 1, hold.join('\n'));
+  assert.ok(hold[0].includes('（内訳: ledger_unconverged / escalate / ac_human_pending）'), hold[0]);
+  assert.ok(hold[0].endsWith('| 人手で実施して AC を確認する・要判断（blast-radius）（下表 AC#4 未達 行） |'), hold[0]);
+});
+
+test('issue #794 AC3: AC に紐づかない項目が同じ code に残るときは、その code の従来の行と AC に紐づかない項目の行をそのまま出す', () => {
+  const body = buildDevflowSummaryBody(input794({
+    blockingItems: [UNLINKED_B_794, AC4_FINAL_794],
+    advisoryItems: [UNLINKED_E_794, AC4_ESC_794],
+  }));
+  assert.deepEqual(rows794(body, '### HOLD になった理由と現状'), [
+    '| AC#4 未達 — ledger 未収束・ESCALATE・AC 未達（エージェント） を 1 行にまとめた（内訳: ledger_unconverged / escalate / ac_agent_unsatisfied） | 未 checked blocking 1 件・ESCALATE 1 件中 0 件は fix 後 tree で解消確認済み・AC 判定 satisfied:false | 修正が必要・要判断（blast-radius）（下表 AC#4 未達 行） |',
+    '| ledger 未収束（未 checked blocking 残） | 未 checked blocking 2 件 | 修正が必要（下表 ❌ 行） |',
+    '| ESCALATE-TO-HUMAN 項目 2 件 | ESCALATE 2 件中 0 件は fix 後 tree で解消確認済み | 要判断 2 件（下表 ⚠️ 行） |',
+  ], 'ac_agent_unsatisfied は AC#4 だけなので行を消し、紐づかない項目が残る code は従来の行のまま');
+  const required = rows794(body, '### ⚠️ 要対応');
+  assert.equal(required.length, 3, required.join('\n'));
+  assert.ok(required[0].startsWith('| ❌ 未解消 | 必須（AC#4 未達 に紐づく 3 件'), required[0]);
+  assert.equal(required[1], '| ❌ 未解消 | 必須（blocking） | correctness | null deref | src/a.ts:10 | 修正が必要 |');
+  assert.equal(required[2], '| ⚠️ 要判断 | 要判断（advisory ESCALATE） | design | naming | 未解消 | 要判断（preference） |');
+});
+
+test('issue #794 AC3: AC への紐付けが 1 系統だけ・どこにも紐づかないときは従来の表示と byte 一致', () => {
+  // escalate だけが AC#2（達成済み）を指す: まとめる相手が無い
+  const onlyEscalate = {
+    ...BASE_INPUT,
+    mergeTier: 'HOLD',
+    holdReasons: [{ code: 'escalate', reason: 'ESCALATE-TO-HUMAN 項目 1 件', kind: 'human_judgment' }],
+    holdKind: 'human_judgment',
+    advisoryItems: [{ ...UNLINKED_E_794, ac_index: 1 }],
+    acResults: [0, 1].map((i) => ({ ac_index: i, satisfied: true, evidence: 'ok', verified_by: 'inspection' })),
+  };
+  assert.equal(buildDevflowSummaryBody(onlyEscalate), buildDevflowSummaryBody({ ...onlyEscalate, advisoryItems: [UNLINKED_E_794] }));
+  // AC に紐づかない blocking / escalate と未達 AC: unsatisfiedAcByActor を渡しても渡さなくても同じ
+  const unlinked = input794({ blockingItems: [UNLINKED_B_794], advisoryItems: [UNLINKED_E_794] });
+  const body = buildDevflowSummaryBody(unlinked);
+  assert.equal(body, buildDevflowSummaryBody({ ...unlinked, unsatisfiedAcByActor: undefined }));
+  assert.ok(body.includes('| ❌ 未達 | AC#4 | inspection | dotfiles 側が未変更 |'));
+  assert.ok(!body.includes('1 行にまとめた'));
+});
