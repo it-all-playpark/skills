@@ -2290,6 +2290,7 @@ function buildDevflowSummaryBody({
   baseFailingTests,
   humanFollowups,
   outOfScope,
+  unsatisfiedAcByActor,
 }) {
   const EVAL_STALENESS_VALUES = ['none', 'hash_mismatch', 'hash_reconverged', 'iterate_incomplete', 'iterate_fixed'];
   if (evalStaleness != null && !EVAL_STALENESS_VALUES.includes(evalStaleness)) {
@@ -2366,6 +2367,57 @@ function buildDevflowSummaryBody({
   const unresolvedEscalate = escalateAll.filter(it => !isResolved(it));
   const unresolvedAdvisory = nonEscalateUnchecked.filter(it => !isResolved(it));
   const resolvedAdvisory = advArr.filter(it => it.dimension !== 'environment' && !isTriagedAdvisory(it) && isResolved(it));
+
+  const itemAcIndex = (it) => {
+    if (Number.isInteger(it.ac_index) && it.ac_index >= 0) return it.ac_index;
+    if (it.dimension !== 'ac' || typeof it.id !== 'string') return null;
+    const m = /^AC-(?:FINAL-)?(\d+)$/.exec(it.id);
+    return m != null ? Number(m[1]) - 1 : null;
+  };
+  const acGapsByActor = unsatisfiedAcByActor != null && typeof unsatisfiedAcByActor === 'object' ? unsatisfiedAcByActor : {};
+  const acAgentGaps = Array.isArray(acGapsByActor.agent) ? acGapsByActor.agent : [];
+  const acHumanGaps = Array.isArray(acGapsByActor.human) ? acGapsByActor.human : [];
+  const acUnsatisfiedCode = (k) => {
+    if (acAgentGaps.includes(k)) return 'ac_agent_unsatisfied';
+    if (acHumanGaps.includes(k)) return 'ac_human_pending';
+    return null;
+  };
+  const acGroupMap = new Map();
+  const acGroupOf = (k) => {
+    if (!acGroupMap.has(k)) acGroupMap.set(k, { acIndex: k, blocking: [], escalate: [], ac: null });
+    return acGroupMap.get(k);
+  };
+  for (const it of uncheckedBlocking) {
+    const k = itemAcIndex(it);
+    if (k != null) acGroupOf(k).blocking.push(it);
+  }
+  for (const it of escalateAll) {
+    const k = itemAcIndex(it);
+    if (k != null) acGroupOf(k).escalate.push(it);
+  }
+  for (const a of unsatisfiedAC) {
+    if (acGroupMap.has(a.ac_index)) acGroupMap.get(a.ac_index).ac = a;
+  }
+  const acGroups = [...acGroupMap.values()]
+    .filter((g) => [g.blocking.length > 0, g.escalate.length > 0, g.ac != null].filter(Boolean).length >= 2)
+    .sort((a, b) => a.acIndex - b.acIndex)
+    .map((g) => {
+      const acCode = g.ac != null ? acUnsatisfiedCode(g.acIndex) : null;
+      const codes = [
+        ...(g.blocking.length > 0 ? ['ledger_unconverged'] : []),
+        ...(g.escalate.length > 0 ? ['escalate'] : []),
+        ...(acCode ? [acCode] : []),
+      ];
+      const label = `AC#${g.acIndex + 1}${g.ac != null ? ' 未達' : ''}`;
+      const unresolvedEsc = g.escalate.filter((it) => !isResolved(it));
+      const actions = [];
+      if (acCode === 'ac_human_pending') actions.push('人手で実施して AC を確認する');
+      else if (g.blocking.length > 0 || g.ac != null) actions.push('修正が必要');
+      for (const it of unresolvedEsc) actions.push(`要判断${it.escalate_reason ? '（' + mdCell(it.escalate_reason) + '）' : ''}`);
+      return { ...g, codes, label, actions };
+    });
+  const groupedAcIndexes = new Set(acGroups.map((g) => g.acIndex));
+  const isGroupedItem = (it) => groupedAcIndexes.has(itemAcIndex(it));
 
   const uncleared = securityClearance.filter(sc => sc.cleared !== true);
 
@@ -2563,7 +2615,41 @@ function buildDevflowSummaryBody({
     lines.push('|---|---|---|');
     const escalateTotal = escalateAll.length;
     const escalateResolved = escalateAll.filter((it) => isResolved(it)).length;
+    const holdCodeSet = new Set(holdReasons.map((hr) => hr && hr.code));
+    const holdAcGroups = acGroups
+      .map((g) => ({ ...g, holdCodes: g.codes.filter((c) => holdCodeSet.has(c)) }))
+      .filter((g) => g.holdCodes.length >= 2);
+    const codeAcIndexes = {
+      ledger_unconverged: uncheckedBlocking.map(itemAcIndex),
+      escalate: escalateAll.map(itemAcIndex),
+      ac_agent_unsatisfied: acAgentGaps,
+      ac_human_pending: acHumanGaps,
+    };
+    const absorbedCodes = new Set(Object.keys(codeAcIndexes).filter((code) => {
+      const covered = new Set(holdAcGroups.filter((g) => g.holdCodes.includes(code)).map((g) => g.acIndex));
+      return covered.size > 0 && codeAcIndexes[code].every((k) => covered.has(k));
+    }));
+    const CODE_LABEL = {
+      ledger_unconverged: 'ledger 未収束',
+      escalate: 'ESCALATE',
+      ac_agent_unsatisfied: 'AC 未達（エージェント）',
+      ac_human_pending: 'AC 未達（人手）',
+    };
+    let acGroupRowsEmitted = false;
     for (const hr of holdReasons) {
+      if (!acGroupRowsEmitted && holdAcGroups.some((g) => g.holdCodes.includes(hr && hr.code))) {
+        acGroupRowsEmitted = true;
+        for (const g of holdAcGroups) {
+          const reason = `${g.label} — ${g.holdCodes.map((c) => CODE_LABEL[c]).join('・')} を 1 行にまとめた（内訳: ${g.holdCodes.join(' / ')}）`;
+          const current = g.holdCodes.map((c) => {
+            if (c === 'ledger_unconverged') return `未 checked blocking ${g.blocking.length} 件`;
+            if (c === 'escalate') return `ESCALATE ${g.escalate.length} 件中 ${g.escalate.filter((it) => isResolved(it)).length} 件は fix 後 tree で解消確認済み`;
+            return 'AC 判定 satisfied:false';
+          }).join('・');
+          lines.push(`| ${reason} | ${current} | ${g.actions.join('・')}（下表 ${g.label} 行） |`);
+        }
+      }
+      if (absorbedCodes.has(hr && hr.code)) continue;
       const { current, action } = holdReasonDisplay(hr && hr.code, hr && hr.kind, {
         escalateTotal,
         escalateResolved,
@@ -2623,9 +2709,29 @@ function buildDevflowSummaryBody({
     lines.push(triagedAdvisory.length > 0 ? `### ✅ 要対応事項なし（トリアージ済み ${triagedAdvisory.length} 件）` : '### ✅ 要対応事項なし');
   }
 
+  const escalateCurrent = (item) => {
+    if (isResolved(item)) return (item.final_resolution === 'ci_delegated' ? 'CI 委譲: ' : 'fix 後 tree で確認: ') + mdCell(item.final_evidence);
+    if (item.final_resolution === 'unresolved' && nonEmpty(item.final_evidence)) return 'fix 後 tree でも未解消: ' + mdCell(item.final_evidence);
+    return item.evidence ? mdCell(item.evidence) : '未解消';
+  };
+  const acGroupRows = acGroups.map((g) => {
+    const count = g.blocking.length + g.escalate.length + (g.ac != null ? 1 : 0);
+    const breakdown = g.codes.length > 0 ? ` — 内訳: ${g.codes.join(' / ')}` : '';
+    const content = `${g.label}: ` + [
+      ...g.blocking.map((it) => mdCell(it.text)),
+      ...g.escalate.map((it) => mdCell(it.text) + (nonEmpty(it.escalate_description) ? ' — ' + mdCell(it.escalate_description) : '')),
+    ].join(' / ');
+    const current = [
+      ...g.blocking.map((it) => (it.evidence ? mdCell(it.evidence) : '未解消')),
+      ...(g.ac != null ? [`AC 判定 satisfied:false（${g.ac.verified_by != null ? g.ac.verified_by : 'inspection'}）${g.ac.evidence ? ': ' + mdCell(g.ac.evidence) : ''}`] : []),
+      ...g.escalate.map((it) => 'ESCALATE: ' + escalateCurrent(it)),
+    ].join(' / ');
+    return { _kind: 'ac_group', _line: `| ❌ 未解消 | 必須（${g.label} に紐づく ${count} 件${breakdown}） | ac | ${content} | ${current} | ${g.actions.join('・')} |` };
+  });
   const requiredRows = [
-    ...uncheckedBlocking.map(it => ({ ...it, _lane: '必須（blocking）', _kind: 'blocking' })),
-    ...escalateAll.map(it => ({ ...it, _lane: '要判断（advisory ESCALATE）', _kind: 'escalate' })),
+    ...acGroupRows,
+    ...uncheckedBlocking.filter(it => !isGroupedItem(it)).map(it => ({ ...it, _lane: '必須（blocking）', _kind: 'blocking' })),
+    ...escalateAll.filter(it => !isGroupedItem(it)).map(it => ({ ...it, _lane: '要判断（advisory ESCALATE）', _kind: 'escalate' })),
   ];
   const advisoryRows = nonEscalateUnchecked.map(it => ({ ...it, _lane: '助言（advisory）', _kind: 'advisory' }));
 
@@ -2635,6 +2741,10 @@ function buildDevflowSummaryBody({
     lines.push('| 状態 | 区分 | 観点 | 内容 | 現状 | 対応 |');
     lines.push('|---|---|---|---|---|---|');
     for (const item of rows) {
+      if (item._kind === 'ac_group') {
+        lines.push(item._line);
+        continue;
+      }
       const resolved = item._kind !== 'blocking' && isResolved(item);
       let status;
       if (item._kind === 'blocking') {
@@ -2681,11 +2791,12 @@ function buildDevflowSummaryBody({
   }
 
   if (hasRequiredItems) {
-    if (unsatisfiedAC.length > 0) {
+    const unsatisfiedACRows = unsatisfiedAC.filter(a => !groupedAcIndexes.has(a.ac_index));
+    if (unsatisfiedACRows.length > 0) {
       lines.push('');
       lines.push('| 状態 | AC | 検証 | 根拠 |');
       lines.push('|---|---|---|---|');
-      for (const ac of unsatisfiedAC) {
+      for (const ac of unsatisfiedACRows) {
         const verifiedBy = ac.verified_by != null ? ac.verified_by : 'inspection';
         const evidenceCell = ac.evidence ? mdCell(ac.evidence) : '—';
         lines.push(`| ❌ 未達 | AC#${ac.ac_index + 1} | ${verifiedBy} | ${evidenceCell} |`);
@@ -3494,6 +3605,7 @@ const EVAL = {
           suggestion: { type: 'string' },
           escalate: { type: 'boolean' },
           escalate_reason: { type: 'string', enum: ['accountability', 'preference', 'novelty', 'blast-radius'] },
+          ac_index: { type: 'number' },
         },
       },
     },
@@ -5949,6 +6061,8 @@ async function execEvaluatePhase(state) {
         dimension: f.dimension ?? 'eval',
         severity: isCritical ? 'critical' : (f.severity === 'minor' ? 'minor' : 'major'),
         source: 'evaluator', check: { kind: 'inspection' },
+        // ac_index は終端サマリーで同じ AC に紐づく HOLD 理由を 1 行にまとめるための結び付け（表示専用）
+        ...(Number.isInteger(f.ac_index) && f.ac_index >= 0 && f.ac_index < (req.acceptance_criteria ?? []).length ? { ac_index: f.ac_index } : {}),
         ...(isEscalate ? {
           escalate: true,
           escalate_reason: f.escalate_reason ?? null,
@@ -7031,6 +7145,7 @@ const summaryBody = buildDevflowSummaryBody({
   baseFailingTests: state.baseFailing.env,
   humanFollowups: iterate?.human_followups ?? null,
   outOfScope: state.plan?.out_of_scope ?? null,
+  unsatisfiedAcByActor: acGapsFinal,
 })
 // 終端サマリーコメント投稿: bodySaveInstr で body を worktree の .devflow-tmp/ 固定パスへ保存し
 // gh pr comment --body-file を bare 単文で投稿する。投稿失敗は posted:false で fail-open だが、

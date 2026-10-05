@@ -62,6 +62,9 @@ AC を満たし、critical / major の欠陥が無ければ `pass`。あれば `
   理由は `accountability`（外部公開 API 名・課金挙動など責任を人間が負う決定）/ `preference`（同等な複数解で
   issue に指定なし）/ `novelty`（前例なく自信を持って判定できない）/ `blast-radius`（誤ったときの影響が PR を超える）。
   品質の良し悪しは severity で表す
+- `ac_index`（任意、0 始まり）: 指摘が特定の AC の未達・判断に関するものなら、その AC の index。終端サマリーで
+  同じ AC の ledger 未収束・escalate・AC 未達を 1 行にまとめる結び付けに使う（表示専用。判定は変わらない）。
+  AC に結び付かない指摘には付けない
 
 feedback は `pass` でも返せる（escalate だけの報告など）。
 
