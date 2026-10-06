@@ -91,7 +91,7 @@ test('[AC-1b] review blocking + ci-check#1 pending → ci-wait は 0 回、fix#1
     'fix#1': { applied: false, files: [], summary: 'cannot' },
   });
 
-  const ciWaitCalls = calls.filter((c) => c.label.startsWith('ci-wait#'));
+  const ciWaitCalls = calls.filter((c) => c.label.startsWith('ci-wait-check#'));
   assert.equal(ciWaitCalls.length, 0, `blocking round では ci-wait を挟まないべきだが ${ciWaitCalls.length} 回呼ばれた`);
   const ciCheckCalls = calls.filter((c) => c.label.startsWith('ci-check#'));
   assert.equal(ciCheckCalls.length, 1, `pending でも再取得せず 1 回だけであるべきだが ${ciCheckCalls.length} 回だった`);
