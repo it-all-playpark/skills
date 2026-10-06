@@ -99,7 +99,8 @@ CI test は green」を意味する。呼び出し元は journal・`gh pr checks
 PR phase（commit / push / `gh pr create`）が失敗した run は throw せず、`status` / `error_category` が
 `"pr_phase_failed"` の返り値で終わる（PR は無く、pr-iterate・Merge tier・終端サマリは走っていない）。返り値には
 `failed_step`（`commit` / `push` / `pr-create` / `unknown`）・`failure_reason`（失敗コマンドの stderr 末尾 verbatim）・
-`committed`・`head_sha`（取れた場合）・`push_log`（push 失敗時。pr-push が出力全文を残したファイル）・`branch`・
+`committed`・`head_sha`（取れた場合）・`push_log`（push 失敗時。pr-push が出力全文を残したファイル。proxy が
+pr-push を経ずに push した場合は載らず、`failure_reason` が `pr-push not invoked` で始まる固定文言になる）・`branch`・
 `worktree`・`shape`・`eval_verdict`・`phase_durations`・`recovery_commands`・`issue_comment` が載る。
 
 呼び出し元セッションは次の 2 手順で失敗段・理由と回収コマンドを issue に残す:

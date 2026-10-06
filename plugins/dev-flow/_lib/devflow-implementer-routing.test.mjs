@@ -378,7 +378,7 @@ test('[implementer] PR phase 失敗 (#682/#823): failure handoff の error_categ
 test('[implementer] PR push 失敗 (#819/#823): pr#1 が failed_step:push を返すと、返り値の push_log と failure handoff の error_msg に push log のパスが載り、pr#1 の prompt は同じパスを pr-push に渡す', async () => {
   const reason = '❌ Pre-push checks failed\nerror: failed to push some refs to \'github.com:o/r.git\'';
   const { calls, workflowCalls, error, result } = await runStandardWithWorkflowCapture({
-    'pr#1': { pr_url: '', pr_number: 0, committed: true, failed_step: 'push', failure_reason: reason },
+    'pr#1': { pr_url: '', pr_number: 0, committed: true, failed_step: 'push', failure_reason: reason, push_header: 'pr-push: exit=1 log=/tmp/wt/.devflow-tmp/push-output.log' },
   });
   assert.equal(error, null, `push 失敗応答で run が throw した: ${error?.message}`);
   const pushLog = '/tmp/wt/.devflow-tmp/push-output.log';
