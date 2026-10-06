@@ -10,7 +10,7 @@
 //   AC-5: Evaluate 差し戻し（reimpl#i、fix_feedback 付き）が dev-implementer に渡る
 //   AC-6: Validate green-fix（green-fix#i / green-fix#retry-i）が dev-implementer で spawn され、
 //         テスト弱体化禁止・失敗内容・STAGING_CONVENTION が prompt に残る
-//   AC-7: PR phase の pr.head_sha が workflow('dev-flow:pr-iterate') の nested.head_sha へ渡る
+//   AC-7: PR phase の pr.head_sha が workflow('dev-flow:pr-iterate-run') の nested.head_sha へ渡る
 //         （review#2 以降の fix delta 起点。nested 起動のみが本番経路で pr-meta probe を通らないため）。
 //         pr.head_sha が空文字・欠落のときは nested に head_sha キー自体を含めない
 //   PR 失敗 (#682/#823): pr#<issue> の中断応答（committed:false / pr_url 空 / pr_number 非正）は
@@ -301,7 +301,7 @@ test('[implementer] AC-6: empty-diff retry 後の test#retry-1 red → green-fix
 });
 
 // ============================================================
-// AC-7: PR phase の pr.head_sha → workflow('dev-flow:pr-iterate') の nested.head_sha 受け渡し
+// AC-7: PR phase の pr.head_sha → workflow('dev-flow:pr-iterate-run') の nested.head_sha 受け渡し
 // （nested 起動は pr-meta probe を通らない本番経路。ここが切れると review#2 以降が黙って
 //   全件 full review にフォールバックする — fail-open のため run 結果には出ない）
 // ============================================================
@@ -323,8 +323,8 @@ test('[implementer] AC-7: pr.head_sha が workflow(pr-iterate) の nested.head_s
     'pr#1': { pr_url: 'http://x', pr_number: 1, committed: true, head_sha: HEAD_SHA },
   });
   assert.equal(error, null, `run が throw した: ${error?.message}`);
-  assert.equal(workflowCalls.length, 1, `workflow('dev-flow:pr-iterate') は 1 回のはず: ${workflowCalls.map((w) => w.name).join(', ')}`);
-  assert.equal(workflowCalls[0].name, 'dev-flow:pr-iterate');
+  assert.equal(workflowCalls.length, 1, `workflow('dev-flow:pr-iterate-run') は 1 回のはず: ${workflowCalls.map((w) => w.name).join(', ')}`);
+  assert.equal(workflowCalls[0].name, 'dev-flow:pr-iterate-run');
   assert.equal(workflowCalls[0].opts?.nested?.head_sha, HEAD_SHA, `nested.head_sha が pr.head_sha と一致しない: ${JSON.stringify(workflowCalls[0].opts?.nested)}`);
 });
 
@@ -333,7 +333,7 @@ test('[implementer] AC-7: pr.head_sha が空文字のとき nested に head_sha 
     'pr#1': { pr_url: 'http://x', pr_number: 1, committed: true, head_sha: '' },
   });
   assert.equal(error, null, `run が throw した: ${error?.message}`);
-  assert.equal(workflowCalls.length, 1, `workflow('dev-flow:pr-iterate') は 1 回のはず: ${workflowCalls.map((w) => w.name).join(', ')}`);
+  assert.equal(workflowCalls.length, 1, `workflow('dev-flow:pr-iterate-run') は 1 回のはず: ${workflowCalls.map((w) => w.name).join(', ')}`);
   assert.ok(!Object.prototype.hasOwnProperty.call(workflowCalls[0].opts?.nested ?? {}, 'head_sha'), `head_sha が空文字でも nested にキーが残っている: ${JSON.stringify(workflowCalls[0].opts?.nested)}`);
 });
 
@@ -353,7 +353,7 @@ test('[implementer] PR phase 失敗 (#682/#823): pr#1 が committed:false / pr_n
   assert.equal(result.failed_step, 'commit');
   assert.equal(result.failure_reason, PR_FAILURE_REASON);
   assert.equal(result.committed, false);
-  assert.equal(workflowCalls.length, 0, `workflow('dev-flow:pr-iterate') が呼ばれた: ${workflowCalls.map((w) => `${w.name}(pr=${w.opts?.pr})`).join(', ')}`);
+  assert.equal(workflowCalls.length, 0, `workflow('dev-flow:pr-iterate-run') が呼ばれた: ${workflowCalls.map((w) => `${w.name}(pr=${w.opts?.pr})`).join(', ')}`);
   const closes = calls.filter((c) => c.label.startsWith('closes-'));
   assert.equal(closes.length, 0, `closes 系が呼ばれた: ${closes.map((c) => c.label).join(', ')}`);
   assert.ok(calls.some((c) => c.label === 'pr#1'), 'pr#1 自体は呼ばれているはず');
@@ -399,7 +399,7 @@ test('[implementer] PR fail-closed (#682): 正常系（committed:true, pr_number
   });
   assert.equal(error, null, `run が throw した: ${error?.message}`);
   assert.ok(calls.some((c) => c.label === 'merge-tier-facts'), 'merge-tier-facts が呼ばれていない');
-  assert.equal(workflowCalls.length, 1, `workflow('dev-flow:pr-iterate') は 1 回のはず: ${workflowCalls.map((w) => w.name).join(', ')}`);
-  assert.equal(workflowCalls[0].name, 'dev-flow:pr-iterate');
+  assert.equal(workflowCalls.length, 1, `workflow('dev-flow:pr-iterate-run') は 1 回のはず: ${workflowCalls.map((w) => w.name).join(', ')}`);
+  assert.equal(workflowCalls[0].name, 'dev-flow:pr-iterate-run');
   assert.equal(workflowCalls[0].opts?.pr, 1);
 });

@@ -4,8 +4,9 @@
 //   (a) 内外が混ざった round: fix#1 には worktree 内の指摘だけが届き、外の指摘は post-summary の follow-up 節に出る
 //   (b) 外の指摘だけの round: fix を起動せず CI 判定へ進み、lgtm で終わる（follow-up 節には出る）
 //   (c) 同じ外の指摘が続いても stuck にせず、follow-up は 1 件にまとめる
-//   (d) post_terminal_summary:false（dev-flow からの nested）でも返り値 human_followups に載る
+//   (d) dev-flow からの nested（caller:'dev-flow' — 終端サマリー無し）でも返り値 human_followups に載る
 //   (e) worktree 内の指摘だけの round はこれまでどおり fix へ進み、follow-up 節を出さない
+//   (f) /pr-iterate wrapper 経由の単体起動（caller:'standalone'）は nested でも終端サマリーに follow-up 節を出す（issue #828）
 
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
@@ -78,12 +79,24 @@ test('[outside-worktree] (c) 同じ外の指摘が 2 round 続いても stuck �
   assert.equal(plain(result.human_followups).length, 1);
 });
 
-test('[outside-worktree] (d) nested（post_terminal_summary:false）でも返り値 human_followups に載り、post-summary は起動しない', async () => {
+test('[outside-worktree] (d) dev-flow からの nested（caller:dev-flow）でも返り値 human_followups に載り、post-summary は起動しない', async () => {
   const { result, calls } = await run(
     { 'review#1': { decision: 'request-changes', issues: [OUTSIDE], summary: 'ng' } },
-    { pr: 5, post_terminal_summary: false, nested: { cwd: '/tmp/wt', head_ref: 'feature/x', repo: 'acme/skills' } },
+    { pr: 5, nested: { caller: 'dev-flow', cwd: '/tmp/wt', head_ref: 'feature/x', repo: 'acme/skills' } },
   );
   assert.equal(calls.filter((c) => c.label === 'post-summary').length, 0);
+  assert.deepEqual(plain(result.human_followups).map((f) => f.file), [OUTSIDE.file]);
+});
+
+test('[outside-worktree] (f) /pr-iterate wrapper 経由の単体起動（nested caller:standalone）は終端サマリーを投稿し、人間側 follow-up 節を載せる', async () => {
+  const { result, calls } = await run(
+    { 'review#1': { decision: 'request-changes', issues: [OUTSIDE], summary: 'ng' } },
+    { pr: 5, nested: { caller: 'standalone', cwd: '/tmp/wt', head_ref: 'feature/x', head_sha: 'c'.repeat(40), base_ref: 'main', repo: 'acme/skills', epoch: 77 } },
+  );
+  assert.ok(!calls.some((c) => c.label === 'pr-meta' || c.label === 'isolation-cleanup'), 'wrapper 経由の単体起動で pr-meta / isolation-cleanup が起動した');
+  const post = calls.filter((c) => c.label === 'post-summary');
+  assert.equal(post.length, 1, 'wrapper 経由の単体起動は終端サマリーを投稿するべき');
+  assert.ok(post[0].prompt.includes(FOLLOWUP_HEADING), '終端サマリーに人間側 follow-up 節が無い');
   assert.deepEqual(plain(result.human_followups).map((f) => f.file), [OUTSIDE.file]);
 });
 

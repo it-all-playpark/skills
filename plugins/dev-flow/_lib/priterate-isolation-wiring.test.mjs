@@ -27,7 +27,7 @@ const src = readFileSync(prIteratePath, 'utf8');
 // priterate-journal-log.test.mjs の makeSandbox/runPrIterateCapture パターンを流用し、
 // agent() 呼び出し全件を calls 配列（{label, agentType, prompt}）へ記録するよう拡張する。
 
-function makeSandbox({ isolationProbeResult, journalResult, isolationCleanupResult, prMetaResult } = {}) {
+function makeSandbox({ isolationProbeResult, journalResult, isolationCleanupResult, prMetaResult, args = '5' } = {}) {
   let reviewerCallCount = 0;
   let fixCallCount = 0;
   let isolationProbeCallCount = 0;
@@ -86,7 +86,7 @@ function makeSandbox({ isolationProbeResult, journalResult, isolationCleanupResu
     agent: agentStub,
     parallel: parallelStub,
     workflow: workflowStub,
-    args: '5',
+    args,
     console,
     JSON,
     Math,
@@ -262,7 +262,7 @@ test('[isolation-wiring] isolation-cleanup が null（agent 失敗）でも fail
 
 // ---- (vi) written:false の throw メッセージ contract（識別子・startRef） ----
 
-test('[isolation-wiring] written:false の throw メッセージは pr-iterate / args(5) / EnterWorktree を含み dev-flow を指さない', async () => {
+test('[isolation-wiring] written:false の throw メッセージは pr-iterate-run / args(5) / EnterWorktree を含み dev-flow を指さない', async () => {
   const { ctx, getReviewerCallCount, getFixCallCount, getIsolationProbeCallCount } = makeSandbox({
     isolationProbeResult: { written: false, error: 'Write denied by bg-isolation guard' },
   });
@@ -272,12 +272,12 @@ test('[isolation-wiring] written:false の throw メッセージは pr-iterate /
   assert.equal(getIsolationProbeCallCount(), 1, 'isolation-probe は 1 回呼ばれるべき');
   assert.ok(error != null, 'written:false は throw で終端するべきだが error が null だった');
   const message = String(error?.message ?? '');
-  assert.match(message, /pr-iterate/, 'throw メッセージに workflowName(pr-iterate) が含まれるべき');
+  assert.match(message, /pr-iterate-run/, 'throw メッセージに workflowName(pr-iterate-run) が含まれるべき');
   assert.match(message, /EnterWorktree/, 'throw メッセージに回避手順（EnterWorktree）の一部が含まれるべき');
   assert.match(
     message,
-    /Workflow\(\{ name: "pr-iterate", args: "5" \}\)/,
-    'throw メッセージの再実行手順は workflow 名 pr-iterate・PR 番号 args を指すべき（issue #455: dev-flow 誤 workflow 名の再発防止）',
+    /Workflow\(\{ name: "dev-flow:pr-iterate-run", args: "5" \}\)/,
+    'throw メッセージの再実行手順は namespaced workflow 名 dev-flow:pr-iterate-run・PR 番号 args を指すべき（issue #455 / #828: 旧名・dev-flow 誤 workflow 名の再発防止）',
   );
   assert.doesNotMatch(message, /name: "dev-flow"/, 'throw メッセージが誤って dev-flow を再起動先として指示してはいけない');
   assert.equal(getReviewerCallCount(), 0, 'written:false 検知後は pr-reviewer に到達しないべき');
@@ -338,4 +338,67 @@ test('[isolation-probe] written:true → 既存挙動不変で lgtm 完走する
   assert.equal(error, null, `written:true で throw されるべきではないが error=${error?.message}`);
   assert.equal(getIsolationProbeCallCount(), 1, 'isolation-probe は 1 回呼ばれるべき');
   assert.equal(result?.status, 'lgtm', `result.status は 'lgtm' であるべきだが '${result?.status}' だった`);
+});
+
+// ---- (viii) /pr-iterate wrapper skill 経由の単体起動（issue #828）----
+// wrapper は pr-iterate-prerun の出力を nested（caller:'standalone'）で渡す。pr-meta / isolation-cleanup は
+// 起動せず、isolation-probe は prerun の worktree・epoch で走り（fail-closed 不変）、終端サマリーは投稿する。
+
+const PRERUN = { cwd: '/repo-wt/pr-5', head_ref: 'feature/x', head_sha: 'b'.repeat(40), base_ref: 'main', repo: 'acme/skills', epoch: 4242 };
+const standaloneArgs = (nested = {}) => ({ pr: 5, nested: { caller: 'standalone', ...PRERUN, ...nested } });
+
+test('[isolation-wiring][standalone] nested caller:standalone → pr-meta / isolation-cleanup を起動せず、prerun の cwd・epoch で isolation-probe を走らせ lgtm 完走する', async () => {
+  const { ctx, calls } = makeSandbox({ isolationProbeResult: { written: true }, args: standaloneArgs() });
+  const { result, error } = await runPrIterateCapture(src, ctx);
+
+  assert.equal(error, null, `standalone nested 起動は throw されるべきではないが error=${error?.message}`);
+  assert.equal(result?.status, 'lgtm');
+  const labels = calls.map((c) => c.label);
+  assert.ok(!labels.includes('pr-meta'), `standalone nested 起動で pr-meta が起動した: ${labels.join(', ')}`);
+  assert.ok(!labels.includes('isolation-cleanup'), `standalone nested 起動で isolation-cleanup が起動した: ${labels.join(', ')}`);
+  const probeIdx = labels.indexOf('isolation-probe');
+  const reviewerIdx = calls.findIndex((c) => c.agentType === 'dev-flow:pr-reviewer');
+  assert.ok(probeIdx >= 0 && probeIdx < reviewerIdx, 'isolation-probe は残し、最初の pr-reviewer より前に走るべき');
+  assert.ok(
+    calls[probeIdx].prompt.includes('/repo-wt/pr-5/.devflow-tmp/.isolation-probe-4242'),
+    `probe 対象は prerun の worktree と epoch であるべき: ${calls[probeIdx].prompt.slice(0, 300)}`,
+  );
+});
+
+test('[isolation-wiring][standalone] caller:standalone は終端サマリーを投稿し、caller:dev-flow は投稿しない', async () => {
+  const standalone = makeSandbox({ isolationProbeResult: { written: true }, args: standaloneArgs() });
+  const r1 = await runPrIterateCapture(src, standalone.ctx);
+  assert.equal(r1.error, null, `standalone: ${r1.error?.message}`);
+  assert.equal(standalone.calls.filter((c) => c.label === 'post-summary').length, 1, '単体起動（caller:standalone）は終端サマリーを投稿するべき');
+
+  const devflow = makeSandbox({ isolationProbeResult: { written: true }, args: { pr: 5, nested: { caller: 'dev-flow', ...PRERUN } } });
+  const r2 = await runPrIterateCapture(src, devflow.ctx);
+  assert.equal(r2.error, null, `dev-flow: ${r2.error?.message}`);
+  assert.equal(devflow.calls.filter((c) => c.label === 'post-summary').length, 0, 'dev-flow からの起動は終端サマリーを投稿しない（dev-flow が投稿する）');
+});
+
+test('[isolation-wiring][standalone] caller:standalone でも written:false は fail-closed で throw し、review に進まない', async () => {
+  const { ctx, getReviewerCallCount, getFixCallCount } = makeSandbox({
+    isolationProbeResult: { written: false, error: 'Write denied by bg-isolation guard' },
+    args: standaloneArgs(),
+  });
+  const { error } = await runPrIterateCapture(src, ctx);
+
+  assert.ok(error != null, 'written:false は caller に関係なく throw するべき');
+  assert.match(String(error.message), /origin\/feature\/x/, '回避手順の起点は prerun の head_ref');
+  assert.equal(getReviewerCallCount(), 0);
+  assert.equal(getFixCallCount(), 0);
+});
+
+test('[isolation-wiring][standalone] nested.caller の欠落・out-of-enum・base_ref の型違反は明示 throw（legacy fallback を作らない）', async () => {
+  for (const nested of [
+    { cwd: '/wt', head_ref: 'feature/x' },
+    { caller: 'pr-iterate', cwd: '/wt', head_ref: 'feature/x' },
+    { caller: 'standalone', cwd: '/wt', head_ref: 'feature/x', base_ref: 1 },
+  ]) {
+    const { ctx, calls } = makeSandbox({ isolationProbeResult: { written: true }, args: { pr: 5, nested } });
+    const { error } = await runPrIterateCapture(src, ctx);
+    assert.ok(error != null && /args\.nested\.(caller|base_ref)/.test(error.message), `不正な nested ${JSON.stringify(nested)} で throw していない: ${error?.message}`);
+    assert.equal(calls.length, 0, 'nested 検証の throw は agent 起動前');
+  }
 });

@@ -28,7 +28,7 @@ dev-flow 本体（workflow / agent 定義 / `_lib` canonical / generator）を�
 - Claude 専用（workflow 依存）。cross-vendor 放棄は dev-flow / pr-iterate のみ（本ファイルを AGENTS.md から分離する理由）
 - skill wrapper が isolation preflight → `Workflow({ name: 'dev-flow:dev-flow-run' })`。orchestration と中間 state は workflow script の JS 変数のみ（外部 state JSON なし）
 - `meta.name` は `dev-flow-run` でも telemetry handoff の `skill` は `'dev-flow'` 固定（集計連続性）
-- `/pr-iterate` の Workflow 名は `dev-flow:pr-iterate`（bare 名フォールバック無し）
+- `/pr-iterate` は wrapper → `pr-iterate-prerun` → `dev-flow:pr-iterate-run`（alias 無し）
 - `agent()` の agentType は `nsAgentOpts()` でのみ namespace 付与（bare 名は起動直後 abort）。routing test は論理名（bare）を保持。dev-flow-canary.js のみ namespaced id 直書き
 - 1 issue = 1 PR。Implement は全 shape で `dev-implementer`（plan+impl 統合）を単一 worktree に 1 spawn（Plan phase なし。planner ⇄ reviewer ループ・parallel fan-out・`pipeline()` は持たない）。BLOCKED 再実装・green-fix（`model: 'sonnet'`）・Evaluate 差し戻しも同じ agent。複数 issue 分割は使わない
 - model 既定は frontmatter。override は green-fix（`'sonnet'`）と pr-iterate の fix（`dev-runner` に `'opus'`）のみ。品質ゲート agent には渡さない — gate の判定モデルを credit で黙って変えない

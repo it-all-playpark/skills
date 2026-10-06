@@ -197,7 +197,7 @@ test('[review-delta][AC-3] HEAD が動いていない（sha_prev === sha_now）r
 
 test('[review-delta] nested 起動は args.nested.head_sha を review#1 時点の sha として使う（pr-meta 不起動）', async () => {
   const { result, calls } = await runTwoRounds({
-    args: { pr: '5', nested: { cwd: '/tmp/wt', head_ref: 'feature/x', head_sha: SHA_A } },
+    args: { pr: '5', nested: { caller: 'dev-flow', cwd: '/tmp/wt', head_ref: 'feature/x', head_sha: SHA_A } },
     overrides: { 'commit-ensure#1': ENSURE_WITH_SHA(SHA_B) },
   });
   assert.equal(result?.status, 'lgtm');
@@ -207,7 +207,7 @@ test('[review-delta] nested 起動は args.nested.head_sha を review#1 時点�
 });
 
 test('[review-delta] nested.head_sha が string 以外なら明示 throw（legacy fallback を作らない）', async () => {
-  const { ctx } = makePrIterateSandbox({ args: { pr: '5', nested: { cwd: '/tmp/wt', head_ref: 'feature/x', head_sha: 123 } } });
+  const { ctx } = makePrIterateSandbox({ args: { pr: '5', nested: { caller: 'dev-flow', cwd: '/tmp/wt', head_ref: 'feature/x', head_sha: 123 } } });
   const { error } = await runWorkflowCapture(prIterateSrc, ctx, '.claude/workflows/pr-iterate.js');
   assert.ok(error && /nested\.head_sha/.test(error.message), `head_sha 型違反で throw していない: ${error?.message}`);
 });

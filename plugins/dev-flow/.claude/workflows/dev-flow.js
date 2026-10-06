@@ -10,7 +10,7 @@ export const meta = {
     { title: 'PR' },
     { title: 'Final reconcile' },
     { title: 'Merge tier' },
-    // 注: 最終の PR レビュー&fix ループは workflow('pr-iterate') がサブ workflow として
+    // 注: 最終の PR レビュー&fix ループは workflow('pr-iterate-run') がサブ workflow として
     //     自前の 'Iterate' phase を持つ。親 meta には現れない。
   ],
 }
@@ -6738,14 +6738,16 @@ let prBodyLatest = prBody
 // nested 起動時に dev-flow が pr-iterate へ渡す context。pr-iterate 側はこれを
 // 受けて pr-meta probe / isolation-cleanup を skip する — cwd/head_ref/repo/epoch は dev-flow が
 // 既に確定済みの値として保持しており、pr-iterate 側での再取得は冗長な exec-proxy 呼び出しになる。
+// caller:'dev-flow' で /pr-iterate 単体起動（caller:'standalone'）と区別し、pr-iterate 側の終端サマリー
+// 投稿を止める（終端サマリーは dev-flow が Merge tier の後に投稿する）。
 // epoch は pr（commit+PR dev-runner 応答）の epoch を渡す（dev-flow 自身の isolation-probe token
 // である args.setup.epoch とは別時刻のため、probe パス
 // `.devflow-tmp/.isolation-probe-<token>` が衝突しない）。
 const prIterateArgs = () => ({
-  pr: pr.pr_number, post_terminal_summary: false, acceptance_criteria: req.acceptance_criteria,
+  pr: pr.pr_number, acceptance_criteria: req.acceptance_criteria,
   plugin_commit: PLUGIN_COMMIT,
   nested: {
-    cwd: WT, head_ref: state.setup.branch,
+    caller: 'dev-flow', cwd: WT, head_ref: state.setup.branch,
     ...(REPO ? { repo: REPO } : {}),
     ...(typeof pr?.head_sha === 'string' && pr.head_sha.trim() !== '' ? { head_sha: pr.head_sha.trim() } : {}),
     ...(Number.isFinite(pr?.epoch) ? { epoch: pr.epoch } : {}),
@@ -6759,8 +6761,8 @@ const prIterateArgs = () => ({
 // かつ !state.runEval（Evaluate が強制実行されていない）かつ state.dangerHits が空
 // （danger-grep hit なし）。runEval を forced にする条件（danger hit / testsurf / 宣言外 /
 // green-fix / UI touch。いずれも軸A invariant 由来）が 1 つでも成立していれば lite から
-// 除外され、現行 workflow('pr-iterate') フル経路を通す（軸A invariant 不変）。
-// 注: workflow('pr-iterate') は「親 workflow の中の workflow()」= ネスト1段で合法。
+// 除外され、現行 workflow('pr-iterate-run') フル経路を通す（軸A invariant 不変）。
+// 注: workflow('pr-iterate-run') は「親 workflow の中の workflow()」= ネスト1段で合法。
 //     pr-iterate.js 内に workflow() を足すと2段になり throw するので入れないこと。
 // ============================================================
 const LITE = state.EFFECTIVE_SHAPE === 'micro' && !state.runEval && state.dangerHits.length === 0
@@ -6768,7 +6770,7 @@ let iterate
 // route: PR phase の経路識別子（'lite'|'full'）。返り値と telemetry に載る。
 let route
 // iterate_end の clock 給電候補。branch ごとに設定する — lite clean 終端は
-// reviewLite/ciLite の epoch、full・lite 昇格は workflow('pr-iterate') 返り値の end_epoch から。
+// reviewLite/ciLite の epoch、full・lite 昇格は workflow('pr-iterate-run') 返り値の end_epoch から。
 let iterateEpochRes = null
 if (LITE) {
   const reviewPromptLite = `cd ${WT} で作業。PR #${pr.pr_number} を批判的にレビューせよ。`
@@ -6783,9 +6785,9 @@ if (LITE) {
   )
   const liteOutcome = classifyLiteReview(reviewLite)
   if (liteOutcome.escalate) {
-    log(`lite 経路: pr-review-lite が escalate（${reviewLite == null ? 'review=null' : 'blocking ' + liteOutcome.blocking.length + ' 件'}）— フル workflow('pr-iterate') へ委譲`)
+    log(`lite 経路: pr-review-lite が escalate（${reviewLite == null ? 'review=null' : 'blocking ' + liteOutcome.blocking.length + ' 件'}）— フル workflow('pr-iterate-run') へ委譲`)
     ABORT_CTX.phase = 'PR'; ABORT_CTX.label = 'pr-iterate'
-    iterate = await workflow('dev-flow:pr-iterate', prIterateArgs())
+    iterate = await workflow('dev-flow:pr-iterate-run', prIterateArgs())
     route = 'full'
     iterateEpochRes = epochResOf({ epoch: iterate?.end_epoch })
   } else {
@@ -6800,16 +6802,16 @@ if (LITE) {
       iterateEpochRes = maxEpochRes([reviewLite, ciLite])
       log(`lite 経路: clean review + CI ${ciLite.status} — lgtm 終端（フル pr-iterate 起動なし）`)
     } else {
-      log(`lite 経路: CI が ${ciLite?.status ?? 'null'}（green でない）— フル workflow('pr-iterate') へ委譲`)
+      log(`lite 経路: CI が ${ciLite?.status ?? 'null'}（green でない）— フル workflow('pr-iterate-run') へ委譲`)
       ABORT_CTX.phase = 'PR'; ABORT_CTX.label = 'pr-iterate'
-      iterate = await workflow('dev-flow:pr-iterate', prIterateArgs())
+      iterate = await workflow('dev-flow:pr-iterate-run', prIterateArgs())
       route = 'full'
       iterateEpochRes = epochResOf({ epoch: iterate?.end_epoch })
     }
   }
 } else {
   ABORT_CTX.phase = 'PR'; ABORT_CTX.label = 'pr-iterate'
-  iterate = await workflow('dev-flow:pr-iterate', prIterateArgs())
+  iterate = await workflow('dev-flow:pr-iterate-run', prIterateArgs())
   route = 'full'
   iterateEpochRes = epochResOf({ epoch: iterate?.end_epoch })
 }

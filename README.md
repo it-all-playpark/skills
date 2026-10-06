@@ -328,7 +328,7 @@ config = load_skill_config("ga-analyzer")
 | `dep-guardian` | 依存関係更新PRのトリアージ・テスト・バッチマージ |
 
 > `dev-flow` の判断系 leaf (計画/レビュー/実装/評価) は subagent (`plugins/dev-flow/agents/`) として実装。
-> 最終 PR レビューは `dev-flow:pr-iterate` workflow (`/pr-iterate <pr>` で単体起動も可)。
+> 最終 PR レビューは `dev-flow:pr-iterate-run` workflow (`/pr-iterate <pr>` の wrapper skill で単体起動も可)。
 
 📊 **[dev-flow Pipeline Atlas](docs/dev-flow-atlas.md)** — 8 phase のパイプライン・shape 判定・
 `pr-iterate` ループ・merge tier 判定を mermaid 図で示した実装ベースの索引。
@@ -345,7 +345,7 @@ config = load_skill_config("ga-analyzer")
 
 | スキル | 説明 |
 |--------|------|
-| `pr-iterate` | LGTM取得までの review ⇄ fix 改善ループ (dynamic workflow) |
+| `pr-iterate` | LGTM取得までの review ⇄ fix 改善ループ (wrapper skill が `pr-iterate-prerun` で PR head の worktree を用意し dynamic workflow `pr-iterate-run` を起動) |
 
 ### ドキュメント
 
@@ -459,17 +459,17 @@ skills/
 │   │   │   └── references/subagent-dispatch.md  # Subagent dispatch 必須5要素
 │   │   ├── bin/journal                   # core bare 名 wrapper（1本）
 │   │   └── journal/                      # journal.sh（dev-flow telemetry・失敗記録）
-│   ├── dev-flow/                         # issue-to-LGTM ワークフロー plugin（6 skills, 8 agents）
+│   ├── dev-flow/                         # issue-to-LGTM ワークフロー plugin（7 skills, 8 agents）
 │   │   ├── .claude/
 │   │   │   ├── workflows/                # dynamic workflow js（dev-flow.js / pr-iterate.js 等）
 │   │   │   └── agents -> ../agents       # symlink（plugin subagent 読み込み用）
 │   │   ├── agents/                       # 8 dev-flow agent 実体
 │   │   ├── _lib/                         # workflow のロジック本体・test
 │   │   ├── _shared/scripts/              # dev-flow 共通スクリプト
-│   │   ├── bin/                          # dev-flow bare 名 wrapper（22本）
+│   │   ├── bin/                          # dev-flow bare 名 wrapper（23本）
 │   │   └── dev-flow/, dev-flow-health/, dev-issue-analyze/,
-│   │       git-commit/, git-pr/, github-issue-orchestrator/（SKILL.md 6本）,
-│   │       pr-iterate/（workflow のみ・SKILL.md 無し）
+│   │       git-commit/, git-pr/, github-issue-orchestrator/,
+│   │       pr-iterate/（SKILL.md 7本）
 │   └── playpark-skills/                  # 個人用スキル plugin（dependencies: playpark-core）
 │       ├── bin/                          # playpark-skills bare 名 wrapper（18本、<skill>-<action> 命名）
 │       ├── _lib/config.py                # Python共通設定ローダー

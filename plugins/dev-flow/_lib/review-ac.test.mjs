@@ -187,9 +187,9 @@ for (const [name, overrides] of Object.entries(NESTED_LAUNCH_SCENARIOS)) {
     assertNoCrash(error, name);
     const wentLite = calls.some((c) => c.label === 'pr-review-lite');
     assert.equal(wentLite, name.startsWith('lite'), `${name}: lite route の通過有無が想定と異なる（pr-review-lite ${wentLite ? 'あり' : 'なし'}）`);
-    const nested = launches.filter((l) => l.name === 'dev-flow:pr-iterate');
+    const nested = launches.filter((l) => l.name === 'dev-flow:pr-iterate-run');
     assert.equal(nested.length, 1, `${name}: nested pr-iterate は 1 回起動されるはずだが ${nested.length} 回`);
     assert.equal(JSON.stringify(nested[0].args?.acceptance_criteria), JSON.stringify(AC), `${name}: nested 起動 args の acceptance_criteria が analyze の AC と一致しない: ${JSON.stringify(nested[0].args)}`);
-    assert.equal(nested[0].args?.post_terminal_summary, false);
+    assert.equal(nested[0].args?.nested?.caller, 'dev-flow');
   });
 }

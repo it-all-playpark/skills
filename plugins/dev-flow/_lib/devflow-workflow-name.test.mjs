@@ -111,6 +111,19 @@ test('[workflow-name] VM: abort run の journal-log 系 prompt JSON が "skill":
   );
 });
 
+// (e) pr-iterate.js の meta.name は skill 名（pr-iterate/SKILL.md の wrapper）と衝突しない 'pr-iterate-run'
+//     （dev-flow-run と対称。issue #828）。旧名の alias は作らないので、旧 namespaced 名での nested 起動も無い。
+//     telemetry の skill:'pr-iterate' は集計連続性のため変えない（priterate-abort-telemetry.test.mjs が pin）
+test('[workflow-name] pr-iterate.js: meta.name が pr-iterate-run で、旧名 workflow(\'dev-flow:pr-iterate\') の呼び出しが残らない', () => {
+  const prIterateSrc = readFileSync(join(workflowDir, 'pr-iterate.js'), 'utf8');
+  assert.equal(loadWorkflowMeta(prIterateSrc).name, 'pr-iterate-run', 'pr-iterate.js の meta.name の rename が未適用');
+  assert.match(devFlowSrc, /workflow\('dev-flow:pr-iterate-run', prIterateArgs\(\)\)/, 'dev-flow.js の nested 起動が新名でない');
+  for (const file of readdirSync(workflowDir).filter((f) => f.endsWith('.js'))) {
+    const src = readFileSync(join(workflowDir, file), 'utf8');
+    assert.doesNotMatch(src, /[Ww]orkflow\(\s*\{?\s*(name:\s*)?['"](dev-flow:)?pr-iterate['"]/, `${file} に旧名 pr-iterate での workflow 起動が残っている`);
+  }
+});
+
 // (d) .claude/workflows/*.js に workflow('dev-flow') 形式の nested 呼び出しが無い
 test('[workflow-name] .claude/workflows/*.js に workflow(\'dev-flow\') 形式の nested 呼び出しが存在しない', () => {
   const files = readdirSync(workflowDir).filter((f) => f.endsWith('.js'));

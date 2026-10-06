@@ -310,13 +310,15 @@ pr-reviewer 1-pass と CI green だけで終端する。blocking finding か CI 
 
 ## 3. pr-iterate ループ
 
-`pr-iterate` は dev-flow から入れ子で呼ばれるほか、単体でも起動できる。approve が出ても
+`pr-iterate`（workflow 名 `pr-iterate-run`）は dev-flow から入れ子で呼ばれるほか、`/pr-iterate` の wrapper skill
+（`pr-iterate-prerun` で PR head の worktree を用意 → EnterWorktree）から単体でも起動できる。どちらも `args.nested` を
+渡すので pr-meta / isolation-cleanup は起動しない（終端サマリーの投稿は単体起動だけ）。approve が出ても
 CI gate を通らなければ LGTM にならず、**CI pending を成功扱いすることは決してない**。
 同じ topic が `REVIEW_STUCK` 回繰り返された時点で stuck と判定して人間へ渡す。
 
 ```mermaid
 flowchart TD
-    IN["pr-iterate PR 番号<br/>MAX / REVIEW_STUCK<br/>nested 起動時は pr-meta / isolation-cleanup を skip<br/>（isolation probe 本体は不変で実行）"] --> LOOP["iteration i"]
+    IN["pr-iterate PR 番号<br/>MAX / REVIEW_STUCK<br/>nested 起動時（dev-flow / /pr-iterate wrapper）は<br/>pr-meta / isolation-cleanup を skip<br/>（isolation probe 本体は不変で実行）"] --> LOOP["iteration i"]
     LOOP --> REV["pr-reviewer が実 diff を宣言意図に照合<br/>issue の acceptance criteria も判定に含める"]
     REV --> D{"decision"}
 

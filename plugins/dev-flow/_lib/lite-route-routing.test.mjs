@@ -298,7 +298,7 @@ test('[lite-route][C] lite review が critical finding を返す → workflow(\'
     `escalate ケース（critical finding）: workflow('pr-iterate') が 1 回呼ばれるべきだが ${workflowCalls.length} 回だった`,
   );
   if (workflowCalls.length > 0) {
-    assert.equal(workflowCalls[0].name, 'dev-flow:pr-iterate');
+    assert.equal(workflowCalls[0].name, 'dev-flow:pr-iterate-run');
   }
 });
 

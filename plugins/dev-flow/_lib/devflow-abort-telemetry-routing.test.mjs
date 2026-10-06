@@ -301,7 +301,7 @@ test('[abort-telemetry] (6) 完走経路: journal-log-abort が 0 回・journal-
 });
 
 // ============================================================
-// (7) nested pr-iterate（workflow('dev-flow:pr-iterate')）が throw
+// (7) nested pr-iterate（workflow('dev-flow:pr-iterate-run')）が throw
 // ============================================================
 test('[abort-telemetry] (7) nested workflow(pr-iterate) が throw → abort entry の error_msg / error_phase は直前 trackedAgent でなく pr-iterate を指す', async () => {
   const { ctx, calls } = makeSandbox({
@@ -406,7 +406,7 @@ test('[abort-telemetry] (8) PR phase 失敗: abort entry ではなく outcome=fa
   assert.deepEqual(payload.telemetry.phase_durations, { pr: 250 });
   assert.equal(payload.telemetry.duration_seconds, 300);
 
-  for (const label of ['closes-reinject', 'workflow:dev-flow:pr-iterate', 'merge-tier-facts', 'post-summary', 'journal-log']) {
+  for (const label of ['closes-reinject', 'workflow:dev-flow:pr-iterate-run', 'merge-tier-facts', 'post-summary', 'journal-log']) {
     assert.equal(calls.filter((c) => c.label === label).length, 0, `(8) PR 失敗後に ${label} が呼ばれた`);
   }
   // push / PR 作成は pr#1 の 1 spawn だけで、run 内で再試行しない（#804 / #819）
