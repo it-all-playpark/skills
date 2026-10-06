@@ -6,6 +6,8 @@
 # verbatim で転写するだけで、スクリプトの選択・起動失敗の分類・failed_files の抽出はここで行う。
 #
 # 手順:
+#   0. <WT> の untracked で ignore 対象外のファイル（.devflow-tmp/ を除く）を git add --intent-to-add で index に
+#      載せる（中身は stage しない）。git grep / git ls-files 系のテストから新規ファイルが見える状態で走らせる。
 #   1. workspace-prebuild.sh <WT>（pnpm ワークスペースのビルド成果物をテストの直前に作り直す）。
 #      status "failed" のときはテストを 1 本も実行せず status "failed"（reason を summary の先頭に置く）。
 #      それ以外（built / skipped / JSON でない）はビルドを再試行せずテストへ進む。
@@ -57,6 +59,26 @@ cd "$WT" || { emit error error false "cd failed: $WT" '[]' '[]'; exit 2; }
 
 LOG_DIR=$(mktemp -d "${TMPDIR:-/tmp}/run-tests-XXXXXX") \
     || { emit error error false "cannot create log dir under ${TMPDIR:-/tmp}" '[]' '[]'; exit 0; }
+
+# 0. untracked の新規ファイルを intent-to-add で index に載せる
+#    テストは commit 前の worktree で走るため、Implement / fix が作ったファイルは untracked のまま。
+#    git grep / git ls-files で repo 全体を検査する invariant テストからは見えず、ローカル green・CI red になる
+#    （個々のテストを --untracked に直すとテストを足すたびに同じ漏れが起きるので、runner で一度だけ載せる）。
+#    intent-to-add は中身を stage しない — write-tree・commit される tree は変わらず、PR phase の
+#    git add -A が従来どおり中身を載せる。.devflow-tmp/ は run の一時ファイル置き場なので載せない。
+#    git の work tree でなければ何もしない。失敗してもテストは止めず stderr に警告を出す（従来の挙動に戻るだけ）。
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    if git ls-files -z --others --exclude-standard -- . ':(exclude).devflow-tmp' > "$LOG_DIR/untracked.list" \
+        2>"$LOG_DIR/intent-to-add.log"; then
+        if [[ -s "$LOG_DIR/untracked.list" ]] \
+            && ! git --literal-pathspecs add --intent-to-add --pathspec-from-file="$LOG_DIR/untracked.list" \
+                --pathspec-file-nul >>"$LOG_DIR/intent-to-add.log" 2>&1; then
+            echo "[run-tests] warning: git add --intent-to-add failed — untracked files stay invisible to git grep (log: $LOG_DIR/intent-to-add.log)" >&2
+        fi
+    else
+        echo "[run-tests] warning: git ls-files --others failed (log: $LOG_DIR/intent-to-add.log)" >&2
+    fi
+fi
 
 # 1. workspace-prebuild
 PREBUILD_OUT=$(bash "$PREBUILD" "$WT" 2>"$LOG_DIR/prebuild.log")

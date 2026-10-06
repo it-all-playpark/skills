@@ -6,6 +6,7 @@ bats_require_minimum_version 1.5.0
 # Strategy: mktemp -d に tests/run-*.sh の fixture（exit 0 / 1 / 126 を返す script、bats / vitest 形式の
 # 失敗出力を吐く script）を置き、status / tests / green / scripts / failed_files を stdout の JSON 1 行で検査する。
 # tests/run-*.sh が無い repo のフォールバックは npm / pnpm を stub（PATH 先頭）に差し替えて実 install なしで回す。
+# untracked の intent-to-add（issue #833）は WT を git init した fixture で、git grep invariant の red と index の状態を見る。
 
 setup() {
     SCRIPT="$BATS_TEST_DIRNAME/run-tests.sh"
@@ -215,6 +216,77 @@ EOF
     run_tests
     echo "$JSON" | jq -e '.status == "passed"'
     [ -f "$WT/tests/a.marker" ]
+}
+
+# WT を git repo にし、その時点のファイル（tests/ を含む）を 1 commit にする
+init_repo() {
+    git -C "$WT" init -q
+    git -C "$WT" add -A
+    git -C "$WT" -c user.name=t -c user.email=t@example.com commit -q -m base
+}
+
+# tests/ 以外に禁止文字列があれば exit 1 する git grep invariant（plugin-manifest.bats の移管済み skill 名検査と同型）。
+# 禁止文字列は分割して書き、script 自身が一致しないようにする
+make_grep_invariant() {
+    make_script run-invariant.sh 'pat="forbidden""-skill-name"; if git grep -q "$pat" -- ":(exclude)tests"; then echo "not ok 1 forbidden name remains"; exit 1; fi; echo "ok 1 invariant"'
+}
+
+@test "intent-to-add: untracked の新規ファイルにだけ禁止文字列があると git grep の invariant が red になる（中身は stage しない）" {
+    make_grep_invariant
+    init_repo
+    mkdir -p "$WT/plugins/x"
+    echo "forbidden-skill-name" > "$WT/plugins/x/new.txt"
+    run_tests
+    echo "$JSON" | jq -e '.status == "failed" and .green == false'
+    echo "$JSON" | jq -e '.summary | contains("forbidden name remains")'
+    run git -C "$WT" ls-files plugins/x/new.txt
+    [ "$output" = "plugins/x/new.txt" ]
+    run git -C "$WT" diff --cached --name-only
+    [ -z "$output" ]
+}
+
+@test "intent-to-add: .devflow-tmp/ 配下と ignore 対象のファイルは index に載らない" {
+    make_grep_invariant
+    printf 'ignored/\n' > "$WT/.gitignore"
+    init_repo
+    mkdir -p "$WT/.devflow-tmp" "$WT/ignored"
+    echo "forbidden-skill-name" > "$WT/.devflow-tmp/pr-body.md"
+    echo "forbidden-skill-name" > "$WT/ignored/build.txt"
+    run_tests
+    echo "$JSON" | jq -e '.status == "passed" and .green == true'
+    run git -C "$WT" ls-files .devflow-tmp ignored
+    [ -z "$output" ]
+    run git -C "$WT" status --porcelain --untracked-files=all
+    [ "$output" = "?? .devflow-tmp/pr-body.md" ]
+}
+
+@test "intent-to-add: PR phase の git add -A で commit される tree は run-tests を挟んでも変わらない" {
+    make_script run-a.sh 'exit 0'
+    echo base > "$WT/tracked.txt"
+    init_repo
+    echo changed > "$WT/tracked.txt"
+    mkdir -p "$WT/src"
+    echo new > "$WT/src/new.txt"
+    echo "with space" > "$WT/src/a b*.txt"
+    # run-tests を通さない場合に git add -A が作る tree（実 index を触らない一時 index で算出）
+    tmp_index="$TMP_DIR/expected.index"
+    GIT_INDEX_FILE="$tmp_index" git -C "$WT" read-tree HEAD
+    GIT_INDEX_FILE="$tmp_index" git -C "$WT" add -A
+    expected=$(GIT_INDEX_FILE="$tmp_index" git -C "$WT" write-tree)
+    head_tree=$(git -C "$WT" rev-parse 'HEAD^{tree}')
+    run_tests
+    echo "$JSON" | jq -e '.status == "passed"'
+    # intent-to-add は中身を stage しない
+    [ "$(git -C "$WT" write-tree)" = "$head_tree" ]
+    git -C "$WT" add -A
+    [ "$(git -C "$WT" write-tree)" = "$expected" ]
+}
+
+@test "intent-to-add: git の work tree でなければ何もせずテストへ進む" {
+    make_script run-a.sh 'exit 0'
+    run_tests
+    echo "$JSON" | jq -e '.status == "passed"'
+    [ ! -d "$WT/.git" ]
 }
 
 @test "引数不正は exit 2 で status error の JSON を出す" {
