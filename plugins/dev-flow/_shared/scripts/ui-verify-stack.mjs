@@ -49,7 +49,10 @@ import {
 
 const SELF = fileURLToPath(import.meta.url);
 const STOP_GRACE_MS = 10_000;
-const POLL_MS = 500;
+// 状態確認（ready / stop file / supervisor の生死）の間隔。UI_VERIFY_POLL_MS は test が stack の
+// up → down を速く回すためだけのもの。未設定・不正値なら 500ms（実運用の既定）。
+const DEFAULT_POLL_MS = 500;
+export const POLL_MS = Number(process.env.UI_VERIFY_POLL_MS) > 0 ? Number(process.env.UI_VERIFY_POLL_MS) : DEFAULT_POLL_MS;
 const PORT_PROBE_LIMIT = 50;
 // up / wait が 1 回で待つ秒数。workflow の 1 回の Bash 呼び出し（上限 600 秒）に、前回 stack の停止
 // （最大 30 秒）や port 割り当てを足しても収まる値にする。
