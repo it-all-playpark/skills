@@ -14,7 +14,7 @@
 //         （review#2 以降の fix delta 起点。nested 起動のみが本番経路で pr-meta probe を通らないため）。
 //         pr.head_sha が空文字・欠落のときは nested に head_sha キー自体を含めない
 //   PR 失敗 (#682/#823): pr#<issue> の中断応答（committed:false / pr_url 空 / pr_number 非正）は
-//         closes-check・nested pr-iterate へ流さず、throw せず failed_step / failure_reason を返り値に載せて
+//         nested pr-iterate・Merge tier へ流さず、throw せず failed_step / failure_reason を返り値に載せて
 //         終端し、failure handoff（error_category: pr_phase_failed）を書く。正常系は従来どおり nested pr-iterate まで進む
 //   prompt: issue_body + acceptance_criteria + task_id + 配置規約を含み、AC テスト契約は含まない
 //
@@ -339,14 +339,14 @@ test('[implementer] AC-7: pr.head_sha が空文字のとき nested に head_sha 
 
 // ============================================================
 // PR phase 失敗（issue #682 / #823）: pr#<issue> の中断応答（committed:false / pr_url 空 / pr_number 非正）
-// は closes-check・nested pr-iterate へ流さず、throw もせず、failed_step / failure_reason を返り値に載せた
+// は nested pr-iterate・Merge tier へ流さず、throw もせず、failed_step / failure_reason を返り値に載せた
 // failure 終端（error_category: pr_phase_failed）で run を終える。journal は abort entry ではなく
 // error_category=pr_phase_failed の failure entry（error_msg は pr-iterate の引数検証文でなく proxy の失敗文）。
 // ============================================================
 const PR_FAILURE_REASON = "fatal: Unable to create '.git/index.lock': Operation not permitted";
 const PR_FAILED_RESPONSE = { pr_url: '', pr_number: 0, committed: false, failed_step: 'commit', failure_reason: PR_FAILURE_REASON };
 
-test('[implementer] PR phase 失敗 (#682/#823): pr#1 が committed:false / pr_number:0 を返すと run は throw せず、返り値に failed_step / failure_reason が載り、closes-check と workflow(pr-iterate) は呼ばれない', async () => {
+test('[implementer] PR phase 失敗 (#682/#823): pr#1 が committed:false / pr_number:0 を返すと run は throw せず、返り値に failed_step / failure_reason が載り、closes-reinject と workflow(pr-iterate) は呼ばれない', async () => {
   const { calls, workflowCalls, error, result } = await runStandardWithWorkflowCapture({ 'pr#1': PR_FAILED_RESPONSE });
   assert.equal(error, null, `pr#1 の中断応答で run が throw した: ${error?.message}`);
   assert.equal(result.error_category, 'pr_phase_failed');
@@ -354,8 +354,8 @@ test('[implementer] PR phase 失敗 (#682/#823): pr#1 が committed:false / pr_n
   assert.equal(result.failure_reason, PR_FAILURE_REASON);
   assert.equal(result.committed, false);
   assert.equal(workflowCalls.length, 0, `workflow('dev-flow:pr-iterate') が呼ばれた: ${workflowCalls.map((w) => `${w.name}(pr=${w.opts?.pr})`).join(', ')}`);
-  const closes = calls.filter((c) => c.label === 'closes-check' || c.label === 'closes-reinject' || c.label === 'closes-recheck');
-  assert.equal(closes.length, 0, `closes-check 系が呼ばれた: ${closes.map((c) => c.label).join(', ')}`);
+  const closes = calls.filter((c) => c.label.startsWith('closes-'));
+  assert.equal(closes.length, 0, `closes 系が呼ばれた: ${closes.map((c) => c.label).join(', ')}`);
   assert.ok(calls.some((c) => c.label === 'pr#1'), 'pr#1 自体は呼ばれているはず');
 });
 
@@ -393,12 +393,12 @@ test('[implementer] PR push 失敗 (#819/#823): pr#1 が failed_step:push を返
   assert.ok(payload.error_msg.includes(`step: push、reason: ${reason}、push 出力全文: ${pushLog}）`), `failure handoff の error_msg に push log のパスが無い: ${payload.error_msg}`);
 });
 
-test('[implementer] PR fail-closed (#682): 正常系（committed:true, pr_number:1）は従来どおり closes-check → nested pr-iterate まで進む', async () => {
+test('[implementer] PR fail-closed (#682): 正常系（committed:true, pr_number:1）は従来どおり nested pr-iterate → Merge tier まで進む', async () => {
   const { calls, workflowCalls, error } = await runStandardWithWorkflowCapture({
     'pr#1': { pr_url: 'http://x', pr_number: 1, committed: true, failed_step: '', failure_reason: '' },
   });
   assert.equal(error, null, `run が throw した: ${error?.message}`);
-  assert.ok(calls.some((c) => c.label === 'closes-check'), 'closes-check が呼ばれていない');
+  assert.ok(calls.some((c) => c.label === 'merge-tier-facts'), 'merge-tier-facts が呼ばれていない');
   assert.equal(workflowCalls.length, 1, `workflow('dev-flow:pr-iterate') は 1 回のはず: ${workflowCalls.map((w) => w.name).join(', ')}`);
   assert.equal(workflowCalls[0].name, 'dev-flow:pr-iterate');
   assert.equal(workflowCalls[0].opts?.pr, 1);

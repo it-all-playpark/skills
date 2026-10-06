@@ -12,9 +12,9 @@
 // 6 セクション固定構成で、各セクションを PR_BODY_* 定数で決定論 clip する（issue #661）。
 // 表・複数行の記録（IMPL の pr_sections）だけは clip せず改行を保ったまま `<details>` に載せ、
 // PR_BODY_MAX_CHARS は `<details>` の外（可視部）にだけ掛ける（issue #815）。
-// Closes 行の存在検証（hasClosesLine / verifyPrBody / extractPrBody / closesVerdict）と、`gh pr view --json body` /
-// `gh pr edit --body-file` の exec-proxy prompt（prBodyViewPrompt / prBodyEditPrompt）もここに置き、
-// 判定は本ファイルの純関数のみが行う（agent は verbatim 転写・bare 単文実行のみ）。
+// 本文構造の検証（hasClosesLine / verifyPrBody）と、`gh pr edit --body-file` の exec-proxy prompt
+// （prBodyEditPrompt）もここに置き、判定は本ファイルの純関数のみが行う（agent は verbatim 転写・bare 単文実行のみ）。
+// 作成後の PR に Closes 行が残っているかの検証と再投入は Merge tier（_lib/merge-tier-facts.mjs）が持つ。
 //
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
@@ -257,10 +257,10 @@ function escapeHtml(s) {
 
 // pr_sections の markdown に含まれる本文構造の偽物を無害化する: `<details>` / `</details>` タグは `<` の直後に
 // ゼロ幅スペースを挟んで折りたたみ構造を壊させず、行全体が `Closes #<n>` の行は行頭にゼロ幅スペースを付けて
-// hasClosesLine に数えさせない — 末尾の本物の Closes 行が転写で落ちたとき、closes-check が中身の偽物で
-// verified を返さないため（issue #815）。見た目はほぼ変わらない。
+// hasClosesLine に数えさせない — 末尾の本物の Closes 行が落ちたとき、構造検証が中身の偽物で
+// Closes ありと判定しないため（issue #815）。見た目はほぼ変わらない。
 // 閉じていないコードフェンスと `<!--` も同じ理由で塞ぐ: GitHub は後続の `</details>` と末尾の `Closes #<n>` を
-// コード / コメントとして飲み込み issue リンクが外れるが、closes-check は行単位なので verified を返してしまう。
+// コード / コメントとして飲み込み issue リンクが外れるが、本文の文字列検証はそれを見分けられない。
 // 開いたままのフェンスには同じ記号・長さの閉じフェンスを足し、`<!--` は `<!` の後にゼロ幅スペースを挟む。
 const ZWSP = String.fromCharCode(0x200b);
 function closeOpenFence(md) {
@@ -464,45 +464,9 @@ export function verifyPrBody(body, issue) {
   return { ok: missing.length === 0, missing, closes, length: Array.from(s).length };
 }
 
-// `gh pr view --json body` の stdout 全文（exec-proxy が無加工で返す raw）から body を取り出す。
-// JSON として不正・object でない・.body が string でない場合は null。body の取り出しを agent に
-// 任せると haiku が自前の `{"ok":true,"body":...}` を body に詰めて二重 JSON 化し、改行がエスケープ
-// されたまま Closes 行を見落とす（issue #713）ため、取り出しは本関数だけが行う。
-export function extractPrBody(raw) {
-  if (typeof raw !== 'string') return null;
-  let parsed;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return null;
-  }
-  if (parsed == null || typeof parsed !== 'object' || typeof parsed.body !== 'string') return null;
-  return parsed.body;
-}
-
-// gh pr view --json body の exec-proxy 応答（{ok, raw}）から Closes 行の有無を判定する。取得失敗・
-// raw が不正 JSON・body 非 string は 'unknown'（fail-open。再投入しない）。
-export function closesVerdict({ view, issue }) {
-  if (view == null || view.ok !== true) return 'unknown';
-  const body = extractPrBody(view.raw);
-  if (body == null) return 'unknown';
-  return hasClosesLine(body, issue) ? 'present' : 'missing';
-}
-
-// PR phase / Final reconcile 後の Closes 検証・再投入で dev-flow.js が持つ状態の closed enum。
+// Merge tier の Closes 検証・再投入（merge-tier-facts の closes サブ結果と closes-reinject）で dev-flow.js が
+// 持つ状態の closed enum。
 export const PR_CLOSES_STATUS_VALUES = ['verified', 'reinjected', 'missing', 'unverified'];
-
-// gh pr view --json body の exec-proxy 応答の agent() schema。
-export const PR_BODY_VIEW = {
-  type: 'object',
-  required: ['ok'],
-  properties: {
-    ok: { type: 'boolean' },
-    raw: { type: ['string', 'null'] },
-    error: { type: 'string' },
-    epoch: { type: 'number' },
-  },
-};
 
 // gh pr edit --body-file の exec-proxy 応答の agent() schema。
 export const PR_BODY_EDIT = {
@@ -515,35 +479,8 @@ export const PR_BODY_EDIT = {
   },
 };
 
-// PR #<pr> の本文 (body) を読み取り専用で取得する exec-proxy 向け prompt（closes-check / closes-recheck
-// label で使う。final-ci.mjs の finalCiPrompt と同型）。
-export function prBodyViewPrompt({ pr, repo }) {
-  const cmd = `gh pr view ${pr}${repo ? ' --repo ' + repo : ''} --json body`;
-  return `## Objective\n`
-    + `PR #${pr} の本文 (body) を取得し、コマンドの stdout を加工せずそのまま返せ。\n\n`
-    + `## Tools\n`
-    + `- 使用可: Bash のみ\n`
-    + `- 禁止: Write, Edit, git commit, git push\n\n`
-    + `## Boundary\n`
-    + `- 読み取り専用。git mutation（commit/push/reset 等）禁止\n\n`
-    + `## Steps\n`
-    + `1. \`${cmd}\` を先頭トークンが gh の bare 単文で 1 回だけ実行せよ`
-    + `（cd 前置・bash 前置・環境変数代入前置・&& 連結・パイプ・リダイレクト禁止）。\n`
-    + `2. stdout が空、JSON として不正、またはコマンドが実行できなかった場合は `
-    + `\`{"ok": false, "error": "<stderr の要約>"}\` を返せ。失敗時に ok:true を生成してはならない。`
-    + `原因調査はするな。再試行禁止。\n`
-    + `3. それ以外は stdout の全文を 1 つの文字列として \`raw\` に入れ、\`{"ok": true, "raw": <stdout 全文>}\` を返せ。`
-    + `stdout を JSON として解釈して body を取り出す・別の object に包み直す・要約・整形・省略はすべて禁止`
-    + `（body の取り出しは呼び出し側が行う）。\n\n`
-    + `## Output format\n`
-    + `{"ok": true, "raw": string} または {"ok": false, "error": string}\n`
-    + `prose 禁止。JSON のみ返せ。\n\n`
-    + `## Token cap\n`
-    + `JSON のみ。1 行以内（raw を除く）。`;
-}
-
-// PR #<pr> の本文を prBody の内容で上書きする exec-proxy 向け prompt（closes-reinject / ac-checkbox-sync
-// label で使う）。Write で bodyFile へ verbatim 保存させた後、bare 単文で gh pr edit する。
+// PR #<pr> の本文を prBody の内容で上書きする exec-proxy 向け prompt（ac-checkbox-sync label で使う）。
+// Write で bodyFile へ verbatim 保存させた後、bare 単文で gh pr edit する。
 export function prBodyEditPrompt({ wt, pr, repo, prBody, fileName }) {
   const bodyFile = `${wt}/.devflow-tmp/${fileName}`;
   const repoArg = repo ? ` --repo ${repo}` : '';

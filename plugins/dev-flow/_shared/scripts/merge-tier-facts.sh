@@ -3,21 +3,25 @@
 #
 # Purpose: dev-flow の Merge tier phase が個別 exec-proxy spawn で取得していた read-only
 # 事実 6 種 (diff-hash-merge / danger-grep-final / changed-files / gh-pr-view /
-# head-tree-oid / ci-checks) を 1 回のスクリプト実行で取得して 1 つの JSON に束ねる。
+# head-tree-oid / ci-checks) と PR body の `Closes #<issue>` 有無 (closes。issue #824) を
+# 1 回のスクリプト実行で取得して 1 つの JSON に束ねる。
 # 既存スクリプト (worktree-diff-hash.sh / diff-risk-classify.sh) とローカル read-only git を順に
 # 呼び出して集約するのみで、各スクリプトの判定ロジックは複製しない。
 #
 # 認証付き network I/O (gh) は本スクリプト内に持たない (.claude/rules/dev-flow.md の exec-proxy 制約。
 # check-ci と同じ precedent): `gh pr view` / `gh pr checks` は呼び出し側 subagent が gh を先頭
-# トークンとする bare 単文で実行し、その stdout を --pr-view-data / --checks-data の argv で
-# verbatim 転写する。本スクリプトはその argv 入力とローカル git の純変換に留まる。
+# トークンとする bare 単文で実行し、その stdout を --pr-view-data / --checks-data / --closes-data の
+# argv で verbatim 転写する。本スクリプトはその argv 入力とローカル git の純変換に留まる。
+# PR body は subagent 側が `gh pr view --json body --jq` で true / false に畳んでから渡す — 本文そのものを
+# argv や prompt に載せない (本文の転写ゆれで Closes 行を見落とす偽 HOLD を防ぐ。issue #713 / #824)。
 # 書き込み系コマンド (fetch / pull / comment / commit) は一切発行しない。
 #
 # Usage: merge-tier-facts.sh --worktree <abs-path> --base <ref> \
 #          [--pr-view-data '<gh pr view --json mergeable,mergeStateStatus,headRefOid の stdout>'] \
-#          [--checks-data '<gh pr checks --json name,bucket の stdout>']
+#          [--checks-data '<gh pr checks --json name,bucket の stdout>'] \
+#          [--closes-data '<gh pr view --json body --jq '.body | test("Closes #<issue>(\\D|$)")' の stdout>']
 #   --base は完全修飾 ref (例: origin/main)。呼び出し側 (dev-flow.js) が origin/ を付けて渡す。
-#   --pr-view-data / --checks-data は gh の stdout が空だった場合に省略してよい (省略は ok:false)。
+#   --pr-view-data / --checks-data / --closes-data は gh の stdout が空だった場合に省略してよい (省略は ok:false)。
 #
 # Output (stdout, JSON 1 行)。サブ結果は全て {ok, value, error?} で、1 つの失敗は他へ波及しない:
 #   diffhash  - worktree-diff-hash.sh <wt> <base> の出力 ({hash, empty, epoch})
@@ -32,6 +36,8 @@
 #               40hex でないときは ok:false (skipped)
 #   checks    - --checks-data の JSON array ({checks: [...]})。省略 / JSON array でないときは ok:false
 #               (gh pr checks の exit code は判定に使わない — 呼び出し側は stdout をそのまま渡す)
+#   closes    - --closes-data が `true` / `false` (前後の空白は除く) のとき ({present: <bool>})。
+#               省略 / それ以外の値は ok:false (取得失敗。Closes 欠落 = present:false とは区別する)
 #   epoch     - `date +%s` (clock mark 給電用。取得失敗は null)
 #
 # 呼び出し側 (dev-flow.js の parseMergeTierFacts) がサブ結果ごとに fail-closed (risk) /
@@ -48,7 +54,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 _CORE_BIN="$(command -v journal)" || { echo "playpark-core plugin (bin/journal) not on PATH" >&2; exit 127; }
 source "$(dirname "$_CORE_BIN")/../_lib/common.sh"
 
-SUB_KEYS=(diffhash risk changed pr head_tree checks)
+SUB_KEYS=(diffhash risk changed pr head_tree checks closes)
 
 # 全サブ結果を同一 error で ok:false にした degrade JSON を出す (jq 非依存)
 emit_degrade() {
@@ -78,6 +84,8 @@ PR_VIEW_DATA=""
 HAVE_PR_VIEW_DATA=false
 CHECKS_DATA=""
 HAVE_CHECKS_DATA=false
+CLOSES_DATA=""
+HAVE_CLOSES_DATA=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -85,11 +93,12 @@ while [[ $# -gt 0 ]]; do
         --base)         [[ $# -ge 2 ]] || usage_error "--base requires a value"; BASE="$2"; shift 2 ;;
         --pr-view-data) [[ $# -ge 2 ]] || usage_error "--pr-view-data requires a value"; PR_VIEW_DATA="$2"; HAVE_PR_VIEW_DATA=true; shift 2 ;;
         --checks-data)  [[ $# -ge 2 ]] || usage_error "--checks-data requires a value"; CHECKS_DATA="$2"; HAVE_CHECKS_DATA=true; shift 2 ;;
+        --closes-data)  [[ $# -ge 2 ]] || usage_error "--closes-data requires a value"; CLOSES_DATA="$2"; HAVE_CLOSES_DATA=true; shift 2 ;;
         *) usage_error "unknown option: $1" ;;
     esac
 done
 
-[[ -n "$WT" ]] || usage_error "usage: merge-tier-facts.sh --worktree <abs-path> --base <ref> [--pr-view-data <json>] [--checks-data <json>]"
+[[ -n "$WT" ]] || usage_error "usage: merge-tier-facts.sh --worktree <abs-path> --base <ref> [--pr-view-data <json>] [--checks-data <json>] [--closes-data <true|false>]"
 [[ "$WT" == /* ]] || usage_error "--worktree must be an absolute path"
 [[ -d "$WT" ]] || usage_error "worktree path does not exist: $WT"
 [[ -n "$BASE" ]] || usage_error "--base is required"
@@ -218,6 +227,21 @@ else
 fi
 
 # ============================================================================
+# 7. closes = --closes-data (gh pr view --json body --jq '.body | test("Closes #<issue>(\\D|$)")' の stdout 転写)
+# ============================================================================
+
+if [[ "$HAVE_CLOSES_DATA" != true ]]; then
+    closes_json="$(err_result "closes data not provided (--closes-data omitted: gh pr view --json body stdout was empty or the command failed)")"
+else
+    closes_trimmed="$(printf '%s' "$CLOSES_DATA" | tr -d '[:space:]')"
+    if [[ "$closes_trimmed" == "true" || "$closes_trimmed" == "false" ]]; then
+        closes_json="$(ok_result "$(jq -nc --argjson p "$closes_trimmed" '{present: $p}')")"
+    else
+        closes_json="$(err_result "closes data is not true/false: $(printf '%s' "$CLOSES_DATA" | head -c 300)")"
+    fi
+fi
+
+# ============================================================================
 # JSON emission
 # ============================================================================
 
@@ -230,7 +254,8 @@ jq -nc \
     --argjson pr "$pr_json" \
     --argjson head_tree "$head_tree_json" \
     --argjson checks "$checks_json" \
+    --argjson closes "$closes_json" \
     --argjson epoch "$epoch" \
-    '{diffhash: $diffhash, risk: $risk, changed: $changed, pr: $pr, head_tree: $head_tree, checks: $checks, epoch: $epoch}'
+    '{diffhash: $diffhash, risk: $risk, changed: $changed, pr: $pr, head_tree: $head_tree, checks: $checks, closes: $closes, epoch: $epoch}'
 
 exit 0

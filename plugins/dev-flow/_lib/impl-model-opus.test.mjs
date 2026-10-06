@@ -154,7 +154,8 @@ test('[impl-model-opus] (c) impl:serial:issue-1 の null は再試行されず 1
 
 // ============================================================
 // (d) shape 別 spawn 数・Evaluate 回数（fallback 撤去前の実測値から、journal handoff の 1 spawn 化
-// （issue #807: journal-save + journal-log → journal-log）で dev-runner-haiku が 1 減った値）
+// （issue #807: journal-save + journal-log → journal-log）で dev-runner-haiku が 1 減り、closes-check の
+// merge-tier-facts 吸収（issue #824）で dev-runner-haiku-ro が 1 減った値）
 // ============================================================
 
 const SHAPES = {
@@ -165,23 +166,23 @@ const SHAPES = {
       'danger-grep': { risk: { ok: true, hits: [] }, files: [...MICRO_FILES], struct: null, diffhash: { hash: 'AAA', empty: false } },
       'ci-check-lite': { status: 'passed', failed_checks: [], waited_seconds: 0, poll_attempts: 0 },
     },
-    total: 12,
+    total: 11,
     evals: 0,
-    byType: { 'dev-flow:dev-runner-haiku-wo': 1, 'dev-flow:dev-implementer': 1, 'dev-flow:dev-runner-haiku': 4, 'dev-flow:dev-runner-haiku-ro': 5, 'dev-flow:pr-reviewer': 1 },
+    byType: { 'dev-flow:dev-runner-haiku-wo': 1, 'dev-flow:dev-implementer': 1, 'dev-flow:dev-runner-haiku': 4, 'dev-flow:dev-runner-haiku-ro': 4, 'dev-flow:pr-reviewer': 1 },
   },
   standard: {
     args: analyzeArgs(1, { acceptance_criteria: ['a', 'b', 'c', 'd'], issue_type: 'feat' }),
     overrides: {},
-    total: 13,
+    total: 12,
     evals: 1,
-    byType: { 'dev-flow:dev-runner-haiku-wo': 1, 'dev-flow:dev-implementer': 1, 'dev-flow:dev-runner-haiku': 4, 'dev-flow:dev-runner-haiku-ro': 6, 'dev-flow:evaluator': 1 },
+    byType: { 'dev-flow:dev-runner-haiku-wo': 1, 'dev-flow:dev-implementer': 1, 'dev-flow:dev-runner-haiku': 4, 'dev-flow:dev-runner-haiku-ro': 5, 'dev-flow:evaluator': 1 },
   },
   complex: {
     args: COMPLEX_ARGS,
     overrides: {},
-    total: 13,
+    total: 12,
     evals: 1,
-    byType: { 'dev-flow:dev-runner-haiku-wo': 1, 'dev-flow:dev-implementer': 1, 'dev-flow:dev-runner-haiku': 4, 'dev-flow:dev-runner-haiku-ro': 6, 'dev-flow:evaluator': 1 },
+    byType: { 'dev-flow:dev-runner-haiku-wo': 1, 'dev-flow:dev-implementer': 1, 'dev-flow:dev-runner-haiku': 4, 'dev-flow:dev-runner-haiku-ro': 5, 'dev-flow:evaluator': 1 },
   },
 };
 

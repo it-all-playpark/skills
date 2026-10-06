@@ -45,7 +45,7 @@ teardown() {
 }
 
 run_facts() {
-    run bash "$SCRIPT" --worktree "$REPO" --base origin/main --pr-view-data "$PR_VIEW_JSON" --checks-data "$CHECKS_JSON" "$@"
+    run bash "$SCRIPT" --worktree "$REPO" --base origin/main --pr-view-data "$PR_VIEW_JSON" --checks-data "$CHECKS_JSON" --closes-data true "$@"
 }
 
 # ---------------------------------------------------------------------------
@@ -61,6 +61,7 @@ run_facts() {
         .pr.ok == true and .pr.value.mergeable == "MERGEABLE" and .pr.value.mergeStateStatus == "CLEAN" and .pr.value.headRefOid == $sha and
         .head_tree.ok == true and .head_tree.value.tree == $tree and
         .checks.ok == true and (.checks.value.checks | length) == 2 and .checks.value.checks[0].name == "build" and
+        .closes.ok == true and .closes.value.present == true and
         (.epoch | type) == "number"
     '
 }
@@ -120,13 +121,51 @@ run_facts() {
 }
 
 # ---------------------------------------------------------------------------
+# (e') closes: gh pr view --json body --jq '.body | test("Closes #<issue>(\\D|$)")' の stdout (true / false)
+#      だけを --closes-data で受ける (issue #824)。取得失敗 (省略 / true・false 以外) は ok:false で
+#      Closes 欠落 (present:false) と区別し、他サブ結果へ波及しない
+# ---------------------------------------------------------------------------
+@test "closes-data true (末尾改行つき stdout) -> closes.ok:true / present:true" {
+    run bash "$SCRIPT" --worktree "$REPO" --base origin/main --pr-view-data "$PR_VIEW_JSON" --checks-data "$CHECKS_JSON" --closes-data $'true\n'
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq -e '.closes == {ok: true, value: {present: true}}'
+}
+
+@test "closes-data false -> closes.ok:true / present:false、他サブ結果は ok:true" {
+    run bash "$SCRIPT" --worktree "$REPO" --base origin/main --pr-view-data "$PR_VIEW_JSON" --checks-data "$CHECKS_JSON" --closes-data false
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq -e '
+        .closes == {ok: true, value: {present: false}} and
+        .diffhash.ok == true and .risk.ok == true and .changed.ok == true and .pr.ok == true and .head_tree.ok == true and .checks.ok == true
+    '
+}
+
+@test "--closes-data 省略 (gh pr view --json body 失敗) -> closes だけ ok:false、他 6 つは ok:true" {
+    run bash "$SCRIPT" --worktree "$REPO" --base origin/main --pr-view-data "$PR_VIEW_JSON" --checks-data "$CHECKS_JSON"
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq -e '
+        .closes.ok == false and .closes.value == null and (.closes.error | test("not provided")) and
+        .diffhash.ok == true and .risk.ok == true and .changed.ok == true and .pr.ok == true and .head_tree.ok == true and .checks.ok == true
+    '
+}
+
+@test "closes-data が true / false 以外 (gh のエラー文・本文の混入) -> closes だけ ok:false" {
+    run bash "$SCRIPT" --worktree "$REPO" --base origin/main --pr-view-data "$PR_VIEW_JSON" --checks-data "$CHECKS_JSON" --closes-data 'Closes #1'
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq -e '
+        .closes.ok == false and .closes.value == null and (.closes.error | test("not true/false")) and
+        .pr.ok == true and .checks.ok == true
+    '
+}
+
+# ---------------------------------------------------------------------------
 # (f) gh 全滅 -> pr/head_tree/checks が ok:false、ローカル git 系 3 つは ok:true
 # ---------------------------------------------------------------------------
 @test "gh 系 argv 両方省略 -> pr/head_tree/checks は ok:false、diffhash/risk/changed は ok:true" {
     run bash "$SCRIPT" --worktree "$REPO" --base origin/main
     [ "$status" -eq 0 ]
     printf '%s\n' "$output" | jq -e '
-        .pr.ok == false and .head_tree.ok == false and .checks.ok == false and
+        .pr.ok == false and .head_tree.ok == false and .checks.ok == false and .closes.ok == false and
         .diffhash.ok == true and .risk.ok == true and .changed.ok == true
     '
 }
@@ -255,7 +294,7 @@ make_stub_scripts_dir() {
     run bash "$SCRIPT" --worktree /nonexistent/path --base origin/main
     [ "$status" -eq 2 ]
     printf '%s\n' "$output" | jq -e '
-        [.diffhash, .risk, .changed, .pr, .head_tree, .checks] | all(.ok == false and .value == null and (.error | test("does not exist")))
+        [.diffhash, .risk, .changed, .pr, .head_tree, .checks, .closes] | all(.ok == false and .value == null and (.error | test("does not exist")))
     '
 }
 

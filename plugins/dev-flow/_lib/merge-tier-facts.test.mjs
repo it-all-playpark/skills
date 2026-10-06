@@ -1,6 +1,11 @@
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
-import { parseMergeTierFacts, isWellFormedRiskFact, isRiskValueDropped, MERGE_FACTS_RISK_DROPPED_ERROR, mergeTierFactsTopLevelKeys, mergeTierFactsPrompt, mergeDiffHashError } from './merge-tier-facts.mjs';
+import {
+  parseMergeTierFacts, isWellFormedRiskFact, isRiskValueDropped, MERGE_FACTS_RISK_DROPPED_ERROR, mergeTierFactsTopLevelKeys,
+  mergeTierFactsPrompt, mergeDiffHashError, closesCheckCommand, parseClosesFact, prClosesStatusOf,
+  closesReinjectPrompt, closesReinjectStatus, CLOSES_REINJECT,
+} from './merge-tier-facts.mjs';
+import { PR_CLOSES_STATUS_VALUES } from './pr-artifacts.mjs';
 
 const SHA = 'a'.repeat(40);
 const TREE = 'b'.repeat(40);
@@ -13,6 +18,7 @@ function fullFacts() {
     pr: { ok: true, value: { mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN', headRefOid: SHA } },
     head_tree: { ok: true, value: { tree: TREE } },
     checks: { ok: true, value: { checks: [{ name: 'build', bucket: 'pass' }] } },
+    closes: { ok: true, value: { present: true } },
     epoch: 2,
   };
 }
@@ -26,6 +32,7 @@ test('全サブ結果正常 → 各フィールドが旧 spawn の形で素通�
   assert.deepEqual(r.prMeta, { ok: true, mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN', headRefOid: SHA });
   assert.equal(r.headTreeOid, TREE);
   assert.deepEqual(r.checks, { ok: true, checks: [{ name: 'build', bucket: 'pass' }] });
+  assert.equal(r.closes, 'present');
 });
 
 // (2) null 入力 → risk fail-closed 合成、他は fail-open の既定値
@@ -40,6 +47,7 @@ test('null 入力 → risk fail-closed (hits=[])、他フィールドは null / 
   assert.equal(typeof r.prMeta.error, 'string');
   assert.equal(r.headTreeOid, null);
   assert.equal(r.checks.ok, false);
+  assert.equal(r.closes, 'unknown');
   assert.equal(isWellFormedRiskFact(null), false);
   assert.equal(mergeTierFactsTopLevelKeys(null), 'null');
 });
@@ -52,11 +60,12 @@ const BREAKERS = {
   pr: { ok: false, value: null, error: 'gh pr view failed' },
   head_tree: { ok: false, value: null, error: 'skipped: pr headRefOid unavailable' },
   checks: { ok: false, value: null, error: 'gh pr checks failed' },
+  closes: { ok: false, value: null, error: 'closes data not provided' },
 };
-const FIELD_OF = { diffhash: 'mergeDiffHash', risk: 'risk', changed: 'changedFiles', pr: 'prMeta', head_tree: 'headTreeOid', checks: 'checks' };
+const FIELD_OF = { diffhash: 'mergeDiffHash', risk: 'risk', changed: 'changedFiles', pr: 'prMeta', head_tree: 'headTreeOid', checks: 'checks', closes: 'closes' };
 
 for (const [key, broken] of Object.entries(BREAKERS)) {
-  test(`${key} だけ ok:false → ${FIELD_OF[key]} だけ既定値に倒れ、他 5 フィールドは正常値のまま`, () => {
+  test(`${key} だけ ok:false → ${FIELD_OF[key]} だけ既定値に倒れ、他フィールドは正常値のまま`, () => {
     const facts = { ...fullFacts(), [key]: broken };
     const r = parseMergeTierFacts(facts);
     const good = parseMergeTierFacts(fullFacts());
@@ -74,6 +83,7 @@ for (const [key, broken] of Object.entries(BREAKERS)) {
       case 'pr': assert.deepEqual(r.prMeta, { ok: false, error: 'gh pr view failed' }); break;
       case 'head_tree': assert.equal(r.headTreeOid, null); break;
       case 'checks': assert.deepEqual(r.checks, { ok: false, error: 'gh pr checks failed' }); break;
+      case 'closes': assert.equal(r.closes, 'unknown'); break;
       default: assert.fail('unreachable');
     }
   });
@@ -173,8 +183,8 @@ test('mergeTierFactsTopLevelKeys は診断用にキー一覧 / 型名を返す',
 
 // (12) prompt: gh 2 コマンドは bare 単文、script は bare 名先頭トークン、stdout は argv 転写。
 // prompt に sandbox / excludedCommands / 特定パス起動の理由を書かない（.claude/rules/dev-flow.md）。
-test('mergeTierFactsPrompt: gh 2 コマンド + merge-tier-facts bare 名の 3 手順で、gh 出力は argv 転写', () => {
-  const p = mergeTierFactsPrompt({ wt: '/tmp/wt', base: 'main', pr: 42, repo: 'acme/skills' });
+test('mergeTierFactsPrompt: gh 3 コマンド + merge-tier-facts bare 名の手順で、gh 出力は argv 転写', () => {
+  const p = mergeTierFactsPrompt({ wt: '/tmp/wt', base: 'main', pr: 42, repo: 'acme/skills', issue: 824 });
   assert.ok(p.includes('`gh pr view 42 --repo acme/skills --json mergeable,mergeStateStatus,headRefOid`'));
   assert.ok(p.includes('`gh pr checks 42 --repo acme/skills --json name,bucket`'));
   assert.ok(p.includes('`merge-tier-facts --worktree /tmp/wt --base origin/main --pr-view-data \''));
@@ -187,9 +197,72 @@ test('mergeTierFactsPrompt: gh 2 コマンド + merge-tier-facts bare 名の 3 �
 });
 
 test('mergeTierFactsPrompt: repo 省略時は --repo を付けない', () => {
-  const p = mergeTierFactsPrompt({ wt: '/tmp/wt', base: 'dev', pr: 7 });
+  const p = mergeTierFactsPrompt({ wt: '/tmp/wt', base: 'dev', pr: 7, issue: 3 });
   assert.ok(p.includes('`gh pr view 7 --json mergeable,mergeStateStatus,headRefOid`'));
   assert.ok(p.includes('`gh pr checks 7 --json name,bucket`'));
+  assert.ok(p.includes(`\`gh pr view 7 --json body --jq '.body | test("Closes #3(\\\\D|$)")'\``));
   assert.ok(p.includes('--base origin/dev '));
   assert.ok(!p.includes('--repo'));
+});
+
+// (13) closes: PR body は gh の --jq で true / false に畳み、その結果だけを merge-tier-facts へ渡す（issue #824）。
+// 本文そのものは argv にも prompt にも載せない。
+test('closesCheckCommand: repo 指定つき bare 単文の gh pr view --json body --jq で Closes #<issue> を真偽値にする', () => {
+  assert.equal(
+    closesCheckCommand({ pr: 42, repo: 'acme/skills', issue: 824 }),
+    `gh pr view 42 --repo acme/skills --json body --jq '.body | test("Closes #824(\\\\D|$)")'`,
+  );
+  assert.equal(closesCheckCommand({ pr: 42, repo: '', issue: '824' }), `gh pr view 42 --json body --jq '.body | test("Closes #824(\\\\D|$)")'`);
+});
+
+test('mergeTierFactsPrompt: closes の gh コマンドを 1 本足し、stdout の true / false だけを --closes-data で渡す', () => {
+  const p = mergeTierFactsPrompt({ wt: '/tmp/wt', base: 'main', pr: 42, repo: 'acme/skills', issue: 824 });
+  const cmd = closesCheckCommand({ pr: 42, repo: 'acme/skills', issue: 824 });
+  assert.ok(p.includes(`3. \`${cmd}\` を先頭トークンが gh の bare 単文で 1 回だけ実行せよ`), p);
+  assert.ok(p.includes("--closes-data '<手順3の stdout（true または false）をそのまま>'"), p);
+  assert.ok(p.includes('手順 1 / 2 / 3 の stdout が空、またはコマンドが実行できなかった場合は当該オプション自体を省略せよ'), p);
+  // gh pr view --json body は --jq 付きの 1 本だけ（本文をそのまま stdout に出す形を指示しない）
+  assert.equal(p.split('--json body').length - 1, 1, '--json body は closes の jq 判定 1 本だけ');
+  assert.ok(!p.includes('--json body`'), '--jq なしの gh pr view --json body を指示しない');
+  assert.ok(!/--closes-data '<[^>]*本文/.test(p), '本文を argv に載せさせない');
+  assert.ok(p.includes('closes'), 'Output format に closes サブ結果が無い');
+});
+
+test('parseClosesFact: present:true → present、present:false → missing、取得失敗・契約外形状 → unknown', () => {
+  assert.equal(parseClosesFact({ closes: { ok: true, value: { present: true } } }), 'present');
+  assert.equal(parseClosesFact({ closes: { ok: true, value: { present: false } } }), 'missing');
+  assert.equal(parseClosesFact({ closes: { ok: false, value: null, error: 'closes data not provided' } }), 'unknown');
+  assert.equal(parseClosesFact({ closes: { ok: true, value: { present: 'true' } } }), 'unknown');
+  assert.equal(parseClosesFact({ closes: { ok: true, value: null } }), 'unknown');
+  assert.equal(parseClosesFact({}), 'unknown');
+  assert.equal(parseClosesFact(null), 'unknown');
+});
+
+test('prClosesStatusOf: present → verified、missing → missing（再投入へ）、unknown → unverified（fail-open）', () => {
+  assert.equal(prClosesStatusOf('present'), 'verified');
+  assert.equal(prClosesStatusOf('missing'), 'missing');
+  assert.equal(prClosesStatusOf('unknown'), 'unverified');
+  for (const c of ['present', 'missing', 'unknown']) assert.ok(PR_CLOSES_STATUS_VALUES.includes(prClosesStatusOf(c)));
+});
+
+test('closesReinjectStatus: 再投入失敗・再取得 false は missing（fail-closed）、true は reinjected、再取得失敗は unverified', () => {
+  assert.equal(closesReinjectStatus(null), 'missing');
+  assert.equal(closesReinjectStatus({ edited: false, error: 'x' }), 'missing');
+  assert.equal(closesReinjectStatus({ edited: true, closes: 'false' }), 'missing');
+  assert.equal(closesReinjectStatus({ edited: true, closes: 'true\n' }), 'reinjected');
+  assert.equal(closesReinjectStatus({ edited: true }), 'unverified');
+  assert.equal(closesReinjectStatus({ edited: true, closes: 'gh: error' }), 'unverified');
+  for (const r of [null, { edited: true, closes: 'true' }, { edited: true }]) assert.ok(PR_CLOSES_STATUS_VALUES.includes(closesReinjectStatus(r)));
+});
+
+test('closesReinjectPrompt: 決定論本文を Write → gh pr edit --body-file → 同じ spawn で closes の jq 判定を再取得', () => {
+  const p = closesReinjectPrompt({ wt: '/w', pr: 5, repo: 'o/r', issue: 9, prBody: 'body\nCloses #9\n' });
+  assert.ok(p.includes('<<<PR_BODY_BEGIN>>>\nbody\nCloses #9\n<<<PR_BODY_END>>>'), p);
+  assert.ok(p.includes('`/w/.devflow-tmp/pr-body-reinject.md`'), p);
+  assert.ok(p.includes('1. `gh pr edit 5 --repo o/r --body-file /w/.devflow-tmp/pr-body-reinject.md`'), p);
+  assert.ok(p.includes(`2. \`${closesCheckCommand({ pr: 5, repo: 'o/r', issue: 9 })}\``), p);
+  assert.ok(p.includes('{"edited": true, "closes": "<手順2の stdout（true または false）をそのまま>"}'), p);
+  assert.ok(!/sandbox|excludedCommands/i.test(p), 'prompt に起動形の理由を書かない');
+  assert.deepEqual(CLOSES_REINJECT.required, ['edited']);
+  assert.ok('closes' in CLOSES_REINJECT.properties);
 });
