@@ -35,6 +35,9 @@ const DEFAULT_TIER_REASONS = [
 const RESOLVED_ROWS_MAX = 30;
 const RESOLVED_CELL_MAX = 200;
 
+// 観測型 AC（実行して出力・記録を観測しないと確かめられない AC）が未達のときの対応欄（issue #844）。
+const OBSERVATIONAL_AC_ACTION = '実行して AC の主張を確認する（例: merge 後の実 run・計測）';
+
 function resolvedCell(v) {
   if (v == null) return '';
   const chars = Array.from(String(v).replace(/\s+/g, ' ').trim());
@@ -280,6 +283,9 @@ export function buildDevflowSummaryBody({
   const acGapsByActor = unsatisfiedAcByActor != null && typeof unsatisfiedAcByActor === 'object' ? unsatisfiedAcByActor : {};
   const acAgentGaps = Array.isArray(acGapsByActor.agent) ? acGapsByActor.agent : [];
   const acHumanGaps = Array.isArray(acGapsByActor.human) ? acGapsByActor.human : [];
+  // 観測型 AC（ac_results の observational:true。_lib/ac-actor.mjs の demoteUnprovenObservationalAc が付ける）の未達は
+  // 人手 AC 待ちのうち「実行して確かめる」もの。対応欄の文言を分け、どの AC が観測型かを AC 番号で出す。
+  const observationalGaps = unsatisfiedAC.filter((a) => a.observational === true).map((a) => a.ac_index);
   const acUnsatisfiedCode = (k) => {
     if (acAgentGaps.includes(k)) return 'ac_agent_unsatisfied';
     if (acHumanGaps.includes(k)) return 'ac_human_pending';
@@ -311,10 +317,11 @@ export function buildDevflowSummaryBody({
         ...(g.escalate.length > 0 ? ['escalate'] : []),
         ...(acCode ? [acCode] : []),
       ];
-      const label = `AC#${g.acIndex + 1}${g.ac != null ? ' 未達' : ''}`;
+      const observational = observationalGaps.includes(g.acIndex);
+      const label = `AC#${g.acIndex + 1}${g.ac != null ? ' 未達' : ''}${observational ? '（観測型）' : ''}`;
       const unresolvedEsc = g.escalate.filter((it) => !isResolved(it));
       const actions = [];
-      if (acCode === 'ac_human_pending') actions.push('人手で実施して AC を確認する');
+      if (acCode === 'ac_human_pending') actions.push(observational ? OBSERVATIONAL_AC_ACTION : '人手で実施して AC を確認する');
       else if (g.blocking.length > 0 || g.ac != null) actions.push('修正が必要');
       for (const it of unresolvedEsc) actions.push(`要判断${it.escalate_reason ? '（' + mdCell(it.escalate_reason) + '）' : ''}`);
       return { ...g, codes, label, actions };
@@ -590,6 +597,8 @@ export function buildDevflowSummaryBody({
         unclearedCount: uncleared.length,
         iterateStatus,
         pr,
+        humanAcGaps: acHumanGaps,
+        observationalAcGaps: observationalGaps,
       });
       lines.push(`| ${mdCell(hr && hr.reason)} | ${current} | ${action} |`);
     }
@@ -743,7 +752,7 @@ export function buildDevflowSummaryBody({
       for (const ac of unsatisfiedACRows) {
         const verifiedBy = ac.verified_by != null ? ac.verified_by : 'inspection';
         const evidenceCell = ac.evidence ? mdCell(ac.evidence) : '—';
-        lines.push(`| ❌ 未達 | AC#${ac.ac_index + 1} | ${verifiedBy} | ${evidenceCell} |`);
+        lines.push(`| ❌ 未達 | AC#${ac.ac_index + 1}${ac.observational === true ? '（観測型）' : ''} | ${verifiedBy} | ${evidenceCell} |`);
       }
     }
 
@@ -1023,8 +1032,15 @@ function holdReasonDisplay(code, kind, ctx) {
       return { current: `未 checked blocking ${ctx.uncheckedBlockingCount} 件`, action: '修正が必要（下表 ❌ 行）' };
     case 'ac_agent_unsatisfied':
       return { current: 'エージェントで満たせる AC が差し戻し後も未達（ループの取りこぼし）', action: '修正が必要（下表 ❌ 未達 行）' };
-    case 'ac_human_pending':
-      return { current: '人手作業を要する AC が未達（人手 AC 待ち）', action: '人手で実施して AC を確認する（下表 ❌ 未達 行）' };
+    case 'ac_human_pending': {
+      const obs = Array.isArray(ctx.observationalAcGaps) ? ctx.observationalAcGaps : [];
+      if (obs.length === 0) return { current: '人手作業を要する AC が未達（人手 AC 待ち）', action: '人手で実施して AC を確認する（下表 ❌ 未達 行）' };
+      const others = (Array.isArray(ctx.humanAcGaps) ? ctx.humanAcGaps : []).filter((k) => !obs.includes(k));
+      return {
+        current: `${others.length > 0 ? '人手作業を要する AC が未達（人手 AC 待ち）・' : ''}観測型 AC（${obs.map((k) => `AC#${k + 1}`).join(', ')}）は実行しないと確かめられず、test の red→green 実証が無い`,
+        action: `${others.length > 0 ? '人手で実施して AC を確認する・' : ''}${OBSERVATIONAL_AC_ACTION}（下表 ❌ 未達 行）`,
+      };
+    }
     case 'danger_unresolved':
       return { current: `security clearance 未確認 ${ctx.unclearedCount} 件`, action: '人が該当 diff を確認する' };
     case 'danger_fail_closed':

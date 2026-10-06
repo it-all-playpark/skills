@@ -31,6 +31,12 @@
 // mixed の AC でも（人手）と明記されていれば external にする（人間が repo 外の作業として引き受けたと読む）。
 // 判定に迷う形は repo 側に倒す（agent への誤分類は AGENT_AC_REIMPL_MAX で止まる。上の actor の倒し方と同じ理由）。
 //
+// 観測型 AC（issue #844）: 実行して出力・記録を観測しないと確かめられない AC（「実 run の journal に記録される」
+// 「計測して比較する」等）。evaluator のコード読み（inspection）では確かめられないので actor は 'human'。
+// Evaluate / Final reconcile は test の red→green 実証で deterministic 昇格したときだけ checked にし、それ以外は
+// 差し戻さず ac_human_pending へ回す（merge 後の実 run・計測が要る AC は run 内で証跡を作れず、差し戻しても
+// AGENT_AC_REIMPL_MAX を使い切ってから HOLD になるだけのため）。
+//
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 
@@ -151,14 +157,67 @@ export function classifyAcScope(ac, opts = {}) {
   return EXPLICIT_HUMAN_RE.test(String(ac ?? '').replace(INLINE_CODE_RE, ' ')) ? 'external' : 'mixed'
 }
 
+// 観測型 AC の分類規則（v2）。手順: inline code を除く → 鉤括弧の引用「…」を除く → CLAUSE_SEP_RE で節に分ける →
+// 1 節でも発火すれば観測型。
+// 強い語: OBS_STRONG_NEG でなければ、否定・言及の節でも発火（「実測 / 計測」は動詞形だけ。実測値・実測表では発火しない）
+const OBS_STRONG_RE = /(実測|計測)(する|し|で|でき|を行|に基づ|[）)]|$)|A\/B\s*(を|で|テスト|比較)|比較表|(実|修正後の|直近の?)\s*(dev-flow\s*)?run\s*([（(][^）)]*[）)])?\s*(で|において|の)|1\s*件以上\s*(現れ|記録|残|出)/i
+const OBS_STRONG_NEG_RE = /(実測|計測|A\/B)\S{0,4}(しない|不要|しなくてよい)/
+// 弱い語: OBS_NEG・既存 MENTION_CLAUSE_PATTERNS・OBS_MENTION_EXTRA のどれにも当たらない節でのみ発火
+const OBS_WEAK_RE = /生成される|記録される|出力される|journal|telemetry|receipt|verdict|件数/i
+const OBS_NEG_RE = /しない|せず|[てで]いない|ない(こと|$)|載せない|残さない|書かない|出さない|読まない|使わない|渡さない|含めない/
+const OBS_MENTION_EXTRA_RE = /を\s*(削除|外す|撤去|消す)|(削除|撤去)する|記載|明記|整合|一致|canonical|化され|扱い|キー名|識別子|表記/
+const QUOTE_RE = /「[^」]*」/g
+
+// AC が観測型（実行して出力・記録を観測しないと確かめられない）か。
+export function isObservationalAc(ac) {
+  const text = String(ac ?? '').replace(INLINE_CODE_RE, ' ').replace(QUOTE_RE, ' ')
+  return text.split(CLAUSE_SEP_RE).some((clause) => {
+    if (OBS_STRONG_RE.test(clause) && !OBS_STRONG_NEG_RE.test(clause)) return true
+    if (OBS_NEG_RE.test(clause) || OBS_MENTION_EXTRA_RE.test(clause)) return false
+    if (MENTION_CLAUSE_PATTERNS.some((re) => re.test(clause))) return false
+    return OBS_WEAK_RE.test(clause)
+  })
+}
+
+export function acObservationalOf(acceptanceCriteria) {
+  return (Array.isArray(acceptanceCriteria) ? acceptanceCriteria : []).map((ac) => isObservationalAc(ac))
+}
+
 export function classifyAcActor(ac, opts = {}) {
   const text = String(ac ?? '').replace(INLINE_CODE_RE, ' ')
   if (HUMAN_AC_PATTERNS.some((re) => re.test(text))) return 'human'
-  return classifyAcScope(ac, opts) === 'external' ? 'human' : 'agent'
+  if (classifyAcScope(ac, opts) === 'external') return 'human'
+  return isObservationalAc(ac) ? 'human' : 'agent'
 }
 
 export function acActorsOf(acceptanceCriteria, opts = {}) {
   return (Array.isArray(acceptanceCriteria) ? acceptanceCriteria : []).map((ac) => classifyAcActor(ac, opts))
+}
+
+// ledger の AC-<n> item のうち、red→green 実証で deterministic 昇格して checked の AC の index（0 始まり）。
+export function deterministicAcIndexes(ledgerItems) {
+  const out = []
+  for (const it of (Array.isArray(ledgerItems) ? ledgerItems : [])) {
+    const m = it && typeof it.id === 'string' ? /^AC-(\d+)$/.exec(it.id) : null
+    if (m && it.checked === true && it.check && it.check.kind === 'deterministic') out.push(Number(m[1]) - 1)
+  }
+  return out
+}
+
+// evaluator / final-ac-reconcile の ac_results で、deterministic 昇格していない観測型 AC を satisfied:false に倒し
+// observational:true を付ける（inspection や red→green 不成立の satisfied:true を達成扱いにしない）。
+// 倒した AC は actor 'human' なので unsatisfiedAcByActor で人手 AC 待ちに数えられ、差し戻しの対象にならない。
+// 非配列はそのまま返す。
+export function demoteUnprovenObservationalAc(acResults, observational, provenIndexes) {
+  if (!Array.isArray(acResults)) return acResults
+  const obs = Array.isArray(observational) ? observational : []
+  const proven = Array.isArray(provenIndexes) ? provenIndexes : []
+  return acResults.map((r) => {
+    if (!r || !Number.isInteger(r.ac_index) || obs[r.ac_index] !== true || proven.includes(r.ac_index)) return r
+    if (r.satisfied !== true) return { ...r, observational: true }
+    const evidence = typeof r.evidence === 'string' && r.evidence.trim() ? `（evaluator: ${r.evidence.trim()}）` : ''
+    return { ...r, satisfied: false, observational: true, evidence: `観測型 AC — test の red→green 実証が無く、実行しないと確かめられない${evidence}` }
+  })
 }
 
 // analyze ゲートの理由行: repo 内外が混ざった AC ごとに 1 行。非空なら needs_clarification（source=analyze）で止める。
