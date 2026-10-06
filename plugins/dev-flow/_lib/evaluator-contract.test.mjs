@@ -5,7 +5,11 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash, shapeOverrides } from './test-helpers/vm-sandbox.mjs';
 
-import { EVALUATOR_OPERATIONAL_CONTRACT, CONCERN_RESOLUTIONS, normalizeConcernResolution } from './evaluator-contract.mjs';
+import {
+  EVALUATOR_OPERATIONAL_CONTRACT, CONCERN_RESOLUTIONS, normalizeConcernResolution,
+  EVAL_DESCRIPTION_MAX, EVAL_SUGGESTION_MAX, EVAL_EVIDENCE_MAX, EVAL_FULL_SUITE,
+} from './evaluator-contract.mjs';
+import { RESOLVED_CELL_MAX } from './devflow-summary-format.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -270,4 +274,54 @@ test('[schema] pr-iterate REVIEW.issues enforces stable stuck-detection fields',
     /issues:\s*\{\s*type:\s*'array',\s*items:\s*\{\s*type:\s*'object',\s*required:\s*\['severity', 'topic', 'file', 'description', 'suggestion'\]/s,
     'pr-iterate REVIEW.issues は item schema と topic/file/description を required にする必要があります',
   );
+});
+
+// ---- issue #842: evaluator 出力の自然文欄は schema の maxLength で書き手に収めさせる ----
+
+test('[evaluator-contract][#842] 自然文欄の字数上限は description 300 / suggestion 200 / evidence 200', () => {
+  assert.deepEqual(
+    { description: EVAL_DESCRIPTION_MAX, suggestion: EVAL_SUGGESTION_MAX, evidence: EVAL_EVIDENCE_MAX },
+    { description: 300, suggestion: 200, evidence: 200 },
+  );
+});
+
+test('[evaluator-contract][#842] evidence 上限は終端サマリーの解消済み折りたたみ表のセル上限（RESOLVED_CELL_MAX）以下', () => {
+  assert.ok(EVAL_EVIDENCE_MAX <= RESOLVED_CELL_MAX,
+    `EVAL_EVIDENCE_MAX ${EVAL_EVIDENCE_MAX} > RESOLVED_CELL_MAX ${RESOLVED_CELL_MAX} — 上限いっぱいの evidence が表で切られる`);
+});
+
+test('[evaluator-contract][#842] eval#i の EVAL schema と final-ac-reconcile の item_resolutions に maxLength が付く', async () => {
+  const { ctx, calls } = makeSandbox({
+    fixesApplied: 1,
+    overrides: { 'test#final': { tests: 'passed', green: true, summary: '' } },
+  });
+  const { error } = await runDevFlowCapture(devFlowSrc, ctx);
+  assertNoCrash(error, 'contract-eval-maxlength');
+  const evalSchema = calls.find((c) => c.label === 'eval#1')?.schema;
+  assert.ok(evalSchema, 'eval#1 の schema が取れない');
+  const p = evalSchema.properties;
+  const item = (k) => p[k].items.properties;
+  assert.equal(item('feedback').description.maxLength, EVAL_DESCRIPTION_MAX);
+  assert.equal(item('feedback').suggestion.maxLength, EVAL_SUGGESTION_MAX);
+  for (const k of ['ac_results', 'security_clearance', 'testsurf_clearance', 'critical_resolutions', 'concern_resolutions']) {
+    assert.equal(item(k).evidence.maxLength, EVAL_EVIDENCE_MAX, `${k}[].evidence`);
+  }
+  const finalSchema = calls.find((c) => c.label === 'final-ac-reconcile')?.schema;
+  assert.ok(finalSchema, 'final-ac-reconcile の schema が取れない');
+  assert.equal(finalSchema.properties.item_resolutions.items.properties.evidence.maxLength, EVAL_EVIDENCE_MAX);
+});
+
+test('[evaluator-contract][#842] evaluator.md の「書き方」の字数は schema の maxLength と一致する', () => {
+  const section = evaluatorMd.slice(evaluatorMd.indexOf('## 書き方'), evaluatorMd.indexOf('## 出力 JSON'));
+  assert.ok(section.includes(`\`description\` ${EVAL_DESCRIPTION_MAX} 字`), section);
+  assert.ok(section.includes(`\`suggestion\` ${EVAL_SUGGESTION_MAX} 字`), section);
+  assert.ok(section.includes(`各 \`evidence\` ${EVAL_EVIDENCE_MAX} 字`), section);
+  assert.ok(!section.includes('200 字程度'), '上限ではない目安の字数が残っている');
+});
+
+test('[evaluator-contract][#842] evaluator.md の「進め方」2 は validate_result があれば全件スイートを走らせず AC に関係するテストだけを走らせる', () => {
+  const steps = evaluatorMd.slice(evaluatorMd.indexOf('## 進め方'), evaluatorMd.indexOf('## 判定'));
+  const step2 = steps.slice(steps.indexOf('\n2. '), steps.indexOf('\n3. '));
+  assert.ok(step2.includes('`validate_result`'), step2);
+  assert.ok(step2.includes(`${EVAL_FULL_SUITE}は走らせず、AC に関係するテストファイルだけを実行して根拠にする`), step2);
 });

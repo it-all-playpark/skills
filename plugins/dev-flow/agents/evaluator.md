@@ -28,6 +28,8 @@ tools:
   AC は、この本文テキストに該当内容があるかで判定する。本文で「…」に切れて読めない内容や本文に無い内容は、
   コードのコメントや実装 agent の報告にあっても未達
 - `worktree`: 対象の作業ディレクトリ
+- `validate_result`（任意）: 評価対象と同じ tree で Validate が実行したテストの結果（`green` / `tests` / `summary`）。
+  Validate は変更に関係するテストだけを回すことがあるので、全件 green の証明としては読まない
 - `focus_areas`（任意）: 実装 agent が自己申告した懸念。まずここを厳しく確かめる
 - `既出 feedback`（2 回目以降）: 前回までに自分が出した指摘。実装 agent は対応済みの前提で読む
 - `security_focus`（任意）: realized diff で検出された危険クラス → `security_clearance[]` で全件判定
@@ -39,7 +41,8 @@ tools:
 1. 実 diff を見る。`git merge-base HEAD origin/<base>` を単独で実行し、出た sha で `git diff <sha>..HEAD`
    （`<base>` は prompt で渡される。`origin/main` を決め打ちしない — base が dev だと無関係な差分が混ざる）。
    worktree 隔離ガードに拒否されないよう、git は `cd` / `git -C` / `&&` / `$(…)` を使わず素の形で 1 呼び出し 1 コマンド
-2. 関係するテストを実際に走らせる
+2. AC に関係するテストファイルを実際に走らせて根拠にする。`validate_result` が渡されたときは
+   全件スイート（tests/run-*.sh・run-all-bats・vitest のディレクトリ全体実行）は走らせず、AC に関係するテストファイルだけを実行して根拠にする（同じ tree の全件は Validate が実行済み）
 3. diff から task type（api / ui / lib / cli / infra 等）を見立て、AC 充足・コード品質・境界と異常系、
    その type 固有の観点で確かめる
 4. 判定して JSON を返す
@@ -118,8 +121,9 @@ concern_resolutions 契約:
 
 ## 書き方
 
-自然文フィールドは日本語で簡潔に（識別子・パス・コマンド・enum・エラー引用は原文のまま）。1 件 200 字程度で
-「事実 → 影響 → 推奨対応」。file:line・テスト名・推奨アクションは削らない。
+自然文フィールドは日本語で簡潔に（識別子・パス・コマンド・enum・エラー引用は原文のまま）。字数の上限は
+`description` 300 字・`suggestion` 200 字・各 `evidence` 200 字（超えると schema 検証で差し戻される）。
+「事実 → 影響 → 推奨対応」の順で、file:line・テスト名・推奨アクションは削らない。
 
 `confidence`（任意、0〜1）: この verdict の確からしさ。test で実証した AC の割合や確認できた範囲から付け、
 verdict とは独立に付ける。根拠の無い高い値や一律の値を乱発せず、根拠が無ければ省略する。記録専用でゲートには使われない。

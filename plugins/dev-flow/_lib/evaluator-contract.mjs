@@ -80,6 +80,29 @@ export const EVALUATOR_OPERATIONAL_CONTRACT = {
   ].join('\n'),
 }
 
+// evaluator 出力の自然文欄の字数上限。dev-flow.js の EVAL schema（feedback / 各 evidence）と FINAL_AC の
+// item_resolutions[].evidence が maxLength に使い、evaluator.md の「書き方」が同じ値を案内する。超過は
+// StructuredOutput の schema 検証で書き手に差し戻される（何を残すかは中身を知る evaluator が決める）。
+// evidence は終端サマリーの解消済み折りたたみ表のセル上限（devflow-summary-format の RESOLVED_CELL_MAX）以下に保つ
+// — 上限を超えた evidence は表で「…」に切られて人間が根拠を読めない。不変条件は evaluator-contract.test.mjs が pin。
+export const EVAL_DESCRIPTION_MAX = 300
+export const EVAL_SUGGESTION_MAX = 200
+export const EVAL_EVIDENCE_MAX = 200
+
+// 全件スイートの範囲。Validate と同じ tree を評価するときは evaluator に走らせない（Validate が同じ tree で
+// 実行済みで、再実行は評価の所要時間とコストの大半を占める）。evaluator.md の「進め方」も同じ文字列で案内する。
+export const EVAL_FULL_SUITE = '全件スイート（tests/run-*.sh・run-all-bats・vitest のディレクトリ全体実行）'
+
+// eval prompt に足す Validate の結果と、全件スイートを走らせない指示。呼び出し側は Validate 終了時と
+// eval 直前の diff hash が一致するとき（Validate と同じ tree）だけ足す。Validate が返した値をそのまま渡し、
+// 「全件 green」とは断定しない — Validate は変更に関係するテストだけを回すことがある。
+export function validateResultPromptBlock(val) {
+  const v = val ?? {}
+  return `validate_result（Validate がこの tree で実行したテストの結果。Validate の返り値をそのまま渡す）:\n`
+    + `${JSON.stringify({ green: v.green ?? null, tests: v.tests ?? null, summary: v.summary ?? '' })}\n`
+    + `${EVAL_FULL_SUITE}は走らせず、AC に関係するテストファイルだけを実行して根拠にせよ。\n`
+}
+
 // concern_resolutions[].resolution の closed enum（issue #614）。out-of-enum / 旧 boolean キー resolved は
 // 明示 error（legacy fallback / dual-path なし）。triaged は表示専用で ledger の checked を変えない。
 export const CONCERN_RESOLUTIONS = ['resolved', 'triaged', 'unresolved']
