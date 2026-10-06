@@ -53,8 +53,9 @@ reconcile を行い、merge 判定を最新の PR 内容に基づかせるため
 Final reconcile phase が worktree を PR 最終 HEAD へ同期し test suite を一発再実行する（red / 再検証
 不能は merge tier HOLD。fixes_applied=0 は agent 呼び出しゼロで skip）。再検証不能時は PR head sha に
 pin した CI check の決定論判定で代替し、成立しなければ HOLD を維持する。test suite の実行は Validate と
-同じ prompt で、実行可能な `tests/run-*.sh` が複数あれば全本を実行し全本 green のときだけ green とする。
-この prompt と redgreen-verify（red・green の各 test 実行）は、テストの直前に `workspace-prebuild <WT>` で
+同じ exec-proxy `run-tests <WT>`（haiku は stdout の JSON 1 行を転写するだけ）で、実行可能な `tests/run-*.sh` を
+全本実行し、全本 exit 0 のときだけ green とする（判定は exit code 由来。詳細は exec-proxy.md の validate-test 行）。
+run-tests と redgreen-verify（red・green の各 test 実行）は、テストの直前に `workspace-prebuild <WT>` で
 pnpm ワークスペースのビルド成果物（ほかの package が `workspace:` で依存し、`scripts.build` を持ち、
 `main` / `module` / `exports` が git 管理外を指す package）を `pnpm --filter <pkg>... run build` の 1 コマンドで
 作り直す。Setup で 1 回だけビルドすると Implement / fix が依存先のソースを変えた時点で成果物が古くなり、

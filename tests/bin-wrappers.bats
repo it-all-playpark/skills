@@ -46,6 +46,7 @@ ensure-worktree-deps
 merge-tier-facts
 pr-push
 redgreen-verify
+run-tests
 secfloor-classify
 structural-classify
 ui-verify-stack
@@ -91,6 +92,7 @@ target_for() {
         worktree-diff-hash) echo "_shared/scripts/worktree-diff-hash.sh" ;;
         worktree-teardown) echo "_shared/scripts/worktree-teardown.sh" ;;
         workspace-prebuild) echo "_shared/scripts/workspace-prebuild.sh" ;;
+        run-tests) echo "_shared/scripts/run-tests.sh" ;;
         check-ci) echo "pr-iterate/scripts/check-ci.sh" ;;
         ci-wait) echo "pr-iterate/scripts/ci-wait.sh" ;;
         analyze-issue) echo "dev-issue-analyze/scripts/analyze-issue.sh" ;;
@@ -137,7 +139,7 @@ skills_target_for() {
     [ "$actual" = "$expected" ]
 }
 
-@test "plugins/dev-flow/bin の entry は対象21本と完全一致する" {
+@test "plugins/dev-flow/bin の entry は対象22本と完全一致する" {
     expected="$(devflow_expected_names)"
     actual="$(/bin/ls -1 "$REPO_ROOT/plugins/dev-flow/bin" | sort)"
     [ "$actual" = "$expected" ]

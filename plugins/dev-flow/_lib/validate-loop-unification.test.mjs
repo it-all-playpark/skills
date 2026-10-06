@@ -386,13 +386,13 @@ test('[validate-unify] (7) test#1 prompt に test スクリプト優先・EPERM 
     `label === 'test#1' の call が見つからない (全 labels: ${calls.map((c) => c.label).join(', ')})`,
   );
 
-  // 識別子・トークンのみ pin する（bare 形優先・前置禁止・原因調査禁止等の日本語文言は言い回しの
-  // 変更で落ちるため pin しない。issue #636 AC-1）
+  // 識別子・トークンのみ pin する（日本語文言は言い回しの変更で落ちるため pin しない。issue #636 AC-1）。
+  // スクリプト選択・起動失敗の分類は exec-proxy run-tests が持ち、prompt は bare 単文の転写だけ（issue #821）
   const requiredPhrases = [
-    'tests/run-',
-    'EPERM',
-    'StructuredOutput',
-    'tests:"error"',
+    '\nrun-tests /tmp/wt',
+    'verbatim',
+    'timeout: 600000',
+    '"tests":"error"',
   ];
   for (const phrase of requiredPhrases) {
     assert.ok(
