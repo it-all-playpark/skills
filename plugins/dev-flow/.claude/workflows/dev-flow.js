@@ -4872,14 +4872,14 @@ function crossRepoReturnNote(artifacts) {
 // ==== END inline: _lib/cross-repo-gate.mjs ====
 // ==== BEGIN inline: _lib/run-tests-prompt.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 
-function runTestsPrompt(wt) {
+function runTestsPrompt(wt, base) {
   return `cd ${wt} で作業。次のコマンドを **先頭トークンが run-tests の bare 単文** で 1 回だけ実行し、`
     + `**stdout の JSON 1 行だけ** を verbatim で返せ（判定や脚色をしない。キーの追加・削除・値の書き換えをしない）。`
     + `argv は一字一句そのまま実行する — which による絶対パス解決・絶対パスへの書き換え・cd 前置・\`bash\` 前置・環境変数代入前置・&& 連結は禁止。`
     + `Bash tool の \`timeout: 600000\` を指定して実行し、\`run_in_background\` は使わない（禁止）。再実行しない（timeout に達した場合も含む）。`
     + `timeout に達した・stdout に JSON 1 行が無い場合だけは、`
     + `{"tests":"error","green":false,"summary":"run-tests did not return JSON"} を一字一句そのまま返せ:\n`
-    + `run-tests ${wt}`;
+    + `run-tests ${wt} --base ${base}`;
 }
 // ==== END inline: _lib/run-tests-prompt.mjs ====
 // ==== BEGIN inline: _lib/redgreen-targets.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
@@ -5168,11 +5168,13 @@ const setup = PRERUN
 
 // Validate（test#i / test#retry-i）・post-eval（test#post-eval-i）・Final reconcile（test#final）共有の test 実行 prompt。
 // WT 確定後（Setup 完了後）に 1 回だけ組み、全 test spawn が同一 byte 列を共有する（drift 防止）。
-// 中身は exec-proxy `run-tests <WT>` の stdout 転写だけ（_lib/run-tests-prompt.mjs）。workspace-prebuild・
+// 中身は exec-proxy `run-tests <WT> --base <ref>` の stdout 転写だけ（_lib/run-tests-prompt.mjs）。workspace-prebuild・
 // tests/run-*.sh 全本の実行・起動失敗（exit 126 / 127）の error 分類・failed_files の抽出・epoch は run-tests が行い、
 // 出力は GREEN schema の必須キー（tests / green）を含む。Turbopack fallback 規約は渡さない — 転写 agent は
 // テストを実行し直さないので、渡しても判断の余地を持ち込むだけになる。
-const TEST_RUN_PROMPT = runTestsPrompt(WT)
+// --base origin/<PRERUN.base> で変更ファイル一覧（DEVFLOW_CHANGED_FILES / DEVFLOW_BASE）を repo のランナーへ渡す
+// （起点は worktree の作成元 origin/<base>。他の diff 系 proxy と同じ ref）。何を回すかは repo 側が決める。
+const TEST_RUN_PROMPT = runTestsPrompt(WT, `origin/${BASE}`)
 
 // Security floor（ui-verify-config）と Final reconcile（ui-verify-config-final）が共有する
 // ui_verify config 読み取り prompt。WT 確定後（Setup 完了後）に配置し、
