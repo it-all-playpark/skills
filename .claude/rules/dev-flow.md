@@ -33,6 +33,7 @@ dev-flow 本体（workflow / agent 定義 / `_lib` canonical / generator）を�
 - 1 issue = 1 PR。Implement は全 shape で `dev-implementer`（plan+impl 統合）を単一 worktree に 1 spawn（Plan phase なし。planner ⇄ reviewer ループ・parallel fan-out・`pipeline()` は持たない）。BLOCKED 再実装・green-fix（`model: 'sonnet'`）・Evaluate 差し戻しも同じ agent。複数 issue 分割は使わない
 - model 既定は frontmatter。override は green-fix（`'sonnet'`）と pr-iterate の fix（`dev-runner` に `'opus'`）のみ。品質ゲート agent には渡さない — gate の判定モデルを credit で黙って変えない
 - merge は常に人間（全 tier）
+- 後方互換 scaffolding を作らない — out-of-enum は明示 error
 - worktree の後片付けは `worktree-teardown`（`git worktree remove` 直打ちは veridelta 証跡を失う）
 
 ## ゲート（fail-closed / fail-safe の理由）
@@ -61,9 +62,8 @@ dev-flow 本体（workflow / agent 定義 / `_lib` canonical / generator）を�
 > exec-proxy スクリプトは認証付き network I/O（gh・git push）を内部に持ってはならない（例外は 2 つ:
 > `analyze-issue` は issue 取得の bare `gh issue view` を内蔵し stdout を in-process で受ける。呼び出し元は
 > subagent ではなく prerun（`dev-flow-prerun` → `prerun-analyze.sh`）で、Jev もそこから呼ぶ —
-> subagent の sandbox 内では資格情報に届かない。`pr-push` は PR phase の `git push -u origin HEAD` を
-> 1 回だけ内蔵し、全文を log に残して末尾行だけ返す — pipe で末尾を受ける形は下記の起動形と両立しない。
-> どちらも dotfiles の excludedCommands に bare 名で登録する）。GitHub I/O は subagent の Bash で「先頭トークンが gh または git の bare 単文」（gh は --repo、git は -C 不可、
+> subagent の sandbox 内では資格情報に届かない。`pr-push` は PR phase の push 1 回を内蔵し
+> 全文を log に残して末尾だけ返す — pipe で末尾を受ける形は起動形と両立しない。両方 excludedCommands に登録する）。GitHub I/O は subagent の Bash で「先頭トークンが gh または git の bare 単文」（gh は --repo、git は -C 不可、
 > cd &&・bash・env 前置禁止）として実行し、出力を $TMPDIR の file に落とすか、呼び出し側 agent が
 > stdout/stderr を argv でスクリプトへ verbatim 転写して、スクリプトは file または argv 入力の
 > 純変換とする。prompt に sandbox / excludedCommands / 特定パス起動の理由を書いてはならない —
