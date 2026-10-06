@@ -136,7 +136,10 @@ AC は analyze ゲートで actor（`_lib/ac-actor.mjs`: `（人手）` 表記�
 repo 外の作業だけを書いた AC（`classifyAcScope` が `external`）は `human`、それ以外は `agent`）に分類する。AC の ledger item は LLM major で既定 `gate_policy` では advisory のため、
 ledger 収束だけでは未達 AC がループを回さない。そこで agent AC の `satisfied:false` は gate_policy に依らず
 `fix_feedback`（`topic: "AC-<n> 未達"`）付きで `dev-implementer` へ差し戻す（agent AC を理由にした差し戻しは全 shape で
-`AGENT_AC_REIMPL_MAX` 回まで）。human AC は worktree 外の作業なので差し戻さない。Merge tier の HOLD 理由は
+`AGENT_AC_REIMPL_MAX` 回まで）。human AC は worktree 外の作業なので差し戻さない。
+観測型 AC（`isObservationalAc`: 実行して出力・記録を観測しないと確かめられない AC。actor は `human`）は、Evaluate の
+redgreen-verify で red→green を実証して deterministic 昇格したときだけ checked にする。evaluator・final AC reconcile の
+inspection による `satisfied:true` は達成扱いにせず（`demoteUnprovenObservationalAc`）、差し戻さずに人手 AC 待ちへ回す。Merge tier の HOLD 理由は
 `ac_agent_unsatisfied`（差し戻し上限後も未達 = ループの取りこぼし）と `ac_human_pending`（人手 AC 待ち）に分ける。
 `dev-implementer` が返す `design_decisions` / `pr_notes` は plan（`architecture_decisions` / `pr_notes`）に取り込み、
 PR body の「設計判断」「検証」に 1 行要約として clip して載せる。対応表など複数行の記録は `pr_sections` で返させ、

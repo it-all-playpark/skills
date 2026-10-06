@@ -970,14 +970,57 @@ function classifyAcScope(ac, opts = {}) {
   return EXPLICIT_HUMAN_RE.test(String(ac ?? '').replace(INLINE_CODE_RE, ' ')) ? 'external' : 'mixed'
 }
 
+const OBS_STRONG_RE = /(実測|計測)(する|し|で|でき|を行|に基づ|[）)]|$)|A\/B\s*(を|で|テスト|比較)|比較表|(実|修正後の|直近の?)\s*(dev-flow\s*)?run\s*([（(][^）)]*[）)])?\s*(で|において|の)|1\s*件以上\s*(現れ|記録|残|出)/i
+const OBS_STRONG_NEG_RE = /(実測|計測|A\/B)\S{0,4}(しない|不要|しなくてよい)/
+const OBS_WEAK_RE = /生成される|記録される|出力される|journal|telemetry|receipt|verdict|件数/i
+const OBS_NEG_RE = /しない|せず|[てで]いない|ない(こと|$)|載せない|残さない|書かない|出さない|読まない|使わない|渡さない|含めない/
+const OBS_MENTION_EXTRA_RE = /を\s*(削除|外す|撤去|消す)|(削除|撤去)する|記載|明記|整合|一致|canonical|化され|扱い|キー名|識別子|表記/
+const QUOTE_RE = /「[^」]*」/g
+
+function isObservationalAc(ac) {
+  const text = String(ac ?? '').replace(INLINE_CODE_RE, ' ').replace(QUOTE_RE, ' ')
+  return text.split(CLAUSE_SEP_RE).some((clause) => {
+    if (OBS_STRONG_RE.test(clause) && !OBS_STRONG_NEG_RE.test(clause)) return true
+    if (OBS_NEG_RE.test(clause) || OBS_MENTION_EXTRA_RE.test(clause)) return false
+    if (MENTION_CLAUSE_PATTERNS.some((re) => re.test(clause))) return false
+    return OBS_WEAK_RE.test(clause)
+  })
+}
+
+function acObservationalOf(acceptanceCriteria) {
+  return (Array.isArray(acceptanceCriteria) ? acceptanceCriteria : []).map((ac) => isObservationalAc(ac))
+}
+
 function classifyAcActor(ac, opts = {}) {
   const text = String(ac ?? '').replace(INLINE_CODE_RE, ' ')
   if (HUMAN_AC_PATTERNS.some((re) => re.test(text))) return 'human'
-  return classifyAcScope(ac, opts) === 'external' ? 'human' : 'agent'
+  if (classifyAcScope(ac, opts) === 'external') return 'human'
+  return isObservationalAc(ac) ? 'human' : 'agent'
 }
 
 function acActorsOf(acceptanceCriteria, opts = {}) {
   return (Array.isArray(acceptanceCriteria) ? acceptanceCriteria : []).map((ac) => classifyAcActor(ac, opts))
+}
+
+function deterministicAcIndexes(ledgerItems) {
+  const out = []
+  for (const it of (Array.isArray(ledgerItems) ? ledgerItems : [])) {
+    const m = it && typeof it.id === 'string' ? /^AC-(\d+)$/.exec(it.id) : null
+    if (m && it.checked === true && it.check && it.check.kind === 'deterministic') out.push(Number(m[1]) - 1)
+  }
+  return out
+}
+
+function demoteUnprovenObservationalAc(acResults, observational, provenIndexes) {
+  if (!Array.isArray(acResults)) return acResults
+  const obs = Array.isArray(observational) ? observational : []
+  const proven = Array.isArray(provenIndexes) ? provenIndexes : []
+  return acResults.map((r) => {
+    if (!r || !Number.isInteger(r.ac_index) || obs[r.ac_index] !== true || proven.includes(r.ac_index)) return r
+    if (r.satisfied !== true) return { ...r, observational: true }
+    const evidence = typeof r.evidence === 'string' && r.evidence.trim() ? `（evaluator: ${r.evidence.trim()}）` : ''
+    return { ...r, satisfied: false, observational: true, evidence: `観測型 AC — test の red→green 実証が無く、実行しないと確かめられない${evidence}` }
+  })
 }
 
 function mixedScopeAcReasons(acceptanceCriteria, opts = {}) {
@@ -2220,6 +2263,8 @@ const DEFAULT_TIER_REASONS = [
 const RESOLVED_ROWS_MAX = 30;
 const RESOLVED_CELL_MAX = 200;
 
+const OBSERVATIONAL_AC_ACTION = '実行して AC の主張を確認する（例: merge 後の実 run・計測）';
+
 function resolvedCell(v) {
   if (v == null) return '';
   const chars = Array.from(String(v).replace(/\s+/g, ' ').trim());
@@ -2356,6 +2401,7 @@ function buildDevflowSummaryBody({
   const acGapsByActor = unsatisfiedAcByActor != null && typeof unsatisfiedAcByActor === 'object' ? unsatisfiedAcByActor : {};
   const acAgentGaps = Array.isArray(acGapsByActor.agent) ? acGapsByActor.agent : [];
   const acHumanGaps = Array.isArray(acGapsByActor.human) ? acGapsByActor.human : [];
+  const observationalGaps = unsatisfiedAC.filter((a) => a.observational === true).map((a) => a.ac_index);
   const acUnsatisfiedCode = (k) => {
     if (acAgentGaps.includes(k)) return 'ac_agent_unsatisfied';
     if (acHumanGaps.includes(k)) return 'ac_human_pending';
@@ -2387,10 +2433,11 @@ function buildDevflowSummaryBody({
         ...(g.escalate.length > 0 ? ['escalate'] : []),
         ...(acCode ? [acCode] : []),
       ];
-      const label = `AC#${g.acIndex + 1}${g.ac != null ? ' 未達' : ''}`;
+      const observational = observationalGaps.includes(g.acIndex);
+      const label = `AC#${g.acIndex + 1}${g.ac != null ? ' 未達' : ''}${observational ? '（観測型）' : ''}`;
       const unresolvedEsc = g.escalate.filter((it) => !isResolved(it));
       const actions = [];
-      if (acCode === 'ac_human_pending') actions.push('人手で実施して AC を確認する');
+      if (acCode === 'ac_human_pending') actions.push(observational ? OBSERVATIONAL_AC_ACTION : '人手で実施して AC を確認する');
       else if (g.blocking.length > 0 || g.ac != null) actions.push('修正が必要');
       for (const it of unresolvedEsc) actions.push(`要判断${it.escalate_reason ? '（' + mdCell(it.escalate_reason) + '）' : ''}`);
       return { ...g, codes, label, actions };
@@ -2629,6 +2676,8 @@ function buildDevflowSummaryBody({
         unclearedCount: uncleared.length,
         iterateStatus,
         pr,
+        humanAcGaps: acHumanGaps,
+        observationalAcGaps: observationalGaps,
       });
       lines.push(`| ${mdCell(hr && hr.reason)} | ${current} | ${action} |`);
     }
@@ -2767,7 +2816,7 @@ function buildDevflowSummaryBody({
       for (const ac of unsatisfiedACRows) {
         const verifiedBy = ac.verified_by != null ? ac.verified_by : 'inspection';
         const evidenceCell = ac.evidence ? mdCell(ac.evidence) : '—';
-        lines.push(`| ❌ 未達 | AC#${ac.ac_index + 1} | ${verifiedBy} | ${evidenceCell} |`);
+        lines.push(`| ❌ 未達 | AC#${ac.ac_index + 1}${ac.observational === true ? '（観測型）' : ''} | ${verifiedBy} | ${evidenceCell} |`);
       }
     }
 
@@ -3005,8 +3054,15 @@ function holdReasonDisplay(code, kind, ctx) {
       return { current: `未 checked blocking ${ctx.uncheckedBlockingCount} 件`, action: '修正が必要（下表 ❌ 行）' };
     case 'ac_agent_unsatisfied':
       return { current: 'エージェントで満たせる AC が差し戻し後も未達（ループの取りこぼし）', action: '修正が必要（下表 ❌ 未達 行）' };
-    case 'ac_human_pending':
-      return { current: '人手作業を要する AC が未達（人手 AC 待ち）', action: '人手で実施して AC を確認する（下表 ❌ 未達 行）' };
+    case 'ac_human_pending': {
+      const obs = Array.isArray(ctx.observationalAcGaps) ? ctx.observationalAcGaps : [];
+      if (obs.length === 0) return { current: '人手作業を要する AC が未達（人手 AC 待ち）', action: '人手で実施して AC を確認する（下表 ❌ 未達 行）' };
+      const others = (Array.isArray(ctx.humanAcGaps) ? ctx.humanAcGaps : []).filter((k) => !obs.includes(k));
+      return {
+        current: `${others.length > 0 ? '人手作業を要する AC が未達（人手 AC 待ち）・' : ''}観測型 AC（${obs.map((k) => `AC#${k + 1}`).join(', ')}）は実行しないと確かめられず、test の red→green 実証が無い`,
+        action: `${others.length > 0 ? '人手で実施して AC を確認する・' : ''}${OBSERVATIONAL_AC_ACTION}（下表 ❌ 未達 行）`,
+      };
+    }
     case 'danger_unresolved':
       return { current: `security clearance 未確認 ${ctx.unclearedCount} 件`, action: '人が該当 diff を確認する' };
     case 'danger_fail_closed':
@@ -5296,6 +5352,10 @@ if (!req) {
 // 差し戻し（agent AC の未達だけ）と Merge tier の HOLD 理由（取りこぼし / 人手待ち）を分ける。
 // repo 外の作業だけを書いた AC は human、repo 内外が混ざった AC は下の analyze ゲートで止める。
 req.ac_actors = acActorsOf(req.acceptance_criteria, { repo: REPO })
+// 観測型 AC（実行して出力・記録を観測しないと確かめられない。actor は human）。Evaluate / Final reconcile は
+// red→green 実証で deterministic 昇格したときだけ checked にし、inspection の satisfied:true は人手 AC 待ちに倒す。
+req.ac_observational = acObservationalOf(req.acceptance_criteria)
+if (req.ac_observational.includes(true)) log(`analyze: 観測型 AC ${req.ac_observational.filter(Boolean).length} 件（AC-${req.ac_observational.map((o, i) => o ? i + 1 : null).filter((n) => n != null).join(', AC-')}）— red→green 実証が無ければ inspection で達成扱いにせず人手 AC 待ちへ回す`)
 if (req.ac_actors.includes('human')) log(`analyze: 人手 AC ${req.ac_actors.filter((a) => a === 'human').length} 件（AC-${req.ac_actors.map((a, i) => a === 'human' ? i + 1 : null).filter((n) => n != null).join(', AC-')}）— 未達でも差し戻さず Merge tier の人手 AC 待ちへ回す`)
 // analyze 経路（log 表示用）: ANALYZE_PATH は 'contract' | 'jev'。
 // ANALYZE_INELIGIBLE_REASON は Jev に回した理由（prerun の jev_reasons を '; ' 結合。contract 経路は null）。
@@ -6283,7 +6343,8 @@ async function execEvaluatePhase(state) {
       + `requirements: ${JSON.stringify(req)}\n`
       + `plan: ${JSON.stringify(planWithoutPrBodyMaterial(plan))}\n`
       + `収束判定は ledger（isConvergedUnderPolicy: critical/AC/SEC の解消状況）のみで行われ、verdict は収束判定に使われない（log/telemetry 表示用。issue #174）。fail を引き延ばすための新規 minor/major の捻出は不要。\n`
-      + `requirements.ac_actors は AC ごとの actor（agent: worktree 内で満たせる / human: 人手・staging・本番等の worktree 外作業）。agent の AC が satisfied:false なら verdict に依らず実装へ差し戻される。\n`
+      + `requirements.ac_actors は AC ごとの actor（agent: worktree 内で満たせる / human: 人手・staging・本番等の worktree 外作業）。agent の AC が satisfied:false なら verdict に依らず実装へ差し戻される。`
+      + `requirements.ac_observational が true の AC（観測型: 実行して出力・記録を観測しないと確かめられない）は、test で red→green を実証した場合（verified_by:test + test_files / impl_files）だけ達成扱いになる。\n`
       // PR 作成前なので、PR phase と同じ材料（plan / ledger / risk hits）で組んだ本文プレビューを渡す（AC checkbox は未確定）。
       + prBodyEvidenceInstr(buildPrBody({ issue: ISSUE, req, plan, ledger, testsurfHits, dangerHits: secHitsOf(state.risk) }))
       + (sameTreeAsValidate ? validateResultPromptBlock(state.val) : '')
@@ -6316,9 +6377,6 @@ async function execEvaluatePhase(state) {
       + EPOCH_INSTRUCTION,
       { agentType: 'evaluator', schema: EVAL, label: `eval#${i}`, phase: 'Evaluate' },
     ), `Evaluate(eval#${i})`)
-    evalResult = ev
-    unsatisfiedAc = (ev.ac_results ?? []).some((r) => r && r.satisfied === false)
-    unsatisfiedByActor = unsatisfiedAcByActor(ev.ac_results, req.ac_actors)
 
     // feedback を topic 単位で累積し出現回数を数える（stuck 検出 fingerprint）
     for (const f of (ev.feedback ?? [])) { if (f == null) continue; evalSeen.register(f) }
@@ -6387,6 +6445,9 @@ async function execEvaluatePhase(state) {
     // 対象 AC を先に集めて redgreen-verify を 1 spawn で呼ぶ（AC ごとに spawn しない）。
     // redgreen-verify は worktree の impl を退避→復元するため AC 間の並列化は不可で、AC ごとに分けても
     // spawn の固定コストと exec-proxy の失敗露出が AC 数倍になるだけで判定は何も変わらない。
+    // 観測型 AC（req.ac_observational）は red→green 実証で deterministic 昇格したときだけ checked にする
+    // （inspection / red→green 不成立の satisfied:true では checked にせず、下の demote で人手 AC 待ちに倒す）。
+    const isObservational = (r) => req.ac_observational?.[r.ac_index] === true
     const rgTargets = []
     for (const r of (ev.ac_results ?? [])) {
       if (!r || typeof r.ac_index !== 'number') continue
@@ -6403,6 +6464,8 @@ async function execEvaluatePhase(state) {
       if (r.satisfied && r.verified_by === 'test' && Array.isArray(r.test_files) && r.test_files.length
           && Array.isArray(r.impl_files) && r.impl_files.length) {
         rgTargets.push({ r, acId })
+      } else if (r.satisfied && isObservational(r)) {
+        log(`AC-${r.ac_index + 1}: 観測型 AC の inspection 判定 → checked にせず人手 AC 待ち（red→green 実証なし）`)
       } else if (r.satisfied) {
         ledger = checkItem(ledger, acId, r.evidence ?? 'inspection')
       }
@@ -6431,14 +6494,21 @@ async function execEvaluatePhase(state) {
         ledger = checkItem(ledger, acId, `red→green 実証: ${(r.test_files || []).join(',')}`)
         log(`AC-${r.ac_index + 1}: red→green 実証 → deterministic 昇格 + checked`)
       } else {
-        if (r.satisfied) ledger = checkItem(ledger, acId, r.evidence ?? 'inspection(red→green 未成立)')
+        if (r.satisfied && !isObservational(r)) ledger = checkItem(ledger, acId, r.evidence ?? 'inspection(red→green 未成立)')
+        const kept = isObservational(r) ? 'checked にせず人手 AC 待ち（観測型 AC）' : 'inspection 据え置き'
         if (rg && rg.red === true && rg.green === true && denyRes.deny) {
-          log(`AC-${r.ac_index + 1}: red→green 実証だが vdelta deny(${denyRes.reasons.join(', ')})→ deterministic 昇格せず inspection 据え置き`)
+          log(`AC-${r.ac_index + 1}: red→green 実証だが vdelta deny(${denyRes.reasons.join(', ')})→ deterministic 昇格せず ${kept}`)
         } else {
-          log(`AC-${r.ac_index + 1}: red→green 未成立(${rg ? rg.reason : 'null'})→ inspection 据え置き`)
+          log(`AC-${r.ac_index + 1}: red→green 未成立(${rg ? rg.reason : 'null'})→ ${kept}`)
         }
       }
     }
+    // 実証の無い観測型 AC の satisfied:true を未達（observational:true）に倒した結果を以降の判定・終端サマリーに使う。
+    // 観測型 AC の actor は human なので、未達は差し戻し（agentAcFeedback）に入らず Merge tier の ac_human_pending へ回る。
+    const acResultsEff = demoteUnprovenObservationalAc(ev.ac_results, req.ac_observational, deterministicAcIndexes(ledger.items))
+    evalResult = Array.isArray(acResultsEff) ? { ...ev, ac_results: acResultsEff } : ev
+    unsatisfiedAc = (acResultsEff ?? []).some((r) => r && r.satisfied === false)
+    unsatisfiedByActor = unsatisfiedAcByActor(acResultsEff, req.ac_actors)
     // W5: danger-grep hit の SEC item(critical 据え置き)を evaluator が evidence 付きで
     // 安全確認したら checkItem(resolve-with-evidence)。確認できなければ block 据え置き。
     for (const sc of (ev.security_clearance ?? [])) {
@@ -7164,15 +7234,20 @@ if (_facDecision.run) {
   if (!v.ok) { finalAcReconcile = 'unavailable'; log(`⚠️ Final AC reconcile: 検証不合格（${v.reason}）— unavailable（fail-closed → merge tier HOLD）`) }
   else {
     finalAcReconcile = 'reverified'
-    state.finalAcResults = v.results
-    state.finalUnsatisfiedAc = v.unsatisfiedIndexes.length > 0
-    state.finalUnsatisfiedAcByActor = unsatisfiedAcByActor(v.results, req.ac_actors)
+    // 観測型 AC は Evaluate で red→green 実証（deterministic 昇格）していなければ、final reconcile の inspection で
+    // satisfied:true でも達成扱いにしない（未達の人手 AC 待ちに倒す）。
+    const finalResults = demoteUnprovenObservationalAc(v.results, req.ac_observational, deterministicAcIndexes(state.ledger.items))
+    state.finalAcResults = finalResults
+    state.finalUnsatisfiedAc = finalResults.some((r) => r && r.satisfied === false)
+    state.finalUnsatisfiedAcByActor = unsatisfiedAcByActor(finalResults, req.ac_actors)
     for (const r of v.results) {
       const acId = `AC-${r.ac_index + 1}`
       const acItem = state.ledger.items.find((it) => it.id === acId)
       if (r.satisfied === false) {
         state.ledger = appendItem(state.ledger, { id: `AC-FINAL-${r.ac_index + 1}`, text: `[final-reconcile 不成立] ${String(req.acceptance_criteria[r.ac_index])}`.slice(0, 500), dimension: 'ac', severity: 'critical', source: 'evaluator', check: { kind: 'inspection' } }).ledger
         log(`AC-FINAL-${r.ac_index + 1}: 最終 tree で AC 不成立 → critical append（既存 ${acId} は変更しない）`)
+      } else if (acItem && !acItem.checked && req.ac_observational?.[r.ac_index] === true) {
+        log(`${acId}: 観測型 AC の final reconcile pass（inspection）→ checked にせず人手 AC 待ち（red→green 実証なし）`)
       } else if (acItem && !acItem.checked) {
         state.ledger = checkItem(state.ledger, acId, `final reconcile pass: ${r.evidence}`)
       }

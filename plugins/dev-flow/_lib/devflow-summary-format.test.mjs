@@ -3121,6 +3121,59 @@ test('issue #794 AC3: AC への紐付けが 1 系統だけ・どこにも紐づ�
   assert.ok(!body.includes('1 行にまとめた'));
 });
 
+// ─── issue #844: 観測型 AC の未達は対応欄を「実行して確かめる」にし、どの AC が観測型かを出す ───
+
+const OBS_ACTION_844 = '実行して AC の主張を確認する（例: merge 後の実 run・計測）';
+
+function input844({ human = [0], observational = [0] } = {}) {
+  const mt = classifyMergeTier({
+    iterateStatus: 'lgtm', shape: 'standard', converged: true, unresolvedDanger: false, breakingStructured: false,
+    breakingKeyword: false, docsOrTestOnly: false, escalateCount: 0, evalStaleness: 'none',
+    unsatisfiedAgentAc: false, unsatisfiedHumanAc: human.length > 0,
+  });
+  return {
+    ...BASE_INPUT,
+    mergeTier: mt.tier, mergeTierReasons: mt.reasons, holdReasons: mt.holdReasons, holdKind: mt.holdKind,
+    acResults: [0, 1, 2].map((i) => (human.includes(i)
+      ? { ac_index: i, satisfied: false, verified_by: 'inspection', evidence: observational.includes(i) ? '観測型 AC — test の red→green 実証が無い' : 'staging 未確認', ...(observational.includes(i) ? { observational: true } : {}) }
+      : { ac_index: i, satisfied: true, verified_by: 'inspection', evidence: 'ok' })),
+    unsatisfiedAcByActor: { agent: [], human },
+  };
+}
+
+test('issue #844: 観測型 AC だけが未達なら HOLD 理由表の対応欄は実行による確認で、現状と未達表に観測型の AC 番号が出る', () => {
+  const body = buildDevflowSummaryBody(input844());
+  const hold = rows794(body, '### HOLD になった理由と現状');
+  assert.equal(hold.length, 1, hold.join('\n'));
+  assert.ok(hold[0].endsWith(`| 観測型 AC（AC#1）は実行しないと確かめられず、test の red→green 実証が無い | ${OBS_ACTION_844}（下表 ❌ 未達 行） |`), hold[0]);
+  assert.ok(body.includes('| ❌ 未達 | AC#1（観測型） | inspection | 観測型 AC — test の red→green 実証が無い |'), body);
+});
+
+test('issue #844: 観測型と通常の人手 AC が両方未達なら、対応欄に人手の実施と実行による確認を両方出す', () => {
+  const body = buildDevflowSummaryBody(input844({ human: [0, 2], observational: [2] }));
+  const hold = rows794(body, '### HOLD になった理由と現状');
+  assert.ok(hold[0].endsWith(`| 人手作業を要する AC が未達（人手 AC 待ち）・観測型 AC（AC#3）は実行しないと確かめられず、test の red→green 実証が無い | 人手で実施して AC を確認する・${OBS_ACTION_844}（下表 ❌ 未達 行） |`), hold[0]);
+  assert.ok(body.includes('| ❌ 未達 | AC#1 | inspection | staging 未確認 |'), body);
+  assert.ok(body.includes('| ❌ 未達 | AC#3（観測型） | inspection |'), body);
+});
+
+test('issue #844: 観測型でない人手 AC 待ちの表示は変えない', () => {
+  const body = buildDevflowSummaryBody(input844({ human: [0], observational: [] }));
+  const hold = rows794(body, '### HOLD になった理由と現状');
+  assert.ok(hold[0].endsWith('| 人手作業を要する AC が未達（人手 AC 待ち） | 人手で実施して AC を確認する（下表 ❌ 未達 行） |'), hold[0]);
+  assert.ok(!body.includes('観測型'), body);
+});
+
+test('issue #844: 同じ AC にまとめた行でも、観測型 AC は対応が実行による確認になり、見出しに観測型と出る', () => {
+  const input = input794({ agent: [], human: [3] });
+  input.acResults = input.acResults.map((a) => (a.ac_index === 3 ? { ...a, observational: true } : a));
+  const body = buildDevflowSummaryBody(input);
+  const hold = rows794(body, '### HOLD になった理由と現状');
+  assert.equal(hold.length, 1, hold.join('\n'));
+  assert.ok(hold[0].startsWith('| AC#4 未達（観測型） — '), hold[0]);
+  assert.ok(hold[0].endsWith(`| ${OBS_ACTION_844}・要判断（blast-radius）（下表 AC#4 未達（観測型） 行） |`), hold[0]);
+});
+
 // ─── issue #829: 終端サマリの定型行・二重掲載・矛盾する注記を formatter で消す ───────────
 // 直近の dev-flow 製 PR の終端サマリに出ていた形（REVIEW の fix 適用後 reverified・REVIEW の fix なし・
 // AUTO の micro docs・HOLD の security hit + 未解消混在）を formatter の入力として再構成した fixture。
