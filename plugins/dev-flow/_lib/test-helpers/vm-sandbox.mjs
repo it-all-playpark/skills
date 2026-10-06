@@ -262,12 +262,13 @@ export function assertNoCrash(error, name) {
 // ============================================================
 
 /**
- * merge-tier-facts の応答 {diffhash, risk, changed, pr, head_tree, checks, epoch} を返す。
+ * merge-tier-facts の応答 {diffhash, risk, changed, pr, head_tree, checks, closes, epoch} を返す。
  * 各サブ結果は {ok:true, value} で、引数で個別に上書きできる。null を渡したサブ結果は
- * {ok:false, value:null, error} になる（当該サブ結果だけ失敗させる）。
+ * {ok:false, value:null, error} になる（当該サブ結果だけ失敗させる）。closes は PR body の
+ * `Closes #<issue>` 有無（既定 true。false で欠落、null で取得失敗）。
  *
  * @param {{hash?: string, risk?: object|null, files?: string[]|null, pr?: object|null,
- *          tree?: string|null, checks?: object[]|null, epoch?: number}} [o]
+ *          tree?: string|null, checks?: object[]|null, closes?: boolean|null, epoch?: number}} [o]
  */
 export function mergeTierFacts(o = {}) {
   const sub = (v, err) => (v === null ? { ok: false, value: null, error: err } : { ok: true, value: v });
@@ -277,6 +278,7 @@ export function mergeTierFacts(o = {}) {
   const pr = 'pr' in o ? o.pr : { mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN', headRefOid: 'a'.repeat(40) };
   const tree = 'tree' in o ? o.tree : 'AAA';
   const checks = 'checks' in o ? o.checks : null;
+  const closes = 'closes' in o ? o.closes : true;
   return {
     diffhash: sub(hash === null ? null : { hash, empty: false, epoch: 1 }, 'stub: diffhash unavailable'),
     risk: sub(risk, 'stub: risk unavailable'),
@@ -284,6 +286,7 @@ export function mergeTierFacts(o = {}) {
     pr: sub(pr, 'stub: pr unavailable'),
     head_tree: sub(tree === null ? null : { tree }, 'stub: head_tree unavailable'),
     checks: sub(checks === null ? null : { checks }, 'stub: no checks'),
+    closes: sub(closes === null ? null : { present: closes }, 'stub: closes unavailable'),
     epoch: o.epoch ?? 2000,
   };
 }
@@ -373,11 +376,10 @@ export function devFlowResponder(overrides = {}, { issue = 1 } = {}) {
       };
     }
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'AAA', empty: false };
-    // Closes 行の決定論検証 / 再投入 / AC checkbox 同期（issue #661）の既定応答。
-    // 既定 run は Closes 行付きの body を返し 'verified' に倒す。再投入・同期の gh pr edit も既定成功。
-    // closes-check / closes-recheck は gh pr view --json body の stdout 全文を raw で返す（issue #713）。
-    if (label === 'closes-check' || label === 'closes-recheck') return { ok: true, raw: JSON.stringify({ body: `Closes #${issue}\n` }) };
-    if (label === 'closes-reinject' || label === 'ac-checkbox-sync') return { edited: true };
+    // Closes 行の再投入 / AC checkbox 同期（issue #661）の既定応答。Closes 有無は merge-tier-facts の closes
+    // サブ結果（既定 present:true → 'verified'）。再投入は既定で成功し、同じ spawn の再取得も 'true'（issue #824）。
+    if (label === 'closes-reinject') return { edited: true, closes: 'true' };
+    if (label === 'ac-checkbox-sync') return { edited: true };
     if (label.startsWith('pr')) return { pr_url: 'http://x', pr_number: 1, committed: true };
     if (label === 'post-summary') return { posted: true, method: 'gh', url: 'http://x', epoch: 2000 };
     if (label.startsWith('journal-log')) return { saved: true, logged: true };

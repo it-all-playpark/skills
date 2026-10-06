@@ -388,7 +388,7 @@ test('[abort-telemetry] (8) PR phase 失敗: 回収コマンドは committed に
   assert.deepEqual([...result2.recovery_commands.slice(0, 3)], ['git add -A', 'git commit -F .devflow-tmp/commit-msg.txt', 'git push -u origin HEAD']);
 });
 
-test('[abort-telemetry] (8) PR phase 失敗: abort entry ではなく outcome=failure / error_category=pr_phase_failed の handoff を 1 件書き、closes-check・nested pr-iterate・Merge tier・終端サマリは実行しない', async () => {
+test('[abort-telemetry] (8) PR phase 失敗: abort entry ではなく outcome=failure / error_category=pr_phase_failed の handoff を 1 件書き、nested pr-iterate・Merge tier・終端サマリは実行しない', async () => {
   const { ctx, calls } = makeSandbox({ analyzeReq: STANDARD_ANALYZE_REQ, prResponse: PR_PUSH_FAILED });
   await runDevFlowInSandbox(src, ctx);
 
@@ -406,7 +406,7 @@ test('[abort-telemetry] (8) PR phase 失敗: abort entry ではなく outcome=fa
   assert.deepEqual(payload.telemetry.phase_durations, { pr: 250 });
   assert.equal(payload.telemetry.duration_seconds, 300);
 
-  for (const label of ['closes-check', 'workflow:dev-flow:pr-iterate', 'merge-tier-facts', 'post-summary', 'journal-log']) {
+  for (const label of ['closes-reinject', 'workflow:dev-flow:pr-iterate', 'merge-tier-facts', 'post-summary', 'journal-log']) {
     assert.equal(calls.filter((c) => c.label === label).length, 0, `(8) PR 失敗後に ${label} が呼ばれた`);
   }
   // push / PR 作成は pr#1 の 1 spawn だけで、run 内で再試行しない（#804 / #819）

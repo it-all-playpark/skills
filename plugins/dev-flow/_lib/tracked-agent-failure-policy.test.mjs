@@ -73,8 +73,8 @@ const DF_B5 = {
 // throw だけでは Merge tier 側の再取得で「clean」に復元されてしまい HOLD を再現できない
 // （fail-closed が Security floor と Merge tier の両方で持続する現実的なシナリオとして構成する）。
 const DF_DANGER = { overrides: { 'merge-tier-facts': mergeTierFacts({ risk: { ok: false, hits: [], error: 'still down' } }) } };
-// CLOSES: closes-check が Closes 行の無い body を返し closes-reinject へ到達させる。
-const DF_CLOSES = { overrides: { 'closes-check': { ok: true, raw: JSON.stringify({ body: 'no closes' }) } } };
+// CLOSES: merge-tier-facts の closes サブ結果が Closes 欠落を報告し closes-reinject へ到達させる。
+const DF_CLOSES = { overrides: { 'merge-tier-facts': mergeTierFacts({ closes: false }) } };
 
 // ── DEV_FLOW_SCENARIOS 由来の baseline（issue #605 review。exec-proxy-routing と同じ
 // scenario 集合を参照し、到達する label の分類を強制する）──
@@ -174,7 +174,6 @@ const EXPECTED_DEV_FLOW = {
     },
   },
   'security-clearance-final': { config: DF_B5, policy: 'abort', reason: 'bare据え置き。security clearance不能をclearと同一視しない契約' },
-  'closes-check': { config: DF_B1, policy: 'continue', reason: 'failOpenAgent経由。Closes行probeの失敗はunverified（警告のみ）へ倒し再投入も行わない' },
   'closes-reinject': {
     config: DF_CLOSES,
     policy: 'continue',
@@ -182,14 +181,6 @@ const EXPECTED_DEV_FLOW = {
     extra: async ({ result }) => {
       assert.equal(result?.merge_tier, 'HOLD', 'closes-reinject throw で pr_closes_status=missing のため merge_tier は HOLD になるべき');
       assert.equal(result?.pr_closes_status, 'missing', 'closes-reinject throw 後の pr_closes_status は missing になるべき');
-    },
-  },
-  'closes-recheck': {
-    config: DF_CLOSES,
-    policy: 'continue',
-    reason: 'failOpenAgent経由。再投入後の再確認probe失敗はunverifiedへ倒すfail-open経路',
-    extra: async ({ result }) => {
-      assert.equal(result?.pr_closes_status, 'unverified', 'closes-recheck throw 後の pr_closes_status は unverified になるべき');
     },
   },
   'ac-checkbox-sync': {

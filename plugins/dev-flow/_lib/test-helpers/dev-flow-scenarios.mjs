@@ -191,9 +191,9 @@ export const DEV_FLOW_SCENARIOS = {
       'base-rerun#1': { results: [{ file: 'plugins/x/scripts/a.bats', ran: true, base_failed: true, same_failure: true, summary: 'same' }] },
     },
   },
-  // PR body に Closes 行が無い → closes-reinject → closes-recheck（既定 responder で Closes 付き body。issue #661）
+  // Merge tier の merge-tier-facts が PR body の Closes 欠落を報告 → closes-reinject（再投入 + 同じ spawn で再取得。issue #824）
   'closes-reinject': {
-    overrides: { 'closes-check': { ok: true, raw: JSON.stringify({ body: '**x**\n\n## 変更\n（なし）\n' }) } },
+    overrides: { 'merge-tier-facts': mergeTierFacts({ closes: false }) },
   },
   // clean micro lite route（realized 0 files → micro。pr-review-lite + ci-check-lite で lgtm 終端、nested pr-iterate 起動なし）
   lite: {

@@ -80,7 +80,7 @@ test('bodySaveInstr(saveDir) — mktemp を指示せず、固定ファイル名�
 });
 
 // -----------------------------------------------------------------------
-// ghBareStepInstr: 投稿コマンドの起動形（prBodyViewPrompt と同一文言）
+// ghBareStepInstr: 投稿コマンドの起動形（closesReinjectPrompt と同一文言）
 // -----------------------------------------------------------------------
 
 test('ghBareStepInstr — コマンドを bare 単文 1 回・禁止句付きで指示する', () => {

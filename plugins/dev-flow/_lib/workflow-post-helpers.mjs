@@ -52,7 +52,7 @@ export function bodySaveInstr(body, { bodyFile, saveDir, fileName }, delimName) 
 
 /**
  * gh の投稿コマンドを bare 単文で 1 回だけ実行させる instruction 行を生成する
- * （起動形の文言は dev-flow.js の prBodyViewPrompt と同一）。
+ * （起動形の文言は dev-flow.js の closesReinjectPrompt と同一）。
  * @param {string} cmd - 先頭トークンが gh のコマンド全文（`--repo <REPO>` 付き）
  */
 export function ghBareStepInstr(cmd) {

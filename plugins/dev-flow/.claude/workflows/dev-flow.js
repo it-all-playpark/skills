@@ -3947,7 +3947,7 @@ const UILOGIN = { type: 'object', required: ['ok'], properties: { ok: { type: 'b
 const UISTOP = { type: 'object', required: ['server_stopped', 'session_closed'], properties: { server_stopped: { type: 'boolean' }, session_closed: { type: 'boolean' }, leftover: { type: 'array', items: { type: 'string' } }, notes: { type: 'string' } } }
 const SYNCRES = { type: 'object', required: ['ok'], properties: { ok: { type: 'boolean' }, head: { type: 'string' }, error: { type: 'string' }, epoch: { type: 'number' } } }
 // MERGE_FACTS: Merge tier 統合 exec-proxy (`_shared/scripts/merge-tier-facts.sh`) の応答 schema。
-// Merge tier の read-only 事実 6 種（diffhash / risk / changed / pr / head_tree / checks）を 1 spawn で採り、
+// Merge tier の read-only 事実 7 種（diffhash / risk / changed / pr / head_tree / checks / closes）を 1 spawn で採り、
 // サブ結果は全て {ok, value, error?}。required は fail-closed の `risk` のみ — proxy が
 // payload をネストする等の形状不一致を schema 契約違反として検知し retryOnContractViolation の再試行機会を
 // 与える（required:[] だと契約違反にならず一発で fail-closed に倒れ、診断もできない）。
@@ -3976,13 +3976,19 @@ const MERGE_FACTS = {
     }),
     head_tree: mergeFactSubSchema({ required: ['tree'], properties: { tree: { type: 'string' } } }),
     checks: mergeFactSubSchema({ required: ['checks'], properties: { checks: { type: 'array' } } }),
+    closes: mergeFactSubSchema({ required: ['present'], properties: { present: { type: 'boolean' } } }),
     epoch: { type: ['number', 'null'] },
   },
 }
 // merge-tier-facts-schema-end: MERGE_FACTS 直後に parseMergeTierFacts の inline 区間を続ける（anchor 用の一意行）。
 // ==== BEGIN inline: _lib/merge-tier-facts.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 
-function mergeTierFactsPrompt({ wt, base, pr, repo }) {
+function closesCheckCommand({ pr, repo, issue }) {
+  const repoArg = repo ? ' --repo ' + repo : '';
+  return `gh pr view ${pr}${repoArg} --json body --jq '.body | test("Closes #${Number(issue)}(\\\\D|$)")'`;
+}
+
+function mergeTierFactsPrompt({ wt, base, pr, repo, issue }) {
   const repoArg = repo ? ' --repo ' + repo : '';
   const bare = '（cd 前置・`bash` 前置・環境変数代入前置・&& 連結・パイプ・リダイレクトは禁止）';
   return `## Objective\nPR #${pr} の Merge tier 判定に使う事実を取得し、merge-tier-facts の stdout JSON をそのまま返せ。\n\n`
@@ -3995,17 +4001,21 @@ function mergeTierFactsPrompt({ wt, base, pr, repo }) {
     + `1. \`gh pr view ${pr}${repoArg} --json mergeable,mergeStateStatus,headRefOid\` を先頭トークンが gh の bare 単文で 1 回だけ実行せよ${bare}。stdout を <PR_VIEW> とする。\n`
     + `2. \`gh pr checks ${pr}${repoArg} --json name,bucket\` を先頭トークンが gh の bare 単文で 1 回だけ実行せよ${bare}。`
     + `このコマンドの exit code を判定に使ってはならない（pending で 8、失敗ありで 1 を返す仕様であり、fetch 自体の成否とは無関係）。stdout を <CHECKS> とする。\n`
-    + `3. \`merge-tier-facts --worktree ${wt} --base origin/${base} --pr-view-data '<手順1の stdout を一字一句そのまま。要約・整形・省略禁止>' `
-    + `--checks-data '<手順2の stdout を一字一句そのまま。要約・整形・省略禁止>'\` を先頭トークンが merge-tier-facts の bare 単文で 1 回だけ実行せよ。`
-    + `手順 1 / 2 の stdout が空、またはコマンドが実行できなかった場合は当該オプション自体を省略せよ（値を捏造してはならない）。`
+    + `3. \`${closesCheckCommand({ pr, repo, issue })}\` を先頭トークンが gh の bare 単文で 1 回だけ実行せよ${bare}。`
+    + `--jq の引数は単一引用符ごと一字一句そのまま渡す（単一引用符内の \`|\` は jq の構文でありシェルのパイプではない）。`
+    + `stdout（\`true\` または \`false\`）を <CLOSES> とする。\n`
+    + `4. \`merge-tier-facts --worktree ${wt} --base origin/${base} --pr-view-data '<手順1の stdout を一字一句そのまま。要約・整形・省略禁止>' `
+    + `--checks-data '<手順2の stdout を一字一句そのまま。要約・整形・省略禁止>' `
+    + `--closes-data '<手順3の stdout（true または false）をそのまま>'\` を先頭トークンが merge-tier-facts の bare 単文で 1 回だけ実行せよ。`
+    + `手順 1 / 2 / 3 の stdout が空、またはコマンドが実行できなかった場合は当該オプション自体を省略せよ（値を捏造してはならない）。`
     + `argv は一字一句そのまま実行する — which による絶対パス解決・絶対パスへの書き換え・cd 前置・\`bash\` 前置・環境変数代入前置・&& 連結は禁止`
     + `（--worktree で worktree 絶対パスを渡しているため cd は不要）。\n`
-    + `4. 手順 3 の stdout の JSON 1 行を **そのまま** 返せ（判定・要約・整形・省略禁止）。`
+    + `5. 手順 4 の stdout の JSON 1 行を **そのまま** 返せ（判定・要約・整形・省略禁止）。`
     + `各サブ結果の \`value\`（中身の object を含む。ok:false のときは null）を省略・空 object 化してはならない。`
-    + `手順 3 自体が実行できなかった、または stdout が JSON でない場合のみ \`{"risk":{"ok":false,"value":null,"error":"<stderr の要約>"}}\` を返せ。`
+    + `手順 4 自体が実行できなかった、または stdout が JSON でない場合のみ \`{"risk":{"ok":false,"value":null,"error":"<stderr の要約>"}}\` を返せ。`
     + `失敗時に ok:true を生成してはならない。原因調査はするな。再試行禁止。\n\n`
     + `## Output format\n`
-    + `merge-tier-facts の stdout JSON（{diffhash, risk, changed, pr, head_tree, checks, epoch}。各サブ結果は {ok, value, error?}）\n`
+    + `merge-tier-facts の stdout JSON（{diffhash, risk, changed, pr, head_tree, checks, closes, epoch}。各サブ結果は {ok, value, error?}）\n`
     + `prose 禁止。JSON のみ返せ。\n\n`
     + `## Token cap\n`
     + `JSON のみ。1 行以内。`;
@@ -4083,6 +4093,61 @@ function parseChecks(facts) {
   return { ok: false, error: subError(sub, 'merge-tier-facts checks unavailable') };
 }
 
+function parseClosesFact(facts) {
+  const sub = facts?.closes;
+  const present = subOk(sub) ? sub.value?.present : null;
+  if (present === true) return 'present';
+  if (present === false) return 'missing';
+  return 'unknown';
+}
+
+function prClosesStatusOf(closes) {
+  if (closes === 'present') return 'verified';
+  if (closes === 'missing') return 'missing';
+  return 'unverified';
+}
+
+const CLOSES_REINJECT = {
+  type: 'object',
+  required: ['edited'],
+  properties: {
+    edited: { type: 'boolean' },
+    closes: { type: 'string' },
+    error: { type: 'string' },
+  },
+};
+
+function closesReinjectPrompt({ wt, pr, repo, issue, prBody }) {
+  const bodyFile = `${wt}/.devflow-tmp/pr-body-reinject.md`;
+  const repoArg = repo ? ` --repo ${repo}` : '';
+  const bare = '（cd 前置・bash 前置・環境変数代入前置・&& 連結・パイプ・リダイレクト禁止）';
+  return `## Objective\n`
+    + `PR #${pr} の本文を渡された内容で上書きし、上書き後の本文に Closes #${Number(issue)} があるかを返す。\n\n`
+    + `## 本文の保存\n`
+    + `**Write tool** を使い、下記 delimiter 内の本文を **一字一句そのまま**（要約・整形・追記・改変・shell 経由の書き出し禁止）`
+    + `\`${bodyFile}\` へ保存せよ。\n`
+    + `<<<PR_BODY_BEGIN>>>\n${prBody}<<<PR_BODY_END>>>\n\n`
+    + `## Steps\n`
+    + `1. \`gh pr edit ${pr}${repoArg} --body-file ${bodyFile}\` を先頭トークンが gh の bare 単文で 1 回だけ実行せよ${bare}。`
+    + `失敗したら手順 2 へ進まず \`{"edited": false, "error": "<stderr の要約>"}\` を返せ。\n`
+    + `2. \`${closesCheckCommand({ pr, repo, issue })}\` を先頭トークンが gh の bare 単文で 1 回だけ実行せよ${bare}。`
+    + `--jq の引数は単一引用符ごと一字一句そのまま渡す（単一引用符内の \`|\` は jq の構文でありシェルのパイプではない）。\n`
+    + `3. \`{"edited": true, "closes": "<手順2の stdout（true または false）をそのまま>"}\` を返せ。`
+    + `手順 2 の stdout が空、またはコマンドが実行できなかった場合は closes を省略せよ（値を捏造してはならない）。原因調査はするな。再試行禁止。\n\n`
+    + `## Output format\n{"edited": boolean, "closes"?: "true" | "false", "error"?: string}\nprose 禁止。JSON のみ 1 行で返せ。\n\n`
+    + `## Tools\n使用可: Bash, Write\n\n`
+    + `## Boundary\n${bodyFile} 以外を書かない。git 操作禁止。本文の書き換え禁止。\n\n`
+    + `## Token cap\nJSON のみ。1 行以内。`;
+}
+
+function closesReinjectStatus(res) {
+  if (res == null || typeof res !== 'object' || res.edited !== true) return 'missing';
+  const closes = typeof res.closes === 'string' ? res.closes.trim() : '';
+  if (closes === 'true') return 'reinjected';
+  if (closes === 'false') return 'missing';
+  return 'unverified';
+}
+
 function mergeTierFactsTopLevelKeys(facts) {
   if (facts == null) return 'null';
   if (typeof facts !== 'object') return typeof facts;
@@ -4098,6 +4163,7 @@ function parseMergeTierFacts(facts) {
     prMeta: parsePrMeta(facts),
     headTreeOid: parseHeadTreeOid(facts),
     checks: parseChecks(facts),
+    closes: parseClosesFact(facts),
   };
 }
 // ==== END inline: _lib/merge-tier-facts.mjs ====
@@ -4464,37 +4530,7 @@ function verifyPrBody(body, issue) {
   return { ok: missing.length === 0, missing, closes, length: Array.from(s).length };
 }
 
-function extractPrBody(raw) {
-  if (typeof raw !== 'string') return null;
-  let parsed;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return null;
-  }
-  if (parsed == null || typeof parsed !== 'object' || typeof parsed.body !== 'string') return null;
-  return parsed.body;
-}
-
-function closesVerdict({ view, issue }) {
-  if (view == null || view.ok !== true) return 'unknown';
-  const body = extractPrBody(view.raw);
-  if (body == null) return 'unknown';
-  return hasClosesLine(body, issue) ? 'present' : 'missing';
-}
-
 const PR_CLOSES_STATUS_VALUES = ['verified', 'reinjected', 'missing', 'unverified'];
-
-const PR_BODY_VIEW = {
-  type: 'object',
-  required: ['ok'],
-  properties: {
-    ok: { type: 'boolean' },
-    raw: { type: ['string', 'null'] },
-    error: { type: 'string' },
-    epoch: { type: 'number' },
-  },
-};
 
 const PR_BODY_EDIT = {
   type: 'object',
@@ -4505,31 +4541,6 @@ const PR_BODY_EDIT = {
     epoch: { type: 'number' },
   },
 };
-
-function prBodyViewPrompt({ pr, repo }) {
-  const cmd = `gh pr view ${pr}${repo ? ' --repo ' + repo : ''} --json body`;
-  return `## Objective\n`
-    + `PR #${pr} の本文 (body) を取得し、コマンドの stdout を加工せずそのまま返せ。\n\n`
-    + `## Tools\n`
-    + `- 使用可: Bash のみ\n`
-    + `- 禁止: Write, Edit, git commit, git push\n\n`
-    + `## Boundary\n`
-    + `- 読み取り専用。git mutation（commit/push/reset 等）禁止\n\n`
-    + `## Steps\n`
-    + `1. \`${cmd}\` を先頭トークンが gh の bare 単文で 1 回だけ実行せよ`
-    + `（cd 前置・bash 前置・環境変数代入前置・&& 連結・パイプ・リダイレクト禁止）。\n`
-    + `2. stdout が空、JSON として不正、またはコマンドが実行できなかった場合は `
-    + `\`{"ok": false, "error": "<stderr の要約>"}\` を返せ。失敗時に ok:true を生成してはならない。`
-    + `原因調査はするな。再試行禁止。\n`
-    + `3. それ以外は stdout の全文を 1 つの文字列として \`raw\` に入れ、\`{"ok": true, "raw": <stdout 全文>}\` を返せ。`
-    + `stdout を JSON として解釈して body を取り出す・別の object に包み直す・要約・整形・省略はすべて禁止`
-    + `（body の取り出しは呼び出し側が行う）。\n\n`
-    + `## Output format\n`
-    + `{"ok": true, "raw": string} または {"ok": false, "error": string}\n`
-    + `prose 禁止。JSON のみ返せ。\n\n`
-    + `## Token cap\n`
-    + `JSON のみ。1 行以内（raw を除く）。`;
-}
 
 function prBodyEditPrompt({ wt, pr, repo, prBody, fileName }) {
   const bodyFile = `${wt}/.devflow-tmp/${fileName}`;
@@ -6607,11 +6618,11 @@ const pr = need(await trackedAgent(
 ), 'PR')
 // proxy の中断応答（committed:false / pr_url 空 / pr_number 非正）は throw せず、failure 終端
 // （error_category: pr_phase_failed）で run を終える。need() は null 判定のみで PR 固有の形は見ない —
-// 通すと closes-check → nested pr-iterate が `pr: 0` の引数検証で abort し、proxy の失敗 step / stderr
+// 通すと nested pr-iterate が `pr: 0` の引数検証で abort し、proxy の失敗 step / stderr
 // （index.lock EPERM・push 403・pre-push hook 失敗・gh pr create 失敗）が transcript の外へ出ない。
 // throw（top-level catch の abort）にしないのは、Implement〜Evaluate を終えた run の成果物（branch・commit・
 // `.devflow-tmp/` に保存済みの commit message / PR body）・phase の所要時間・回収手順を返り値と journal に残すため。
-// closes-check・nested pr-iterate・Merge tier・終端サマリは実行しない（PR が無い）。リトライ・fallback
+// nested pr-iterate・Merge tier・終端サマリは実行しない（PR が無い）。リトライ・fallback
 // （push の再発行 / 別 worktree 退避 / force push）は持たない — 回収は wrapper が issue コメントで人間に渡す。
 // push 失敗は pr-push が出力全文を残した log のパスも載せる（transcript を掘らずに失敗した段を見られる）。
 const prFailure = prPhaseFailure(pr, { pushLog: prPushLogPath(WT) })
@@ -6680,31 +6691,9 @@ log(`PR created: ${pr.pr_url}`)
 
 feedClockMark('pr_end', epochResOf(pr))
 
-// Closes 行の決定論検証 + 再投入。probe 失敗は 'unverified'（fail-open、警告のみ）、
-// 本文取得成功かつ Closes 欠落は同一の決定論本文（prBody）で gh pr edit 再投入、再投入失敗 /
-// 再投入後も欠落は 'missing'（classifyMergeTier が HOLD 理由 pr_closes_missing に載せる fail-closed）。
-let prClosesStatus = 'unverified'
-const closesView = await failOpenAgent(prBodyViewPrompt({ pr: pr.pr_number, repo: REPO }), { agentType: 'dev-runner-haiku-ro', schema: PR_BODY_VIEW, label: 'closes-check', phase: 'PR', retryOnContractViolation: true })
-const closesV1 = closesVerdict({ view: closesView, issue: ISSUE })
-if (closesV1 === 'present') {
-  prClosesStatus = 'verified'
-} else if (closesV1 === 'unknown') {
-  log('⚠️ closes-check: PR body を取得できず — Closes 行は未検証（fail-open。再投入は行わない）')
-} else {
-  log(`⚠️ closes-check: PR body に Closes #${ISSUE} が無い（exec-proxy の後半セクション欠落の疑い）— 決定論本文を gh pr edit で再投入する`)
-  const reinject = await failOpenAgent(prBodyEditPrompt({ wt: WT, pr: pr.pr_number, repo: REPO, prBody, fileName: 'pr-body-reinject.md' }), { agentType: 'dev-runner-haiku', schema: PR_BODY_EDIT, label: 'closes-reinject', phase: 'PR' })
-  if (reinject?.edited !== true) {
-    prClosesStatus = 'missing'
-    log('⚠️ closes-reinject: PR body の再投入に失敗 — Closes 行欠落のまま（merge tier HOLD 理由 pr_closes_missing に載せる）')
-  } else {
-    const closesView2 = await failOpenAgent(prBodyViewPrompt({ pr: pr.pr_number, repo: REPO }), { agentType: 'dev-runner-haiku-ro', schema: PR_BODY_VIEW, label: 'closes-recheck', phase: 'PR', retryOnContractViolation: true })
-    const closesV2 = closesVerdict({ view: closesView2, issue: ISSUE })
-    prClosesStatus = closesV2 === 'present' ? 'reinjected' : (closesV2 === 'missing' ? 'missing' : 'unverified')
-    log(prClosesStatus === 'reinjected'
-      ? 'closes-reinject: PR body を再投入し Closes 行を確認済み'
-      : `⚠️ closes-recheck: 再投入後も Closes 行の確認に失敗（pr_closes_status=${prClosesStatus}）`)
-  }
-}
+// PR body の Closes 行検証と欠落時の再投入は Merge tier が merge-tier-facts の closes サブ結果で行う。
+// Closes 欠落時に再投入する本文は run が決定論で組んだ最新のもの（ac-checkbox-sync が組み直したらそちら）。
+let prBodyLatest = prBody
 
 // nested 起動時に dev-flow が pr-iterate へ渡す context。pr-iterate 側はこれを
 // 受けて pr-meta probe / isolation-cleanup を skip する — cwd/head_ref/repo/epoch は dev-flow が
@@ -7080,6 +7069,7 @@ if (finalRecheckTargets.length) {
 let prBodySynced = null
 if (iterate?.status === 'lgtm' && (iterate?.fixes_applied ?? 0) > 0 && finalAcReconcile === 'reverified') {
   const prBodyFinal = buildPrBody({ issue: ISSUE, req, plan: state.plan, ledger: state.ledger, testsurfHits: state.testsurfHits, dangerHits: secHitsOf(state.risk), acResults: state.finalAcResults })
+  prBodyLatest = prBodyFinal
   const sync = await failOpenAgent(prBodyEditPrompt({ wt: WT, pr: pr.pr_number, repo: REPO, prBody: prBodyFinal, fileName: 'pr-body-final.md' }), { agentType: 'dev-runner-haiku', schema: PR_BODY_EDIT, label: 'ac-checkbox-sync', phase: 'Final reconcile' })
   prBodySynced = sync?.edited === true
   log(prBodySynced ? 'ac-checkbox-sync: PR body の AC checkbox を Final AC reconcile 結果へ更新' : '⚠️ ac-checkbox-sync: PR body 更新に失敗（fail-open。checkbox は fix 前のまま）')
@@ -7093,15 +7083,16 @@ feedClockMark('final_end', finalEpochRes)
 // ============================================================
 phase('Merge tier')
 // Merge tier 統合 exec-proxy: Merge tier が使う read-only 事実（diff-hash / danger-grep / changed-files /
-// gh pr view / PR head tree OID / gh pr checks）を label 'merge-tier-facts' の 1 spawn で採る。
+// gh pr view / PR head tree OID / gh pr checks / PR body の Closes 有無）を label 'merge-tier-facts' の 1 spawn で採る。
 // subagent は gh pr view / gh pr checks を bare 単文で実行して stdout を argv で merge-tier-facts へ
-// verbatim 転写し、merge-tier-facts はローカル read-only git との純変換で 6 サブ結果を {ok,value,error}
+// verbatim 転写し（PR body は gh の --jq で true / false に畳んだ結果だけを渡す）、
+// merge-tier-facts はローカル read-only git との純変換で 7 サブ結果を {ok,value,error}
 // で返す（exec-proxy スクリプトは認証付き network I/O を内部に持たない）。判定は全て JS 側 —
 // parseMergeTierFacts がサブ結果ごとに独立検証し、以降の reuseSecFloor / reconcileDanger /
 // classifyMergeableState / hash_reconverged / envChecksGreen はその値で判定する。throw / null / 契約外形状は
 // Security floor の統合呼び出しと同じく per-field フォールバック（risk fail-closed → dangerFailClosed で
 // HOLD 強制、他は fail-open）で続行し、run を abort しない（abort は終端サマリと journal entry を失う）。
-// 6 サブ結果は常に取得する（head_tree / checks を使うかどうかは spawn 費用が無いため JS の分岐が決める）。
+// 7 サブ結果は常に取得する（head_tree / checks を使うかどうかは spawn 費用が無いため JS の分岐が決める）。
 let mergeFacts = null
 // StructuredOutput 契約違反（MERGE_FACTS は各サブ結果の value を required にしているため、value 欠落は
 // schema 違反 → StructuredOutput 未返却の throw になる）が再試行後も続いたか。true のとき fail-closed の原因は
@@ -7109,7 +7100,7 @@ let mergeFacts = null
 let mergeFactsContractViolation = false
 try {
   mergeFacts = await trackedAgent(
-    mergeTierFactsPrompt({ wt: WT, base: BASE, pr: pr.pr_number, repo: REPO }),
+    mergeTierFactsPrompt({ wt: WT, base: BASE, pr: pr.pr_number, repo: REPO, issue: ISSUE }),
     { agentType: 'dev-runner-haiku-ro', schema: MERGE_FACTS, label: 'merge-tier-facts', phase: 'Merge tier', retryOnContractViolation: true },
   )
 } catch (e) {
@@ -7242,6 +7233,21 @@ if (evalStaleness === 'hash_mismatch') {
       log(`hash_reconverged 不成立（eval ${state.evalDiffHash.slice(0, 8)} / PR head ${state.prHeadTreeOid.slice(0, 8)} / merge 対象 ${mergeDiffHash.slice(0, 8)}）— hash_mismatch 維持（HOLD）`)
     }
   }
+}
+// Closes 行の検証 + 再投入。値は merge-tier-facts の closes サブ結果（gh pr view --json body --jq の true / false）。
+// 取得失敗は 'unverified'（fail-open、警告のみ・再投入しない）。Closes 欠落は run が決定論で組んだ最新の本文で
+// gh pr edit 再投入し、同じ spawn で Closes 有無を再取得する。再投入失敗 / 再投入後も欠落は 'missing'
+// （classifyMergeTier が HOLD 理由 pr_closes_missing に載せる fail-closed）、再取得の失敗は 'unverified'。
+let prClosesStatus = prClosesStatusOf(facts.closes)
+if (facts.closes === 'unknown') {
+  log(`⚠️ merge-tier-facts closes: PR body の Closes 有無を取得できず（${mergeFacts?.closes?.error ?? 'null / schema 不一致'}）— Closes 行は未検証（fail-open。再投入は行わない）`)
+} else if (facts.closes === 'missing') {
+  log(`⚠️ merge-tier-facts closes: PR body に Closes #${ISSUE} が無い — 決定論本文を gh pr edit で再投入する`)
+  const reinject = await failOpenAgent(closesReinjectPrompt({ wt: WT, pr: pr.pr_number, repo: REPO, issue: ISSUE, prBody: prBodyLatest }), { agentType: 'dev-runner-haiku', schema: CLOSES_REINJECT, label: 'closes-reinject', phase: 'Merge tier' })
+  prClosesStatus = closesReinjectStatus(reinject)
+  log(prClosesStatus === 'reinjected'
+    ? 'closes-reinject: PR body を再投入し Closes 行を確認済み'
+    : `⚠️ closes-reinject: 再投入後も Closes 行を確認できず（pr_closes_status=${prClosesStatus}${reinject?.edited === true ? '' : '、再投入失敗'}）`)
 }
 // AC 未達の actor 別内訳（Final AC reconcile が reverified ならその結果、それ以外は Evaluate の最終結果）。
 // agent 側は Evaluate 差し戻しで拾えなかった取りこぼし、human 側は人手 AC 待ちとして HOLD 理由を分ける。

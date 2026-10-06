@@ -7,9 +7,6 @@ import {
   clip,
   hasClosesLine,
   verifyPrBody,
-  closesVerdict,
-  extractPrBody,
-  prBodyViewPrompt,
   prBodyEditPrompt,
   prPhaseFailure,
   prPhaseFailureFacts,
@@ -20,7 +17,6 @@ import {
   PR_BODY_MAX_CHARS,
   PR_BODY_HEADINGS,
   PR_CLOSES_STATUS_VALUES,
-  PR_BODY_VIEW,
   PR_BODY_NOTES_MAX,
   PR_NOTE_SECTIONS,
   adoptImplPrNotes,
@@ -256,7 +252,7 @@ test('[pr-artifacts] pr_sections: heading は 1 行に畳み HTML をエスケ�
   assert.ok(!buildPrBody({ issue: 1, req: req(), plan: plan(), ledger: ledger(), testsurfHits: [], dangerHits: [] }).includes('<details>'), 'pr_sections が無ければ <details> を出さない');
 });
 
-test('[pr-artifacts] pr_sections: 中身の </details> / <details> と行全体の Closes #<n> は無害化し、本物の Closes 行が落ちれば closes-check は missing', () => {
+test('[pr-artifacts] pr_sections: 中身の </details> / <details> と行全体の Closes #<n> は無害化し、本物の Closes 行が落ちれば構造検証は Closes 欠落', () => {
   const markdown = '前置き\n</details>\n<DETAILS open>\nCloses #1\nCloses #999 \n文中の Closes #1 はそのまま';
   const body = buildPrBody({ issue: 1, req: req(), plan: plan({ pr_sections: [{ heading: 'h', markdown }] }), ledger: ledger(), testsurfHits: [], dangerHits: [] });
   const block = body.slice(body.indexOf('<details>'), body.lastIndexOf('</details>') + '</details>'.length);
@@ -269,7 +265,7 @@ test('[pr-artifacts] pr_sections: 中身の </details> / <details> と行全体�
   assert.ok(verifyPrBody(body, 1).ok, '本物の Closes 行があれば構造検証は通る');
   const truncated = body.slice(0, body.lastIndexOf('Closes #1'));
   assert.equal(hasClosesLine(truncated, 1), false, '本物の Closes 行が落ちたら中身の偽物で present にしない');
-  assert.equal(closesVerdict({ view: { ok: true, raw: JSON.stringify({ body: truncated }) }, issue: 1 }), 'missing');
+  assert.ok(verifyPrBody(truncated, 1).missing.includes('Closes'));
   assert.equal(prBodyClipReport(plan({ pr_sections: [{ heading: 'h', markdown }] })).sections_over_chars, 0);
 });
 
@@ -317,11 +313,9 @@ test('[pr-artifacts] PR body: pr_sections を上限いっぱいに載せても�
   assert.equal((body.match(new RegExp(big, 'g')) ?? []).length, 2, 'pr_sections は切られない');
   assert.ok(visible.trimEnd().endsWith('Closes #815'));
   assert.equal(prBodyClipReport(plan({ pr_sections: sections })).sections_over_chars, 0, '上限いっぱいは超過ではない');
-  // 転写が verbatim なら closes-check は present（PR phase の verified）、末尾の Closes 行が落ちれば missing
-  // （実 PR での haiku 転写の実測は別）
+  // 転写が verbatim なら Closes 行は残り、末尾の Closes 行が落ちれば欠落になる（実 PR での haiku 転写の実測は別）
   assert.ok(verifyPrBody(body, 815).ok, '構造検証は通る');
-  assert.equal(closesVerdict({ view: { ok: true, raw: JSON.stringify({ body }) }, issue: 815 }), 'present');
-  assert.equal(closesVerdict({ view: { ok: true, raw: JSON.stringify({ body: body.slice(0, body.lastIndexOf('Closes #815')) }) }, issue: 815 }), 'missing');
+  assert.equal(hasClosesLine(body.slice(0, body.lastIndexOf('Closes #815')), 815), false);
 });
 
 test('[pr-artifacts] prSectionsTrimFeedback: pr_sections の合計が上限以内なら null、超えたら合計・内訳・指示を 1 件返す', () => {
@@ -487,72 +481,6 @@ test('[pr-artifacts] verifyPrBody: ## 設計判断 以降が欠落した本文�
   assert.equal(result.ok, false);
   assert.ok(result.missing.includes('## 検証'), JSON.stringify(result));
   assert.ok(result.missing.includes('Closes'), JSON.stringify(result));
-});
-
-// ---- (e) closesVerdict の 3 値 ----
-
-// gh pr view --json body の stdout を exec-proxy が無加工で raw に入れた応答を作る。
-function rawView(body) {
-  return { ok: true, raw: JSON.stringify({ body }) + '\n' };
-}
-
-test('[pr-artifacts] closesVerdict: 取得失敗/不正は unknown、有れば present、無ければ missing', () => {
-  assert.equal(closesVerdict({ view: null, issue: 642 }), 'unknown');
-  assert.equal(closesVerdict({ view: { ok: false }, issue: 642 }), 'unknown');
-  assert.equal(closesVerdict({ view: { ok: true, raw: null }, issue: 642 }), 'unknown');
-  assert.equal(closesVerdict({ view: rawView('x\nCloses #642\n'), issue: 642 }), 'present');
-  assert.equal(closesVerdict({ view: rawView('x\ny\n'), issue: 642 }), 'missing');
-});
-
-// ---- (e2) extractPrBody: body の取り出しは workflow 側の純関数だけが行う（issue #713） ----
-
-test('[pr-artifacts] extractPrBody: gh pr view --json body の stdout から body を一字一句取り出す', () => {
-  assert.equal(extractPrBody('{"body":"a\\n\\nCloses #1\\n"}\n'), 'a\n\nCloses #1\n');
-  assert.equal(extractPrBody('{"body":""}'), '');
-});
-
-test('[pr-artifacts] extractPrBody: 不正 JSON / body 欠落 / body 非 string / raw 非 string は null', () => {
-  assert.equal(extractPrBody('{"body": "unterminated'), null);
-  assert.equal(extractPrBody(''), null);
-  assert.equal(extractPrBody('{}'), null);
-  assert.equal(extractPrBody('{"title":"x"}'), null);
-  assert.equal(extractPrBody('{"body":123}'), null);
-  assert.equal(extractPrBody('{"body":null}'), null);
-  assert.equal(extractPrBody('null'), null);
-  assert.equal(extractPrBody('"Closes #1"'), null);
-  assert.equal(extractPrBody(null), null);
-  assert.equal(extractPrBody(undefined), null);
-});
-
-test('[pr-artifacts] closesVerdict: raw が不正 JSON / body 欠落 / body 非 string なら missing ではなく unknown（fail-open）', () => {
-  assert.equal(closesVerdict({ view: { ok: true, raw: '{"body": "Closes #642' }, issue: 642 }), 'unknown');
-  assert.equal(closesVerdict({ view: { ok: true, raw: 'Closes #642\n' }, issue: 642 }), 'unknown');
-  assert.equal(closesVerdict({ view: { ok: true, raw: '{}' }, issue: 642 }), 'unknown');
-  assert.equal(closesVerdict({ view: { ok: true, raw: '{"body":123}' }, issue: 642 }), 'unknown');
-  assert.equal(closesVerdict({ view: { ok: true }, issue: 642 }), 'unknown');
-  assert.equal(closesVerdict({ view: { ok: true, body: 'x\nCloses #642\n' }, issue: 642 }), 'unknown');
-});
-
-// PR #711（issue #697）の closes-check 実応答。agent が stdout から body を取り出す際に自前の
-// {"ok": true, "body": ...} を body に詰め、改行がエスケープされたままの二重 JSON を返した
-// （Closes 行があるのに pr_closes_missing で HOLD になった誤検出、issue #713）。
-const PR711_BODY = '**refactor(dev-flow): 参照ゼロの schema 2 本と常に空の plan.parallel を削除し、docs の数・記述を実装に合わせる**\n\n'
-  + '## 変更\n- plugins/dev-flow: 参照ゼロの schema 2 本と常に空の plan.parallel を削除\n\n'
-  + '## 受入条件\n- [x] AC-1: 参照ゼロの schema を削除する\n\n'
-  + '## 設計判断\n（なし）\n\n'
-  + '## 検証\n- テスト: ✅ green\n\n'
-  + 'Closes #697\n';
-const PR711_AGENT_BODY = JSON.stringify({ ok: true, body: PR711_BODY });
-const PR711_STDOUT = JSON.stringify({ body: PR711_BODY }) + '\n';
-
-test('[pr-artifacts] PR #711 fixture: 実応答の二重 JSON は body 直読みでは Closes を見落とすが、raw 経由の取り出しで present', () => {
-  // 旧契約（agent が組み立てた body をそのまま hasClosesLine に渡す）では改行がエスケープされたまま一致しない
-  assert.equal(hasClosesLine(PR711_AGENT_BODY, 697), false);
-  // 新契約: exec-proxy は stdout 全文を raw に入れ、workflow 側が JSON.parse(raw).body で取り出す
-  assert.equal(extractPrBody(PR711_STDOUT), PR711_BODY);
-  assert.equal(closesVerdict({ view: { ok: true, raw: PR711_STDOUT }, issue: 697 }), 'present');
-  // agent が raw に同じ二重 JSON を詰めても、.body の取り出しは本文そのものになり present
-  assert.equal(closesVerdict({ view: { ok: true, raw: PR711_AGENT_BODY }, issue: 697 }), 'present');
 });
 
 test('[pr-artifacts] PR_CLOSES_STATUS_VALUES は 4 値の closed enum', () => {
@@ -787,28 +715,7 @@ test('[pr-artifacts] prPhaseFailureComment: 失敗段・理由・commit 状態�
   assert.ok(!uncommitted.includes('push 出力全文'), uncommitted);
 });
 
-// ---- (g) prBodyViewPrompt / prBodyEditPrompt ----
-
-test('[pr-artifacts] prBodyViewPrompt: gh pr view --json body を bare 単文で指示し、repo null なら --repo を省略する', () => {
-  const withRepo = prBodyViewPrompt({ pr: 5, repo: 'o/r' });
-  assert.ok(withRepo.includes('gh pr view 5 --repo o/r --json body'), withRepo);
-  const withoutRepo = prBodyViewPrompt({ pr: 5, repo: null });
-  assert.ok(!withoutRepo.includes('--repo'), withoutRepo);
-  assert.ok(withoutRepo.includes('gh pr view 5 --json body'), withoutRepo);
-});
-
-test('[pr-artifacts] prBodyViewPrompt: stdout 全文を raw で返させ、agent に body を取り出させない（issue #713）', () => {
-  const p = prBodyViewPrompt({ pr: 5, repo: 'o/r' });
-  assert.ok(p.includes('{"ok": true, "raw": string}'), p);
-  assert.ok(!p.includes('"body": string'), p);
-  assert.ok(!/body を取り出し、/.test(p), p);
-});
-
-test('[pr-artifacts] PR_BODY_VIEW schema: 成功応答は raw（body ではない）', () => {
-  assert.deepEqual(PR_BODY_VIEW.required, ['ok']);
-  assert.ok('raw' in PR_BODY_VIEW.properties);
-  assert.ok(!('body' in PR_BODY_VIEW.properties));
-});
+// ---- (g) prBodyEditPrompt ----
 
 test('[pr-artifacts] prBodyEditPrompt: gh pr edit --body-file を指示し、本文を delimiter で verbatim 転写させる', () => {
   const p = prBodyEditPrompt({ wt: '/w', pr: 5, repo: 'o/r', prBody: 'my body\nClose #5', fileName: 'pr-body-final.md' });
@@ -819,19 +726,16 @@ test('[pr-artifacts] prBodyEditPrompt: gh pr edit --body-file を指示し、本
 
 // ---- (h) 決定論・throw しない ----
 
-test('[pr-artifacts] prBodyViewPrompt / prBodyEditPrompt: 同一入力 → 同一出力（決定論）', () => {
-  const v = { pr: 5, repo: 'o/r' };
-  assert.equal(prBodyViewPrompt(v), prBodyViewPrompt(structuredClone(v)));
+test('[pr-artifacts] prBodyEditPrompt: 同一入力 → 同一出力（決定論）', () => {
   const e = { wt: '/w', pr: 5, repo: 'o/r', prBody: 'x', fileName: 'f.md' };
   assert.equal(prBodyEditPrompt(e), prBodyEditPrompt(structuredClone(e)));
 });
 
-test('[pr-artifacts] verifyPrBody / closesVerdict / hasClosesLine: null / undefined 入力で throw しない', () => {
+test('[pr-artifacts] verifyPrBody / hasClosesLine: null / undefined 入力で throw しない', () => {
   assert.doesNotThrow(() => hasClosesLine(null, 1));
   assert.doesNotThrow(() => hasClosesLine(undefined, 1));
   assert.doesNotThrow(() => verifyPrBody(null, 1));
   assert.doesNotThrow(() => verifyPrBody(undefined, 1));
-  assert.doesNotThrow(() => closesVerdict({ view: undefined, issue: 1 }));
 });
 
 // ---- dev-flow.js 配線（VM routing）----
