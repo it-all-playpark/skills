@@ -17,6 +17,10 @@
 # 起票後の起動順:
 # - SKILL.md Phase 7 が起票した agent issue に dev-flow-ready-set を bare 名先頭で実行し、--dry-run と
 #   ok:false では launch を出さない。Output Contract に launch / 後の波 / 実行中を並べる ## Launch Order がある
+#
+# 実装 issue の本文はゴールと境界条件だけ（issue #855）:
+# - 実装 issue テンプレートの節が ゴール / なぜ / 受け入れ基準 / 制約・取らないこと / 変更対象パス / 未解決事項 の 6 つ
+# - SKILL.md Phase 5 の本文に含めるものがその 6 節で、Phase 2・Phase 4 の結果は AC と制約に反映させるだけ
 
 setup() {
     command -v python3 >/dev/null || skip "python3 not available"
@@ -206,4 +210,30 @@ extract_paths_block() {
     order_line="$(grep -n '^## Launch Order' "$SKILL_MD" | cut -d: -f1)"
     gate_line="$(grep -n '^## Plan Quality Gate' "$SKILL_MD" | cut -d: -f1)"
     [ "$agent_line" -lt "$order_line" ] && [ "$order_line" -lt "$gate_line" ]
+}
+
+# 実装 issue の本文の節（この順で、これ以外の節を持たない）
+AGENT_BODY_SECTIONS="## ゴール
+## なぜ
+## 受け入れ基準（Acceptance Criteria）
+## 制約・取らないこと
+## 変更対象パス
+## 未解決事項（Open Questions）"
+
+@test "(15) 実装 issue テンプレートの節は ゴール / なぜ / 受け入れ基準 / 制約・取らないこと / 変更対象パス / 未解決事項 だけ" {
+    headings="$(extract_fence "$TEMPLATE" "^# GitHub Issue Template" | grep -E '^#+ ')"
+    [ "$headings" = "$AGENT_BODY_SECTIONS" ]
+}
+
+@test "(16) SKILL.md Phase 5 の本文に含めるものは 6 節で、Phase 2・Phase 4 の結果は AC と制約に反映させるだけで書き写さない" {
+    phase5="$(extract_section "$SKILL_MD" "### Phase 5")"
+    listed="$(awk '/^本文に含めるもの/ { f = 1; next } f && /^- / { print; next } f { exit }' <<<"$phase5" \
+        | sed -E 's/^- `([^`]*)`.*/\1/')"
+    [ "$listed" = "$AGENT_BODY_SECTIONS" ]
+    [[ "$phase5" != *"specialist summaries"* ]]
+    [[ "$phase5" != *"devil's-advocate history"* ]]
+    [[ "$phase5" == *"Phase 2（調査）・Phase 4（devil's advocate）の結果は AC と制約に反映させるだけで本文に書き写さない。"* ]]
+    # 調査と devil's advocate の工程は残し、出力先だけを AC と制約に向ける
+    [[ "$(extract_section "$SKILL_MD" "### Phase 2")" == *"issue 本文には書き写さない"* ]]
+    [[ "$(extract_section "$SKILL_MD" "### Phase 4")" == *"Loop rules:"*"レビュー履歴として書き写さない"* ]]
 }

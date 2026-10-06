@@ -20,6 +20,8 @@ Treat findings as `blocking` if any item below is true:
   `- <repo 相対パスまたは glob>`）
 - agent issue 間の依存が循環している / 先行 issue の成果物を使うのに Blocked by が無い（起票はトポロジカル順で、
   先行 issue の番号を `--blocked-by` に渡す）
+- agent issue の本文に調査結果・実装計画・テスト戦略・リリース/ロールバック・レビュー履歴の節がある、または
+  AC 節を除いた本文が 4000 字を超える（本文はゴールと境界条件だけ。分かったことは AC と `## 制約・取らないこと` に反映する）
 
 ## Review Dimensions
 
@@ -52,7 +54,8 @@ Treat findings as `blocking` if any item below is true:
 
 1. Produce a list of findings with severity (`blocking` or `non-blocking`).
 2. For each blocking finding, propose a concrete correction.
-3. Revise the plan.
+3. Revise the plan. 修正は AC と `## 制約・取らないこと` に反映し、指摘と修正の履歴は issue 本文に書き写さない
+   （ラウンド数と残った non-blocking の懸念は SKILL.md Output Contract の `## Plan Quality Gate` で返す）。
 4. Re-run review until blocking findings are zero or max rounds reached.
 
 If max rounds reached with blocking findings remaining:

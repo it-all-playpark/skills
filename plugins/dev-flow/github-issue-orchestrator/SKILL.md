@@ -57,7 +57,7 @@ Agent work is filed as one or more issues, each sized for one dev-flow run (= 1 
 | Phase | Action | Complete When |
 |-------|--------|---------------|
 | 1 | Normalize input context | Problem statement, goals, constraints are explicit |
-| 2 | Specialist investigation | Frontend/backend/infra findings are documented |
+| 2 | Specialist investigation | Frontend/backend/infra findings are ready to feed AC and constraints |
 | 3 | Draft implementation plan | Plan includes phases, executors, agent issue split, target paths, dependencies, AC, risks |
 | 4 | Devil's-advocate review loop | No blocking gaps remain |
 | 5 | Compose final issue body | Template is fully filled for every agent issue (human issue bodies too, if any) |
@@ -86,6 +86,9 @@ If a lens is not relevant, record `Not applicable` with reason.
 
 If subagents are available, run analyses in parallel; otherwise run the same lenses sequentially.
 
+調査結果は issue の質を上げるための作業材料で、issue 本文には書き写さない。分かったことは Phase 3 の
+AC と `## 制約・取らないこと` に反映する。
+
 ### Phase 3: Draft Implementation Plan
 
 Generate an actionable plan containing:
@@ -98,7 +101,10 @@ Generate an actionable plan containing:
 - rollout and rollback strategy
 - open questions requiring user decision
 
-Use `references/issue-template.md` as the output structure.
+この計画は issue を分割し AC と制約を決めるための作業メモで、issue 本文に実装計画・テスト戦略・
+リリース/ロールバックの節として書き写さない（implementer はコードを読んで自分で計画を立てる）。
+リスクやロールバックの要件は AC か `## 制約・取らないこと` の 1 行にする。本文の構成は
+`references/issue-template.md`（Phase 5）。
 
 #### Executor Classification
 
@@ -133,7 +139,7 @@ agent issue 1 本 = dev-flow 1 run = 1 PR。dev-flow は 1 issue を implementer
 分けない: 片方だけではテストが書けない・main を壊す（例: 呼び出し側の無い内部 API だけ）分割。
 分けすぎは人手 merge 回数を増やす。
 
-分けた agent issue はそれぞれ AC・テスト戦略・`## 変更対象パス` を持つ完結した issue にし、どの issue の成果物を
+分けた agent issue はそれぞれ AC・制約・`## 変更対象パス` を持つ完結した issue にし、どの issue の成果物を
 使うか（依存）を記録する。依存は循環させない（Phase 6 でトポロジカル順に起票する）。
 
 #### 変更対象パス
@@ -161,6 +167,10 @@ Loop rules:
 
 Do not create a GitHub issue while blocking findings remain.
 
+指摘と修正は AC と `## 制約・取らないこと` に反映させるだけで、issue 本文にレビュー履歴として書き写さない
+（経緯は implementer の判断材料にならない）。ラウンド数と残った non-blocking の懸念は Output Contract の
+`## Plan Quality Gate` でユーザーに返す。
+
 ### Phase 5: Compose Final Issue Body
 
 Write full issue markdown to a temp file, for example:
@@ -174,11 +184,18 @@ MD
 agent issue を分けた場合は 1 本ごとに本文ファイルを分ける（例: `/tmp/github-issue-orchestrator-body-1.md`,
 `-body-2.md`）。以降の AC Lint Self-Check と Phase 6 の起票は本文ファイルごとに行う。
 
-Ensure the body includes:
-- specialist summaries (frontend/backend/infra)
-- devil's-advocate history (resolved concerns)
-- final implementation plan and acceptance criteria
+本文に含めるもの（agent issue。構成は `references/issue-template.md`）:
+- `## ゴール` — 何を満たせば完了か
+- `## なぜ` — 短く（2〜4 行）
+- `## 受け入れ基準（Acceptance Criteria）`
+- `## 制約・取らないこと`
 - `## 変更対象パス` (agent issue only)
+- `## 未解決事項（Open Questions）`
+
+Phase 2（調査）・Phase 4（devil's advocate）の結果は AC と制約に反映させるだけで本文に書き写さない。
+実装計画・テスト戦略・リリース/ロールバックの節も書かない。AC 節を除いた本文は 4000 字以内に収める
+（dev-flow の analyze は超えた部分を切り、implementer に届かない。Phase 6 の `create_issue.py --kind agent` が
+超過を拒否する）。
 
 When `--lang` is omitted, write this body in Japanese.
 
@@ -210,7 +227,9 @@ abort することはない。
 加えて `--kind` で本文を検査する（`--dry-run` を含む）:
 
 - `--kind agent`（既定）: 本文に `executor: human` が 1 つでもあれば exit 1 で起票を拒否する。
-  `## 変更対象パス` が無い・エントリ 0 件・エントリが `/` 始まり・`..` セグメントを含む場合も exit 1
+  `## 変更対象パス` が無い・エントリ 0 件・エントリが `/` 始まり・`..` セグメントを含む場合も exit 1。
+  AC 節を除いた本文（先頭に足す `Blocked by` 行を含む）が 4000 字を超える場合も、超過字数を出して exit 1
+  （字数は dev-flow の `analyze-issue.sh` の `scope_total_chars` と同じ数え方）。Phase 5 に戻って要点を絞って書き直す
 - `--kind human`: `## 手順` 見出しと checkbox（`- [ ]`）付きの `## 完了条件` が無ければ exit 1。
   `human-task` ラベルを付けて起票し、ラベルが無ければ作成する
 
