@@ -2,6 +2,29 @@
 
 すべて `--seed DIR`（既定 `seed`）を基点に読み書きする。
 
+## 設定ファイル
+
+`<seed>/.seed-harvest-config.json`。harvest だけが読む。無ければ全キー未指定と同じ。
+
+```json
+{
+  "owners": ["it-all-playpark", "playpark-llc", "Cistree-dev"],
+  "client_repos": ["playpark-llc/yeg", "Cistree-dev/*"],
+  "exclude": [
+    { "repo": "playpark-llc/corporate-site", "title_regex": "daily-blog-factory|blog-skills|SNS|sns|backfill|CTRリライト|^seo[:(]|\\(skill\\)" }
+  ]
+}
+```
+
+| key | 型 | 意味 |
+|---|---|---|
+| `owners` | string[] | `--owner` が無いときの既定 owner。`--owner` を渡したらそちらを使う。空・未指定なら `it-all-playpark` と `playpark-llc` |
+| `client_repos` | string[] | 顧客の repo。一致する repo を 1 つでも含むトピックは `"client": true`（記事化はするが実装の詳細を載せない） |
+| `exclude` | `{repo, title_regex}[]` | `repo` に一致し、かつ title が `title_regex`（Python `re.search`）に一致する PR / コミットを除外する |
+
+- repo の書式は `owner/name` か `owner/*`（owner の全 repo）。大文字小文字は区別しない
+- 不正な JSON・不正な正規表現・型や書式の違反は exit 2（gh を呼ぶ前に止まり、state も書かない）
+
 ## harvest
 
 ```bash
@@ -10,7 +33,7 @@ python3 scripts/seed_harvest.py harvest [--seed DIR] [--since YYYY-MM-DD] [--own
 
 1. 起点日を決める: `--since` → state の `lastRunAt`（日付部分）→ 30 日前 の順
 2. `gh search prs --owner <owner>... --merged-at >=<since> --limit 1000` でマージ済み PR を取る。
-   `--owner` 既定は `it-all-playpark` と `playpark-llc`
+   owner は `--owner` → 設定の `owners` → `it-all-playpark` と `playpark-llc` の順
 3. `--no-commits` でなければ、owner ごとに `gh api search/commits`
    （`q=org:<owner> committer-date:>=<since>`、`sort=committer-date`、`order=desc`、`per_page=100`）を
    `total_count` に達するまで page を回して取る。`feat` / `fix` で、subject 末尾が `(#N)`
@@ -22,19 +45,28 @@ python3 scripts/seed_harvest.py harvest [--seed DIR] [--since YYYY-MM-DD] [--own
    - bot 作成（renovate / dependabot）、`chore(deps)` / `deps-dev` scope、`Update dependency` / `Update module` / `Bump` 始まり
    - ブログ記事・SNS 告知: scope が `blog` / `sns`（`docs(blog)` / `assets(blog)` / `chore(sns)`）、
      または type が `blog` / `sns`（corporate-site の `blog: ...` 形式）
-5. 既に `_topics` のどれかに URL がある PR / コミットは `already_harvested`
-6. ネタ候補の理由（1 つもなければ `not_candidate`）:
+   - release / 同期 PR: `chore(...): release <version>`（release-please）、title に `を dev に同期` / `を main に同期`、
+     `sync main` / `sync dev`
+   - 設定の `exclude` の `repo` と `title_regex` の両方に一致するもの
+5. 重複排除（`duplicates` に数える）: 同じ repo で、末尾の `(#N)` と `（#N を dev に）` のような `#N` を含む括弧書きを
+   除いた title が一致する PR / コミットは、先にマージされた 1 件だけ残す。既に `_topics` に入っている PR / コミットと
+   一致する後発のものも `duplicates`
+6. 既に `_topics` のどれかに URL がある PR / コミットは `already_harvested`
+7. ネタ候補の理由（1 つもなければ `not_candidate`）:
    - `metrics`: 本文に計測値の行がある（%・ms・秒・倍・円・件・KB/MB/GB・tokens・`$`・`A → B`・before/after・一致率・レイテンシ・コスト）
    - `failure_cause_fix`: title+本文に 失敗系・原因系・対策系 の語がそろう
    - `new_tool`: `feat` で、title の主題語に state の `knownTerms` にない語がある
-7. 主題語: title（conventional prefix を除く）の英字トークンのうち大文字を含むもの（`Jev` / `TypeSafe`）。
-   stopword（`API` / `Claude` / `README` 等）と小文字だけの識別子は除く
-8. 束ね: 候補ごとに主題語を 1 つ選ぶ。優先順は「既存 pending トピックの語」→「多くの repo に出る語」→「出現数」→ 辞書順。
+8. 主題語: title（conventional prefix を除く）の英字トークンのうち大文字を含むもの（`Jev` / `TypeSafe`）。
+   stopword と小文字だけの識別子は除く。stopword は `API` / `Claude` / `README` 等の一般語と、別の話題を誤って束ねる
+   汎用語（`App` `Code` `Stop` `Read` `Write` `Final` `Closes` `Path` `Setup` `Plan` `Pre` `Docs` `Blocked` `Preview`
+   `Rules` `Boundary` `Cloud` `Mac`）。道具名として意味を持つ語（`Bash` `Node` `Next` `Actions` `Workflow` `Vite` `Jev` 等）は入れない
+9. 束ね: 候補ごとに主題語を 1 つ選ぶ。優先順は「既存 pending トピックの語」→「多くの repo に出る語」→「出現数」→ 辞書順。
    これで別 repo の同じ道具の PR が 1 トピックに入る。主題語がない候補は `<repo>-<番号>` の単独トピック
-9. 同じ主題の pending トピックがあれば追記、なければ新規作成（slug 衝突時は `-<YYYYMMDD>` 付き）
-10. `--dry-run` 以外は各トピック JSON と state（`lastRunAt`・`knownTerms`）を書く
+10. 同じ主題の pending トピックがあれば追記、なければ新規作成（slug 衝突時は `-<YYYYMMDD>` 付き）。
+    設定の `client_repos` に一致する repo を含むトピックは `"client": true`（追記で一致したら `true` に上げ、下げない）
+11. `--dry-run` 以外は各トピック JSON と state（`lastRunAt`・`knownTerms`）を書く
 
-stdout: `{since, owners, dry_run, topics[], fetched, excluded, not_candidate, already_harvested, candidates}`
+stdout: `{since, owners, dry_run, topics[], fetched, excluded, duplicates, not_candidate, already_harvested, candidates}`
 
 ## sense
 
@@ -71,7 +103,9 @@ python3 scripts/seed_harvest.py slice <topic-slug> [--seed DIR] [--max-kb 1..99]
 2. lockfile（package-lock / pnpm-lock / yarn.lock / Cargo.lock / uv.lock / flake.lock / go.sum 等）の diff は省略表記に置き換える
 3. Markdown にまとめ、`min(--max-kb KiB, 102399 bytes)` 未満になるまで縮める。
    縮める順は diff → コメント → 本文。最大のブロックを半分に切り、2KB 以下になったら省略表記にする
-4. 既定の出力は `seed/_topics/slices/<slug>.md`
+4. トピックが `"client": true` なら、出力の先頭に
+   `> 顧客案件由来。実装の詳細（コード・repo 名・顧客名・固有の構成）は記事に載せない。` を入れる
+5. 既定の出力は `seed/_topics/slices/<slug>.md`
 
 stdout: `{slice_path, topic, bytes, sources, truncated}`。縮めきれなければ exit 3。
 

@@ -35,6 +35,7 @@ writer（daily-blog-factory / seed-to-blog）はこの形を前提に読む。�
   ],
   "points": ["it-all-playpark/skills: feat: ... — 本文の最初の要点行"],
   "metrics": ["一致率 92% → 97%"],
+  "client": false,
   "demand": {
     "status": "partial",
     "score": 12,
@@ -64,6 +65,7 @@ writer（daily-blog-factory / seed-to-blog）はこの形を前提に読む。�
 | `prs[].reasons` / `commits[].reasons` | (`"metrics"` \| `"failure_cause_fix"` \| `"new_tool"`)[] | 候補に残った理由 |
 | `points` | string[] | `<repo>: <title> — <本文の最初の要点行>` |
 | `metrics` | string[] | 本文から拾った計測値の行（最大 20） |
+| `client` | boolean | 設定ファイル（`seed/.seed-harvest-config.json`）の `client_repos` に一致する repo を 1 つでも含めば `true`。記事化はしてよいが、実装の詳細（コード・repo 名・顧客名・固有の構成）は載せない。追記で `true` に上がり、下がらない。欠けていれば `false` 扱い |
 | `demand` | object \| null | sense 前は `null` |
 | `demand.status` | `"ok"` \| `"partial"` \| `"unknown"` | センサーの応答状況 |
 | `demand.score` | integer \| null | ok センサーの hits 合計。全センサー失敗なら `null`（0 ではない） |
@@ -75,6 +77,9 @@ writer がトピックを選ぶときは `status == "pending"` のものから�
 ## `seed/_topics/slices/<topic-slug>.md`
 
 slice の出力。`# Topic: <topic>` の後に PR / コミットごとの `## <repo>#<n>: <title>` セクション（URL・Body・Comments・Diff）が並ぶ。常に 102400 bytes 未満。
+`client: true` のトピックでは `# Topic:` の前の先頭行に `> 顧客案件由来。実装の詳細（コード・repo 名・顧客名・固有の構成）は記事に載せない。` が入る。
+
+設定ファイル `seed/.seed-harvest-config.json`（`owners` / `client_repos` / `exclude`）の書式は [subcommands.md](subcommands.md#設定ファイル)。
 
 ## `seed/.seed-harvest-state.json`
 
