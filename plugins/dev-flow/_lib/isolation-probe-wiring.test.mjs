@@ -21,19 +21,8 @@ function schemaOf(calls, label) {
   return JSON.parse(JSON.stringify(call.opts.schema));
 }
 
-test('Implement（dev-implementer）より前の call は isolation-probe 1 件のみ（Setup と末尾の analyze ゲートは spawn しない）', async () => {
-  const { ctx, calls } = makeDevFlowSandbox();
-  await runDevFlowInSandbox(src, ctx);
-
-  const implIdx = calls.findIndex((c) => c.agentType === 'dev-flow:dev-implementer');
-  assert.notStrictEqual(implIdx, -1, 'dev-implementer の call が見つからない');
-  const beforeImpl = calls.slice(0, implIdx);
-  assert.deepEqual(
-    beforeImpl.map((c) => c.label),
-    ['isolation-probe'],
-    `Implement より前の call は isolation-probe 1 件のみのはずだが: ${JSON.stringify(beforeImpl.map((c) => c.label))}`,
-  );
-});
+// Implement より前の call が isolation-probe 1 件のみであること、args.setup.epoch が probe の token に
+// 反映されることは prerun-setup-routing.test.mjs (a) / (j) が見る。
 
 test('isolation-probe call の agentType/opts.phase/schema が期待どおり（dev-runner-haiku-wo・Setup・required:[written]）', async () => {
   const { ctx, calls } = makeDevFlowSandbox();
@@ -69,25 +58,6 @@ test('[fail-open] isolation-probe が null（agent 自体の失敗）でも run 
   const { ctx } = makeDevFlowSandbox({ overrides: { 'isolation-probe': null } });
   const error = await runDevFlowInSandbox(src, ctx);
   assert.equal(error, null, 'isolation-probe が null でも run は完走するべき（fail-open）');
-});
-
-// ── issue #641: isoToken の給電元は args.setup.epoch（dev-flow-prerun の date +%s）に一本化されている ──
-
-function findIsolationProbeCall(calls) {
-  return calls.find((c) => c.label === 'isolation-probe');
-}
-
-test('[isoToken 給電] args.setup.epoch が 1234 のとき、isolation-probe prompt に .isolation-probe-1234 が含まれる', async () => {
-  const { ctx, calls } = makeDevFlowSandbox({ extra: { args: devFlowArgs(1, { epoch: 1234 }) } });
-  await runDevFlowInSandbox(src, ctx);
-
-  const probeCall = findIsolationProbeCall(calls);
-  assert.ok(probeCall, 'isolation-probe の agent() 呼び出しが記録されていない');
-  assert.match(
-    probeCall.prompt,
-    /\.isolation-probe-1234/,
-    `isolation-probe prompt に .isolation-probe-1234 が含まれるべきだが含まれていなかった: ${probeCall.prompt}`,
-  );
 });
 
 // ── issue #641: start mark の epoch 供給元は args.setup.epoch（VM 挙動で観測）──

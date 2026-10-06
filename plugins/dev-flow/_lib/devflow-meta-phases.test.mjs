@@ -55,29 +55,8 @@ test("label 'diff-gate-retry' の call が opts.phase === 'Validate' を持つ�
   }
 });
 
-test('empty-diff gate（diff-gate / diff-gate-retry とも empty:true）で throw し、journal-log prompt に error_category:empty_diff / phase:Validate が乗る', async () => {
-  const { ctx, calls } = makeDevFlowSandbox({
-    overrides: {
-      'diff-gate': { hash: 'H', empty: true },
-      'diff-gate-retry': { hash: 'H', empty: true },
-      'issue-labels': null,
-    },
-  });
-  const error = await runDevFlowInSandbox(src, ctx);
-
-  assert.ok(error, 'empty-diff gate で throw するべき');
-  assert.match(error.message, /empty-diff gate/);
-
-  const journalSaveCalls = calls.filter((c) => c.label?.startsWith('journal-log'));
-  assert.ok(journalSaveCalls.length > 0, "label 'journal-log*' の call が見つからない");
-  const matched = journalSaveCalls.some((c) => c.prompt.includes('"error_category":"empty_diff"'));
-  assert.ok(matched, 'journal-log prompt に "error_category":"empty_diff" を含む call が見つからない');
-  // writeFailureTelemetry は payload に "phase" キーを含めない（opts.phase のみで観測される）ため、
-  // opts.phase === 'Validate' を journal-log call 自体で確認する（payload 内 pin は行わない）。
-  for (const call of journalSaveCalls) {
-    assert.equal(call.opts.phase, 'Validate');
-  }
-});
+// empty-diff gate の throw と journal-log の error_category:empty_diff / phase:Validate は
+// devflow-failure-telemetry-routing.test.mjs (3) の共有 run が検査する。
 
 test("全 run で calls に label 'declared-path-check' が存在しない（F3 porcelain 統合済み）", async () => {
   const { ctx, calls } = makeDevFlowSandbox();

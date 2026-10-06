@@ -763,7 +763,7 @@ test('classifyMergeTier: iterateStatus:lgtm + evalStaleness:iterate_fixed → ti
   assert.equal(rReview.tier, 'REVIEW');
 });
 
-// (g) dev-flow.js 側の iterateStatus / evalStaleness 配線は plan-iterate-wiring-routing.test.mjs が
+// (g) dev-flow.js 側の iterateStatus / evalStaleness 配線は empty-diff-evaluate-routing.test.mjs (P-3) が
 // VM 挙動（fix_failed → HOLD / iterate_incomplete）で検証する（issue #636）。
 
 // ---- issue #362: testsurfUncleared ----
@@ -1577,4 +1577,41 @@ test('classifyMergeTier: ciChecks の契約外形状は明示 error', () => {
   assert.throws(() => classifyMergeTier(baseCleanInput({ ciChecks: 'failed' })), /invalid ciChecks/);
   assert.throws(() => classifyMergeTier(baseCleanInput({ ciChecks: { checks: [] } })), /invalid ciChecks/);
   assert.throws(() => classifyMergeTier(baseCleanInput({ ciChecks: { ok: true } })), /invalid ciChecks/);
+});
+
+// ---- finalAcReconcile（Final AC reconcile phase, issue #331/F2）----
+// s.finalAcReconcile（optional 'skipped'|'reverified'|'unavailable'）の enum 検証と、'unavailable' 時の HOLD reason 追加。
+// 'reverified'/'skipped'/未指定は既存挙動（tier・reasons）を変えない。
+
+const finalAcStandard = () => ({ ...standardBase(), iterateStatus: 'lgtm', evalStaleness: 'none' });
+const finalAcAuto = () => ({ ...autoBase(), iterateStatus: 'lgtm', evalStaleness: 'none' });
+
+test.each([
+  ['REVIEW 相当条件', finalAcStandard],
+  ['AUTO 相当条件（micro+docs/test-only。決定論 HOLD が AUTO に勝つ）', finalAcAuto],
+])('classifyMergeTier: finalAcReconcile:"unavailable"（%s）→ tier===HOLD かつ reasons に "Final AC reconcile 判定不能" を含む', (_name, base) => {
+  const r = classifyMergeTier({ ...base(), finalAcReconcile: 'unavailable' });
+  assert.equal(r.tier, 'HOLD');
+  assert.ok(
+    r.reasons.some((x) => x.includes('Final AC reconcile 判定不能')),
+    `reasons に 'Final AC reconcile 判定不能' を含むべきだが: ${JSON.stringify(r.reasons)}`,
+  );
+});
+
+test.each([['reverified'], ['skipped'], [undefined]])('classifyMergeTier: finalAcReconcile:%s → REVIEW 相当条件の tier・reasons が未指定と同一（"Final AC reconcile" 文言なし）', (value) => {
+  const withoutFlag = classifyMergeTier(finalAcStandard());
+  const input = finalAcStandard();
+  if (value !== undefined) input.finalAcReconcile = value;
+  const r = classifyMergeTier(input);
+  assert.equal(withoutFlag.tier, 'REVIEW');
+  assert.equal(r.tier, withoutFlag.tier);
+  assert.deepEqual(r.reasons, withoutFlag.reasons);
+  assert.ok(!r.reasons.some((x) => /Final AC reconcile/.test(x)));
+});
+
+test('classifyMergeTier: finalAcReconcile:"stale"(out-of-enum) → throw with "invalid finalAcReconcile"', () => {
+  assert.throws(
+    () => classifyMergeTier({ ...finalAcStandard(), finalAcReconcile: 'stale' }),
+    /invalid finalAcReconcile/,
+  );
 });

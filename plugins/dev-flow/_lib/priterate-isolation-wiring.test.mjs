@@ -15,126 +15,37 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import vm from 'node:vm';
 import { ISOLATION_PROBE_CLEANUP_GLOB } from './isolation-probe.mjs';
+import { makePrIterateSandbox, runWorkflowCapture } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const repoRoot = join(here, '..');
-const prIteratePath = join(repoRoot, '.claude/workflows/pr-iterate.js');
-const src = readFileSync(prIteratePath, 'utf8');
+const src = readFileSync(join(here, '..', '.claude/workflows/pr-iterate.js'), 'utf8');
 
-// ---- VM 実行 harness ----
-// priterate-journal-log.test.mjs の makeSandbox/runPrIterateCapture パターンを流用し、
-// agent() 呼び出し全件を calls 配列（{label, agentType, prompt}）へ記録するよう拡張する。
+// ---- VM 実行 harness（test-helpers/vm-sandbox.mjs の makePrIterateSandbox）----
+// isolation 系 3 call と journal-log の応答だけを上書きする。isolation-cleanup の既定は null（fail-open 経路）、
+// pr-meta の既定は epoch なし（isoToken の PR 番号 fallback を見るため）。
 
 function makeSandbox({ isolationProbeResult, journalResult, isolationCleanupResult, prMetaResult, args = '5' } = {}) {
-  let reviewerCallCount = 0;
-  let fixCallCount = 0;
-  let isolationProbeCallCount = 0;
-  const calls = [];
-
-  const agentStub = async (prompt, opts) => {
-    const label = opts?.label ?? '';
-    const agentType = opts?.agentType ?? '';
-    calls.push({ label, agentType, prompt: prompt ?? '' });
-
-    if (label === 'isolation-probe' && agentType === 'dev-flow:dev-runner-haiku-wo') {
-      isolationProbeCallCount += 1;
-      return isolationProbeResult;
-    }
-
-    if (label === 'isolation-cleanup' && agentType === 'dev-flow:dev-runner-haiku') {
-      return isolationCleanupResult ?? null;
-    }
-
-    if (agentType === 'dev-flow:pr-reviewer') {
-      reviewerCallCount += 1;
-      return { decision: 'approve', issues: [], summary: 'ok' };
-    }
-
-    if (label.startsWith('fix#')) {
-      fixCallCount += 1;
-      return { applied: true, files: [], summary: 'fixed' };
-    }
-
-    if (agentType === 'dev-flow:dev-runner-haiku-ro' && typeof prompt === 'string' && prompt.includes('check-ci --checks-data')) {
-      return { status: 'passed', passed: 1, failed: 0, pending: 0, skipped: 0, failed_checks: [] };
-    }
-
-    if (label.startsWith('post-')) {
-      return { posted: true, method: 'gh', url: 'http://x' };
-    }
-
-    if (label === 'pr-meta' && agentType === 'dev-flow:dev-runner-haiku-ro') {
-      return prMetaResult ?? { url: 'https://github.com/acme/skills/pull/5', head_ref: 'feature/x', base_ref: 'main', cwd: '/tmp/wt' };
-    }
-
-    if (label === 'journal-log' && agentType === 'dev-flow:dev-runner-haiku') {
-      return journalResult ?? { logged: true, summary: 'ok' };
-    }
-
-    // デフォルト（未知 label は null。dev-flow Setup probe / 既存 priterate テスト群と同じ fail-open 前提）
-    return null;
-  };
-
-  const parallelStub = async (fns) => Promise.all((fns || []).map((f) => f()));
-  const workflowStub = async () => ({ status: 'lgtm' });
-
-  const sandbox = {
-    phase: () => {},
-    log: () => {},
-    agent: agentStub,
-    parallel: parallelStub,
-    workflow: workflowStub,
+  const { ctx, calls } = makePrIterateSandbox({
     args,
-    console,
-    JSON,
-    Math,
-    String,
-    Number,
-    Boolean,
-    Array,
-    Object,
-    Error,
-    RegExp,
-    Promise,
-    Symbol,
-    Map,
-    Set,
-    Date,
-  };
-
-  const ctx = vm.createContext(sandbox);
+    overrides: {
+      'isolation-probe': isolationProbeResult,
+      'isolation-cleanup': isolationCleanupResult ?? null,
+      'pr-meta': prMetaResult ?? { url: 'https://github.com/acme/skills/pull/5', head_ref: 'feature/x', base_ref: 'main', cwd: '/tmp/wt' },
+      'journal-log': journalResult ?? { logged: true, summary: 'ok' },
+    },
+  });
+  const count = (pred) => () => calls.filter(pred).length;
   return {
     ctx,
     calls,
-    getReviewerCallCount: () => reviewerCallCount,
-    getFixCallCount: () => fixCallCount,
-    getIsolationProbeCallCount: () => isolationProbeCallCount,
+    getReviewerCallCount: count((c) => c.agentType === 'dev-flow:pr-reviewer'),
+    getFixCallCount: count((c) => c.label.startsWith('fix#')),
+    getIsolationProbeCallCount: count((c) => c.label === 'isolation-probe'),
   };
 }
 
-async function runPrIterateCapture(source, ctx) {
-  const stripped = source
-    .replace(/^export\s+const\s+/gm, 'const ')
-    .replace(/^export\s+function\s+/gm, 'function ');
-  const wrapped = `(async () => {\n${stripped}\n})();`;
-
-  let caughtError = null;
-  let resolvedResult = null;
-  try {
-    const resultPromise = vm.runInContext(wrapped, ctx, { filename: '.claude/workflows/pr-iterate.js' });
-    if (resultPromise && typeof resultPromise.then === 'function') {
-      resolvedResult = await resultPromise.catch((e) => {
-        caughtError = e;
-        return null;
-      });
-    }
-  } catch (e) {
-    caughtError = e;
-  }
-  return { result: resolvedResult, error: caughtError };
-}
+const runPrIterateCapture = (source, ctx) => runWorkflowCapture(source, ctx, '.claude/workflows/pr-iterate.js');
 
 // ---- (i) 呼び出し順序: pr-meta < isolation-cleanup < isolation-probe < 最初の pr-reviewer 呼び出し ----
 
@@ -390,15 +301,34 @@ test('[isolation-wiring][standalone] caller:standalone でも written:false は 
   assert.equal(getFixCallCount(), 0);
 });
 
-test('[isolation-wiring][standalone] nested.caller の欠落・out-of-enum・base_ref の型違反は明示 throw（legacy fallback を作らない）', async () => {
+test('[isolation-wiring][nested] caller:dev-flow で nested.epoch 省略時は pr-meta / isolation-cleanup を起動せず、isoToken が PR 番号へ fallback する', async () => {
+  const { ctx, calls } = makeSandbox({
+    isolationProbeResult: { written: true },
+    args: { pr: '7', nested: { caller: 'dev-flow', cwd: '/wt', head_ref: 'feature/issue-1' } },
+  });
+  const { result, error } = await runPrIterateCapture(src, ctx);
+
+  assert.equal(error, null, `nested 起動（epoch 省略）は throw されるべきではないが error=${error?.message}`);
+  assert.equal(result?.status, 'lgtm', `result.status は 'lgtm' であるべきだが '${result?.status}' だった`);
+  const labels = calls.map((c) => c.label);
+  assert.ok(!labels.includes('pr-meta'), 'nested 起動では pr-meta が呼ばれてはいけない');
+  assert.ok(!labels.includes('isolation-cleanup'), 'nested 起動では isolation-cleanup が呼ばれてはいけない');
+  const probe = calls.find((c) => c.label === 'isolation-probe');
+  assert.ok(probe, 'nested 起動でも isolation-probe は呼ばれるべき');
+  assert.match(probe.prompt, /\.devflow-tmp\/\.isolation-probe-7/, 'nested.epoch 省略時、isoToken は PR 番号(7)へ fallback するべき');
+});
+
+test('[isolation-wiring][standalone] nested の非 object・cwd 欠落・caller の欠落 / out-of-enum・base_ref の型違反は明示 throw（legacy fallback を作らない）', async () => {
   for (const nested of [
+    'not-an-object',
+    { caller: 'dev-flow', head_ref: 'feature/issue-1' },
     { cwd: '/wt', head_ref: 'feature/x' },
     { caller: 'pr-iterate', cwd: '/wt', head_ref: 'feature/x' },
     { caller: 'standalone', cwd: '/wt', head_ref: 'feature/x', base_ref: 1 },
   ]) {
     const { ctx, calls } = makeSandbox({ isolationProbeResult: { written: true }, args: { pr: 5, nested } });
     const { error } = await runPrIterateCapture(src, ctx);
-    assert.ok(error != null && /args\.nested\.(caller|base_ref)/.test(error.message), `不正な nested ${JSON.stringify(nested)} で throw していない: ${error?.message}`);
+    assert.ok(error != null && /args\.nested(\.(caller|base_ref)| が不正形)/.test(error.message), `不正な nested ${JSON.stringify(nested)} で throw していない: ${error?.message}`);
     assert.equal(calls.length, 0, 'nested 検証の throw は agent 起動前');
   }
 });

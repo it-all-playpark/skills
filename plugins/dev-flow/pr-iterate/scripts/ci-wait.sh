@@ -19,7 +19,8 @@
 # workflow as "no wait happened" (fail-closed to ci_pending).
 set -euo pipefail
 
-STEP=5
+# CI_WAIT_STEP は bats が chunk 連結を短い実待ちで検証するための上書き口（proxy は渡さない）
+STEP="${CI_WAIT_STEP:-5}"
 MAX_SECONDS=1800
 
 SECONDS_ARG="${1:-}"

@@ -16,8 +16,8 @@
 //
 // routing / try-catch pin（label が dev-runner-haiku-ro へ routing される・try/catch で包まれる等）は
 // _lib/secfloor-unified-routing.test.mjs の [A1]/[A5] で検証済みのため、ここでは重複検証しない。
-// 本ファイルは (1) struct 専用の fail-open 純関数 parseSecfloorFields(unified).struct の挙動、
-// (2) evaluator prompt への diff_classification 注入が i===1 に限定されること、(3) formatOnlySet に
+// struct 専用の fail-open 純関数 parseSecfloorFields(unified).struct の挙動は secfloor-unified.test.mjs が持つ。
+// 本ファイルは (2) evaluator prompt への diff_classification 注入が i===1 に限定されること、(3) formatOnlySet に
 // よる realizedCount 除外（実効 shape への影響）を VM 挙動として検証する。
 //
 // Run: npx vitest run _lib/structural-classify-routing.test.mjs
@@ -29,7 +29,6 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
-import { parseSecfloorFields } from './secfloor-unified.mjs';
 import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash, analyzeArgs } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -37,29 +36,8 @@ const repoRoot = join(here, '..');
 const devFlowPath = join(repoRoot, '.claude', 'workflows', 'dev-flow.js');
 const devFlowSrc = readFileSync(devFlowPath, 'utf8');
 
-// ---- (1) struct フィールドの fail-open 純関数検証（parseSecfloorFields(unified).struct） ----
-
-test('[structural-classify-routing] parseSecfloorFields(unified).struct is non-null and preserves format_only for a well-formed struct payload', () => {
-  const unified = { risk: { ok: true, hits: [] }, struct: { ok: true, available: true, format_only: ['a'], structural: [] } };
-  const { struct } = parseSecfloorFields(unified);
-  assert.notEqual(struct, null);
-  assert.deepEqual(struct.format_only, ['a']);
-});
-
-test('[structural-classify-routing] parseSecfloorFields(unified).struct is null (fail-open) for ok!==true / non-boolean available / non-array format_only / structural / null struct', () => {
-  const cases = [
-    { risk: { ok: true, hits: [] }, struct: { ok: false, available: true, format_only: [], structural: [] } },
-    { risk: { ok: true, hits: [] }, struct: { ok: true, available: 'yes', format_only: [], structural: [] } },
-    { risk: { ok: true, hits: [] }, struct: { ok: true, available: true, format_only: 'x', structural: [] } },
-    { risk: { ok: true, hits: [] }, struct: { ok: true, available: true, format_only: [], structural: 'x' } },
-    { risk: { ok: true, hits: [] }, struct: null },
-    { risk: { ok: true, hits: [] } },
-  ];
-  for (const unified of cases) {
-    const { struct } = parseSecfloorFields(unified);
-    assert.equal(struct, null, `fail-open (struct===null) が期待されるケースで struct=${JSON.stringify(struct)}: ${JSON.stringify(unified)}`);
-  }
-});
+// ---- (1) struct フィールドの fail-open 純関数検証（parseSecfloorFields(unified).struct）は
+// secfloor-unified.test.mjs が表駆動で持つ ----
 
 // ---- (2) diff_classification prompt injection is gated by i === 1 (VM 挙動) ----
 //

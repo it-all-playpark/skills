@@ -28,7 +28,9 @@
  *   - prIterateResponder(overrides?): pr-iterate.js 単体起動の既定 responder
  *   - makeDevFlowSandbox({overrides?, issue?, workflow?, extra?}?): devFlowResponder を使った
  *     makeRecordingSandbox の薄い wrapper
- *   - makePrIterateSandbox({overrides?, args?, extra?}?): prIterateResponder を使った
+ *   - prIterateRounds({reviewer?, fix?, ci?, commitEnsure?}?): pr-iterate の round 系 call に呼び出し順で
+ *     応答する関数（makePrIterateSandbox の rounds に渡す）
+ *   - makePrIterateSandbox({overrides?, rounds?, args?, extra?}?): prIterateResponder を使った
  *     makeRecordingSandbox の薄い wrapper
  */
 
@@ -128,6 +130,8 @@ export function analyzeArgs(issue = 1, analyzeOverrides = {}) {
  *   各 agent() 呼び出しに対する応答を返す関数。undefined を返した場合は null に変換する。
  * @param {Record<string, unknown>} [extraSandbox={}]
  *   sandbox に追加注入するプロパティ（args 等を上書きする際に使う。log/phase もここで上書き可）。
+ * @param {{calls?: Array<object>}} [record={}]
+ *   calls: 呼び出しを積む配列（呼び出し側が先に持っている配列へ記録したいときに渡す。既定は新規配列）。
  * @returns {{
  *   ctx: vm.Context,
  *   calls: Array<{label: string, agentType: string, prompt: string, opts: Record<string, unknown>, schema: unknown, model: string|null}>,
@@ -135,8 +139,7 @@ export function analyzeArgs(issue = 1, analyzeOverrides = {}) {
  *   phases: string[],
  * }}
  */
-export function makeRecordingSandbox(responder, extraSandbox = {}) {
-  const calls = [];
+export function makeRecordingSandbox(responder, extraSandbox = {}, { calls = [] } = {}) {
   const logs = [];
   const phases = [];
 
@@ -419,12 +422,16 @@ export function devFlowResponder(overrides = {}, { issue = 1 } = {}) {
  * @param {Record<string, unknown>} [overrides={}]
  * @returns {(ctx: {label: string, agentType: string, prompt: string, opts?: Record<string, unknown>}) => unknown}
  */
-export function prIterateResponder(overrides = {}) {
+export function prIterateResponder(overrides = {}, rounds = null) {
   return function (callCtx) {
     const { label, agentType } = callCtx;
     if (Object.prototype.hasOwnProperty.call(overrides, label)) {
       const v = overrides[label];
       return typeof v === 'function' ? v(callCtx) : v;
+    }
+    if (rounds) {
+      const r = rounds(callCtx);
+      if (r !== undefined) return r;
     }
     if (label === 'pr-meta') {
       return {
@@ -464,19 +471,50 @@ export function makeDevFlowSandbox({ overrides = {}, issue = 1, workflow, extra 
 }
 
 /**
- * prIterateResponder を使った makeRecordingSandbox の薄い wrapper。
+ * pr-iterate の round 系 call（pr-reviewer / fix#i・fix#i-retry / check-ci を実行する ci-check 系 /
+ * commit-ensure#i）に呼び出し順で応答する関数を返す（makePrIterateSandbox の rounds に渡す）。
+ * round 番号ごとに label を列挙せずに「n 回目の reviewer」「k 回目の fix」を指定するためのもの。
+ *   reviewer(n): n 回目（1 始まり）の pr-reviewer 呼び出し（schema-retry 等も 1 回と数える）の応答
+ *   fix / ci: 応答の配列。呼び出し順に消費し、尽きたら末尾を繰り返す。要素が関数ならその戻り値
+ *   commitEnsure: 全 round 共通の commit-ensure#i の応答（null も応答として返す）
+ * 省略した系統は undefined を返し、overrides と既定 responder に任せる。
  *
- * @param {{overrides?: Record<string, unknown>, args?: string, extra?: Record<string, unknown>}} [opts]
+ * @param {{reviewer?: (n: number) => unknown, fix?: unknown[], ci?: unknown[], commitEnsure?: unknown}} [spec]
+ */
+export function prIterateRounds({ reviewer, fix, ci, commitEnsure } = {}) {
+  let reviews = 0;
+  let fixes = 0;
+  let cis = 0;
+  const pick = (seq, i) => {
+    if (!seq || seq.length === 0) return undefined;
+    const v = seq[Math.min(i, seq.length - 1)];
+    return typeof v === 'function' ? v() : v;
+  };
+  return ({ label, agentType, prompt }) => {
+    if (reviewer && agentType === 'dev-flow:pr-reviewer') return reviewer(++reviews);
+    if (fix && label.startsWith('fix#')) return pick(fix, fixes++);
+    if (ci && agentType === 'dev-flow:dev-runner-haiku-ro' && String(prompt).includes('check-ci --checks-data')) return pick(ci, cis++);
+    if (commitEnsure !== undefined && label.startsWith('commit-ensure#')) return commitEnsure;
+    return undefined;
+  };
+}
+
+/**
+ * prIterateResponder を使った makeRecordingSandbox の薄い wrapper。
+ * rounds（prIterateRounds の戻り値、または {label, agentType, prompt} を受けて応答か undefined を返す関数）は
+ * overrides の次、既定 responder の前に引かれる。calls を渡すとその配列へ呼び出しを記録する。
+ *
+ * @param {{overrides?: Record<string, unknown>, rounds?: Function|null, args?: unknown, extra?: Record<string, unknown>, calls?: Array<object>}} [opts]
  * @returns {ReturnType<typeof makeRecordingSandbox>}
  */
-export function makePrIterateSandbox({ overrides = {}, args = '5', extra = {} } = {}) {
-  return makeRecordingSandbox(prIterateResponder(overrides), {
+export function makePrIterateSandbox({ overrides = {}, rounds = null, args = '5', extra = {}, calls = [] } = {}) {
+  return makeRecordingSandbox(prIterateResponder(overrides, rounds), {
     workflow: async () => ({ status: 'lgtm' }),
     args,
     // pr-iterate.js は各 round で review#i と ci-check#i を parallel() で同時に起動する（issue #806）。
     // dev-flow.js 用の makeRecordingSandbox には置かない（fan-out を持たない側の偽陽性防止）。
     parallel: async (fns) => Promise.all((fns || []).map((f) => f())),
     ...extra,
-  });
+  }, { calls });
 }
 

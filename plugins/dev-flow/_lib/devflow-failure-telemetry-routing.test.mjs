@@ -14,7 +14,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
-import { devFlowArgs, prerunAnalyze } from './test-helpers/vm-sandbox.mjs';
+import { devFlowArgs, prerunAnalyze, makeDevFlowSandbox, runWorkflowCapture } from './test-helpers/vm-sandbox.mjs';
+import { PLUGIN_VERSION } from './plugin-version.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -205,38 +206,67 @@ test('[failure-telemetry] (2) implement 経路: NEEDS_CONTEXT 解消不能 → j
 
 // ============================================================
 // ケース (3): empty-diff 経路（diff-gate + diff-gate-retry 両方 empty:true → throw）
-// - throw 直前に journal-log-failure が 1 回発生する
-// - その prompt に '"error_category":"empty_diff"' が含まれる
+// empty-diff の journal 実行はここ 1 か所だけで行い（1 run を共有）、journal-log-failure の prompt に
+// 載るべき / 載ってはいけないキーを表で検査する。各キーを pin する理由:
+//   outcome / error_category / repo / pr_number 不在: failure handoff の結論値（PR 作成前）
+//   skill:"dev-flow": meta.name を dev-flow-run に改名しても集計連続性のため変えない
+//   eval / impl / review_model_config・plugin_version・plugin_commit: 失敗 entry でも model / version 帰属を残す
+//   quality_model_*: 撤去済みキー
 // ============================================================
-test('[failure-telemetry] (3) empty-diff 経路: 両方 empty:true → throw 前に journal-log-failure が新契約に従う', async () => {
-  const analyzeReq = {
-    summary: 's',
-    acceptance_criteria: ['ac1', 'ac2'],
-    issue_type: 'fix',
-    scope: 'src',
-    issue_number: 1,
-    issue_title: 'stub-issue-title',
-  };
 
-  const { ctx, calls } = makeSandbox({ analyzeReq, diffGateConfig: { gateEmpty: true, retryEmpty: true } });
-  const { error } = await runDevFlowInSandbox(src, ctx);
+const EMPTY_DIFF_COMMIT = '1ef2e0ab6254';
 
-  assert.ok(error !== null,
-    '(3) 両方 empty:true なら workflow が throw すべきだが error が null だった');
-  assert.ok(typeof error?.message === 'string' && error.message.includes('empty-diff gate'),
-    `(3) error.message に 'empty-diff gate' を含むべきだが: ${error?.message}`);
+let emptyDiffRun = null;
+function runEmptyDiff() {
+  emptyDiffRun ??= (async () => {
+    const { ctx, calls } = makeDevFlowSandbox({
+      overrides: {
+        'diff-gate': { hash: 'H', empty: true },
+        'diff-gate-retry': { hash: 'H', empty: true },
+        'issue-labels': null,
+      },
+      extra: { args: devFlowArgs(1, { repo: 'acme/skills', plugin_commit: EMPTY_DIFF_COMMIT }) },
+    });
+    const { error } = await runWorkflowCapture(src, ctx);
+    const failureCalls = calls.filter((c) => c.label === 'journal-log-failure' && c.agentType === 'dev-flow:dev-runner-haiku');
+    return { error, calls, failureCalls, prompt: failureCalls[0]?.prompt ?? '' };
+  })();
+  return emptyDiffRun;
+}
 
-  const saveCalls = calls.filter((c) => c.label === 'journal-log-failure' && c.agentType === 'dev-flow:dev-runner-haiku');
-  assert.equal(saveCalls.length, 1,
-    `(3) journal-log-failure は 1 回のはずだが ${saveCalls.length} 回だった`);
+test('[failure-telemetry] (3) empty-diff 経路: 両方 empty:true → throw し、throw 前に journal-log-failure が 1 回だけ phase Validate で発生する', async () => {
+  const { error, calls, failureCalls } = await runEmptyDiff();
+  assert.ok(error !== null, '(3) 両方 empty:true なら workflow が throw すべきだが error が null だった');
+  assert.match(error.message, /empty-diff gate/, `(3) error.message に 'empty-diff gate' を含むべきだが: ${error?.message}`);
+  assert.equal(failureCalls.length, 1, `(3) journal-log-failure は 1 回のはずだが ${failureCalls.length} 回だった (labels: ${calls.map((c) => c.label).join(', ')})`);
+  // writeFailureTelemetry は payload に "phase" キーを含めない（opts.phase のみで観測される）
+  const journalCalls = calls.filter((c) => c.label?.startsWith('journal-log'));
+  assert.ok(journalCalls.length > 0, "label 'journal-log*' の call が見つからない");
+  for (const call of journalCalls) assert.equal(call.opts.phase, 'Validate', `${call.label} の opts.phase`);
+});
 
-  const savePrompt = saveCalls[0]?.prompt ?? '';
-  for (const key of ['"outcome":"failure"', '"error_category":"empty_diff"', '"repo":"acme/skills"']) {
-    assert.ok(savePrompt.includes(key),
-      `(3) journal-log-failure prompt に '${key}' が含まれるべきだが含まれていなかった。prompt:\n${savePrompt.slice(0, 500)}`);
-  }
-  assert.ok(!savePrompt.includes('"pr_number"'),
-    `(3) failure 経路は PR 作成前のため journal-log-failure prompt に '"pr_number"' を含むべきではない。prompt:\n${savePrompt.slice(0, 500)}`);
+const EMPTY_DIFF_REQUIRED_KEYS = [
+  '"outcome":"failure"',
+  '"error_category":"empty_diff"',
+  '"repo":"acme/skills"',
+  '"skill":"dev-flow"',
+  '"eval_model_config":"opus"',
+  '"impl_model_config":"opus"',
+  '"review_model_config":"opus"',
+  `"plugin_version":"${PLUGIN_VERSION}"`,
+  `"plugin_commit":"${EMPTY_DIFF_COMMIT}"`,
+];
+
+const EMPTY_DIFF_FORBIDDEN_KEYS = ['"pr_number"', '"quality_model_config"', '"quality_model_fallback_label"'];
+
+test.each(EMPTY_DIFF_REQUIRED_KEYS)('[failure-telemetry] (3) empty-diff 経路: journal-log-failure prompt に %s が載る', async (key) => {
+  const { prompt } = await runEmptyDiff();
+  assert.ok(prompt.includes(key), `(3) journal-log-failure prompt に '${key}' が含まれるべきだが含まれていなかった。prompt:\n${prompt.slice(0, 500)}`);
+});
+
+test.each(EMPTY_DIFF_FORBIDDEN_KEYS)('[failure-telemetry] (3) empty-diff 経路: journal-log-failure prompt に %s が載らない', async (key) => {
+  const { prompt } = await runEmptyDiff();
+  assert.ok(!prompt.includes(key), `(3) journal-log-failure prompt に '${key}' を含むべきではない。prompt:\n${prompt.slice(0, 500)}`);
 });
 
 // ============================================================

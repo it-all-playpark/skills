@@ -170,6 +170,20 @@ PLUGIN_NAMES=(dev-flow playpark-core playpark-skills)
     [ "$output" = "startup" ]
 }
 
+@test "playpark-skills の SessionStart command は zombie-kill.sh を --force --min-hours 48 で起動し \$HOME / .claude/skills に依存しない" {
+    run jq -r '.hooks.SessionStart[0].hooks[0].command' "$(hooks_json_path playpark-skills)"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'${CLAUDE_PLUGIN_ROOT}/claude-zombie-kill/scripts/zombie-kill.sh'* ]]
+    [[ "$output" == *"--force --min-hours 48"* ]]
+    [[ "$output" != *'.claude/skills'* ]]
+    [[ "$output" != *'$HOME'* ]]
+}
+
+@test "playpark-skills の zombie-kill.sh が bash -n の構文検査を通る" {
+    run bash -n "$REPO_ROOT/plugins/playpark-skills/claude-zombie-kill/scripts/zombie-kill.sh"
+    [ "$status" -eq 0 ]
+}
+
 # --- 7/8. dead path invariant -----------------------------------------------
 
 @test "tracked な *.sh に旧 skills repo の ghq 絶対パスが残っていない" {

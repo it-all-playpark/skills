@@ -2,7 +2,7 @@
 // merge_tier_reasons に AC未検証文言が含まれることを VM sandbox で検証する（issue #233）。
 // post-summary prompt 本文への転記は devflow-summary-format.test.mjs（純関数出力テスト）が担うため
 // ここでは扱わない（issue #636 AC-1）。
-// _lib/green-fix-micro-eval.test.mjs の VM sandbox パターン（makeCountingSandbox / runDevFlowInSandbox）を踏襲。
+// test-helpers/vm-sandbox.mjs の VM sandbox パターン（makeRecordingSandbox / runDevFlowInSandbox）を踏襲。
 //
 // テスト構成:
 //   (A) micro AUTO run → merge_tier===AUTO かつ reasons に AC未検証文言 かつ evaluator 0 件

@@ -7,72 +7,25 @@
 //   - minor findings は fix loop を起動しないが終端サマリーに保持される（issue #392 で per-round 投稿は廃止・終端 post-summary へ統合）
 //   - 既存正常経路（approve→CI gate、request-changes→fix loop）は不変（AC-6 回帰）
 //
-// vm sandbox パターンは _lib/priterate-max-iterations.test.mjs / priterate-ci-history.test.mjs と同一構造。
+// harness は test-helpers/vm-sandbox.mjs の makePrIterateSandbox / runWorkflowCapture。round 系 call の応答だけを
+// buildAgentStub の rounds で返し、それ以外は pr-iterate 単体起動の既定 responder に任せる。
 
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import vm from 'node:vm';
+import { makePrIterateSandbox, runWorkflowCapture } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const repoRoot = join(here, '..');
-const prIteratePath = join(repoRoot, '.claude/workflows/pr-iterate.js');
-const src = readFileSync(prIteratePath, 'utf8');
+const src = readFileSync(join(here, '..', '.claude/workflows/pr-iterate.js'), 'utf8');
 
-/**
- * pr-iterate.js を vm sandbox で実行するための context を作る。
- * agentStub は呼び出しごとに { label, agentType, prompt } を agentCalls に記録する。
- */
-function makeSandbox(agentStub) {
-  const sandbox = {
-    phase: () => {},
-    log: () => {},
-    agent: agentStub,
-    parallel: async (fns) => Promise.all((fns || []).map((f) => f())),
-    workflow: async () => ({ status: 'lgtm' }),
-    args: '5',
-    console,
-    JSON,
-    Math,
-    String,
-    Number,
-    Boolean,
-    Array,
-    Object,
-    Error,
-    RegExp,
-    Promise,
-    Symbol,
-    Map,
-    Set,
-    Date,
-  };
-  return vm.createContext(sandbox);
+/** buildAgentStub の戻り値（rounds と記録先 agentCalls）から pr-iterate.js の vm context を作る。 */
+function makeSandbox({ rounds, agentCalls }) {
+  return makePrIterateSandbox({ rounds, calls: agentCalls }).ctx;
 }
 
-async function runPrIterate(ctx) {
-  const stripped = src
-    .replace(/^export\s+const\s+/gm, 'const ')
-    .replace(/^export\s+function\s+/gm, 'function ');
-  const wrapped = `(async () => {\n${stripped}\n})();`;
-
-  let caughtError = null;
-  let resolvedResult = null;
-  try {
-    const resultPromise = vm.runInContext(wrapped, ctx, { filename: '.claude/workflows/pr-iterate.js' });
-    if (resultPromise && typeof resultPromise.then === 'function') {
-      resolvedResult = await resultPromise.catch((e) => {
-        caughtError = e;
-        return null;
-      });
-    }
-  } catch (e) {
-    caughtError = e;
-  }
-  return { result: resolvedResult, error: caughtError };
-}
+const runPrIterate = (ctx) => runWorkflowCapture(src, ctx, '.claude/workflows/pr-iterate.js');
 
 function assertNoSandboxCrash(error) {
   if (error && (error.name === 'ReferenceError' || error.name === 'SyntaxError')) {
@@ -81,39 +34,29 @@ function assertNoSandboxCrash(error) {
 }
 
 /**
- * agentCalls を記録しつつ分岐する共通 agentStub ファクトリ。
+ * round 系 call の応答を label で分岐する rounds と、呼び出しの記録先 agentCalls を返す。
  * reviewerStub(label) -> review result（pr-reviewer 呼び出しごとに呼ばれる）
  * ciStub(label) -> CI status result（省略時は常に passed）
  * fixStub(label) -> fix result（省略時は常に applied:true）
+ * commit-ensure（issue #437: fix 適用直後の commit 保証）は「commit 対象なし」で通す
  */
 function buildAgentStub({ reviewerStub, ciStub, fixStub, agentCalls }) {
-  return async (prompt, opts) => {
-    const label = opts?.label ?? '';
-    const agentType = opts?.agentType ?? '';
-    const promptStr = typeof prompt === 'string' ? prompt : JSON.stringify(prompt);
-    agentCalls.push({ label, agentType, prompt: promptStr });
-
+  const rounds = ({ label, agentType, prompt }) => {
     if (agentType === 'dev-flow:pr-reviewer') {
       return reviewerStub(label);
     }
-    if (agentType === 'dev-flow:dev-runner-haiku-ro' && promptStr.includes('check-ci --checks-data')) {
+    if (agentType === 'dev-flow:dev-runner-haiku-ro' && prompt.includes('check-ci --checks-data')) {
       return ciStub ? ciStub(label) : { status: 'passed', passed: 1, failed: 0, pending: 0, skipped: 0, failed_checks: [] };
     }
     if (label.startsWith('fix#')) {
       return fixStub ? fixStub(label) : { applied: true, summary: 'fixed', files: [] };
     }
-    if (label.startsWith('post-')) {
-      return { posted: true, method: 'gh', url: 'http://x' };
-    }
-    if (label === 'journal-log') {
-      return { logged: true, summary: 'ok' };
-    }
-    // commit-ensure（issue #437: fix 適用直後の commit 保証。未 stub だと fail-safe で fix_failed になる）
     if (label.startsWith('commit-ensure#')) {
       return { dirty: false, committed: false, pushed: false };
     }
-    return null;
+    return undefined;
   };
+  return { rounds, agentCalls };
 }
 
 // ---- (1) [AC-1] comment + minor 1 件のみ -> fix agent を起動せず CI gate へ進み lgtm ----
@@ -229,10 +172,7 @@ test('[AC-5] minor findings が終端 post-summary の本文に保持される�
   if (error) assert.fail(`予期しない error: ${error.name}: ${error.message}`);
   assert.equal(result?.status, 'lgtm', `前提: lgtm であるべきだが '${result?.status}' だった`);
 
-  // issue #392 AC-1: review⇄fix ループの中間ラウンドでは PR 投稿が一切発生しない
-  const postReview1 = agentCalls.find((c) => c.label === 'post-review#1');
-  assert.equal(postReview1, undefined, 'post-review#1 の呼び出しは issue #392 AC-1 により存在しないはず');
-
+  // per-round の post-review#i が無いこと（issue #392 AC-1）の否定検証は priterate-terminal-telemetry.test.mjs が持つ
   const postSummary = agentCalls.find((c) => c.label === 'post-summary');
   assert.ok(postSummary != null, 'post-summary の呼び出しが存在するべき');
   assert.ok(
@@ -317,10 +257,7 @@ test('[ci_gate 投稿] request-changes decision + blocking 0 + CI passed の pos
   if (error) assert.fail(`予期しない error: ${error.name}: ${error.message}`);
   assert.equal(result?.status, 'lgtm', `前提: lgtm であるべきだが '${result?.status}' だった`);
 
-  // issue #392 AC-1: review⇄fix ループの中間ラウンドでは PR 投稿が一切発生しない
-  const postReview1 = agentCalls.find((c) => c.label === 'post-review#1');
-  assert.equal(postReview1, undefined, 'post-review#1 の呼び出しは issue #392 AC-1 により存在しないはず');
-
+  // per-round の post-review#i が無いこと（issue #392 AC-1）の否定検証は priterate-terminal-telemetry.test.mjs が持つ
   const postSummary = agentCalls.find((c) => c.label === 'post-summary');
   assert.ok(postSummary != null, 'post-summary の呼び出しが存在するべき');
   assert.ok(

@@ -6,7 +6,8 @@
 // (b) ci-check#i stub が null（schema 未返却）でも同様に ci_error 終端になること
 // (c) VM で実際に dispatch された ci-check prompt に '--checks-data' が含まれ '--checks-json' /
 //     '$TMPDIR/ci-checks' / 'リダイレクト' が含まれないこと（canonical ciCheckPrompt との一致で
-//     呼び出し側が独自 prompt を書いていないことも観測する）
+//     呼び出し側が独自 prompt を書いていないことも観測する）。ci-check prompt の正負 grep は
+//     pr-iterate 側ではここ 1 か所に置く（canonical 側は ci-check.test.mjs）
 // (d) hygiene: 実際に dispatch された ci-check / post-summary / journal 系 prompt に guard / sandbox /
 //     ガード / サンドボックス が含まれないこと
 // (f) ci_error 終端の log が原因を auth/network と断定せず、実 PR 番号を埋めた gh pr checks 確認
@@ -14,8 +15,7 @@
 // （issue #636: (c)(d)(f) のソース regex 走査と (e) の failOpenAgent ソース抽出を VM 観測へ置換。
 //   (e) は (a) が ci-check 経路で throw→null→ci_error を挙動として担保する）
 //
-// vm sandbox パターンは _lib/priterate-ci-wait-telemetry.test.mjs / priterate-review-throw-recovery.test.mjs
-// の makeSandbox / runPrIterate を踏襲する。
+// harness は test-helpers/vm-sandbox.mjs の makePrIterateSandbox / runWorkflowCapture（ci-check#1 だけ上書き）。
 
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
@@ -23,123 +23,30 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { ciCheckPrompt } from './ci-check.mjs';
-import vm from 'node:vm';
+import { makePrIterateSandbox, runWorkflowCapture, assertNoCrash } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const repoRoot = join(here, '..');
-const prIteratePath = join(repoRoot, '.claude/workflows/pr-iterate.js');
-const src = readFileSync(prIteratePath, 'utf8');
+const src = readFileSync(join(here, '..', '.claude/workflows/pr-iterate.js'), 'utf8');
 
-function makeSandbox(agentStub, logs = []) {
-  const sandbox = {
-    phase: () => {},
-    log: (m) => { logs.push(String(m)); },
-    agent: agentStub,
-    parallel: async (fns) => Promise.all((fns || []).map((f) => f())),
-    workflow: async () => ({ status: 'lgtm' }),
-    args: '5',
-    console,
-    JSON,
-    Math,
-    String,
-    Number,
-    Boolean,
-    Array,
-    Object,
-    Error,
-    RegExp,
-    Promise,
-    Symbol,
-    Map,
-    Set,
-    Date,
-  };
-  return vm.createContext(sandbox);
-}
+const CI_PASSED = { status: 'passed', passed: 1, failed: 0, pending: 0, skipped: 0, failed_checks: [] };
 
-async function runPrIterate(ctx) {
-  const stripped = src
-    .replace(/^export\s+const\s+/gm, 'const ')
-    .replace(/^export\s+function\s+/gm, 'function ');
-  const wrapped = `(async () => {\n${stripped}\n})();`;
-
-  let caughtError = null;
-  let resolvedResult = null;
-  try {
-    const resultPromise = vm.runInContext(wrapped, ctx, { filename: '.claude/workflows/pr-iterate.js' });
-    if (resultPromise && typeof resultPromise.then === 'function') {
-      resolvedResult = await resultPromise.catch((e) => {
-        caughtError = e;
-        return null;
-      });
-    }
-  } catch (e) {
-    caughtError = e;
-  }
-  return { result: resolvedResult, error: caughtError };
-}
-
-function assertNoSandboxCrash(error) {
-  if (error && (error.name === 'ReferenceError' || error.name === 'SyntaxError')) {
-    assert.fail(`pr-iterate.js が sandbox でクラッシュ: ${error.name}: ${error.message}`);
-  }
-}
-
-function buildAgentStub({ ciStub, agentCalls }) {
-  return async (prompt, opts) => {
-    const label = opts?.label ?? '';
-    const agentType = opts?.agentType ?? '';
-    const promptStr = typeof prompt === 'string' ? prompt : JSON.stringify(prompt);
-    agentCalls.push({ label, agentType, prompt: promptStr });
-
-    if (agentType === 'dev-flow:pr-reviewer') {
-      return { decision: 'approve', issues: [], summary: 'ok' };
-    }
-    if (agentType === 'dev-flow:dev-runner-haiku-ro' && promptStr.includes('check-ci --checks-data')) {
-      return ciStub(label);
-    }
-    if (label.startsWith('fix#')) {
-      return { applied: true, summary: 'fixed', files: [] };
-    }
-    if (label.startsWith('post-')) {
-      return { posted: true, method: 'gh', url: 'http://x' };
-    }
-    if (label === 'journal-log') {
-      return { saved: true, logged: true };
-    }
-    if (label === 'pr-meta') {
-      return { url: 'https://github.com/acme/skills/pull/5', cwd: '/tmp/wt' };
-    }
-    if (label === 'isolation-probe') {
-      return { written: true };
-    }
-    if (label === 'worktree-dirty-check') {
-      return { dirty: false, files: 0 };
-    }
-    return null;
-  };
+async function runWithCi(ciStub) {
+  const { ctx, calls, logs } = makePrIterateSandbox({ overrides: { 'ci-check#1': ciStub } });
+  const { result, error } = await runWorkflowCapture(src, ctx, '.claude/workflows/pr-iterate.js');
+  assertNoCrash(error, 'priterate-ci-failopen');
+  return { result, error, calls, logs };
 }
 
 // ---- (a) ci-check#i throw -> run 完走、terminal=ci_error ----
 test('[failopen-a] ci-check#1 が throw -> run が throw せず完走し status=ci_error', async () => {
-  const agentCalls = [];
-  const ciStub = () => { throw new Error('exec-proxy 例外（StructuredOutput 未返却）'); };
-  const agentStub = buildAgentStub({ ciStub, agentCalls });
-  const ctx = makeSandbox(agentStub);
-  const { result, error } = await runPrIterate(ctx);
-  assertNoSandboxCrash(error);
+  const { result, error } = await runWithCi(() => { throw new Error('exec-proxy 例外（StructuredOutput 未返却）'); });
   assert.equal(error, null, `run 全体が例外終了してはならないが error が発生: ${error?.name}: ${error?.message}`);
   assert.equal(result?.status, 'ci_error', `ci-check#1 throw 時は status=ci_error であるべきだが '${result?.status}' だった`);
 });
 
 // ---- (b) ci-check#i null -> 同様に ci_error 終端 ----
 test('[failopen-b] ci-check#1 が null(schema 未返却) -> status=ci_error', async () => {
-  const agentCalls = [];
-  const ciStub = () => null;
-  const agentStub = buildAgentStub({ ciStub, agentCalls });
-  const ctx = makeSandbox(agentStub);
-  const { result, error } = await runPrIterate(ctx);
-  assertNoSandboxCrash(error);
+  const { result, error } = await runWithCi(null);
   assert.equal(error, null, `run 全体が例外終了してはならないが error が発生: ${error?.name}: ${error?.message}`);
   assert.equal(result?.status, 'ci_error', `ci-check#1 null 時は status=ci_error であるべきだが '${result?.status}' だった`);
 });
@@ -149,11 +56,8 @@ test('[failopen-b] ci-check#1 が null(schema 未返却) -> status=ci_error', as
 // 呼び出し側が canonical を使わず独自 prompt を書き始める退行は、dispatch された prompt と canonical の
 // 生成文字列の完全一致で捕まえる。
 test('[failopen-c] dispatch された ci-check prompt が canonical ciCheckPrompt と一致し、--checks-data を使い --checks-json/$TMPDIR/ci-checks/リダイレクトを含まない', async () => {
-  const agentCalls = [];
-  const ctx = makeSandbox(buildAgentStub({ ciStub: () => ({ status: 'passed', passed: 1, failed: 0, pending: 0, skipped: 0, failed_checks: [] }), agentCalls }));
-  const { error } = await runPrIterate(ctx);
-  assertNoSandboxCrash(error);
-  const ci = agentCalls.find((c) => c.label === 'ci-check#1');
+  const { calls } = await runWithCi(CI_PASSED);
+  const ci = calls.find((c) => c.label === 'ci-check#1');
   assert.ok(ci, 'ci-check#1 が dispatch されていない');
   assert.equal(ci.prompt, ciCheckPrompt({ pr: 5, repo: 'acme/skills' }), 'ci-check の呼び出し側は canonical の ciCheckPrompt() をそのまま使うべき（独自 prompt を書かない）');
   assert.ok(ci.prompt.includes('--checks-data'), 'ci-check prompt に --checks-data が含まれるべき');
@@ -165,12 +69,9 @@ test('[failopen-c] dispatch された ci-check prompt が canonical ciCheckPromp
 // ---- (d) hygiene: guard/sandbox 語が dispatch された prompt に含まれない ----
 test('[failopen-d] dispatch された ci-check / post-summary / journal 系 prompt に guard/sandbox 系の語が含まれない', async () => {
   const forbidden = ['guard', 'sandbox', 'ガード', 'サンドボックス'];
-  const agentCalls = [];
-  const ctx = makeSandbox(buildAgentStub({ ciStub: () => ({ status: 'passed', passed: 1, failed: 0, pending: 0, skipped: 0, failed_checks: [] }), agentCalls }));
-  const { error } = await runPrIterate(ctx);
-  assertNoSandboxCrash(error);
+  const { calls } = await runWithCi(CI_PASSED);
   for (const label of ['ci-check#1', 'post-summary', 'journal-log']) {
-    const c = agentCalls.find((x) => x.label === label);
+    const c = calls.find((x) => x.label === label);
     assert.ok(c, `${label} が dispatch されていない`);
     const p = c.prompt.toLowerCase();
     for (const word of forbidden) {
@@ -181,11 +82,7 @@ test('[failopen-d] dispatch された ci-check / post-summary / journal 系 prom
 
 // ---- (f) ci_error の log 文言が原因を断定せず gh pr checks の確認手順を含む（issue #621） ----
 test('[failopen-f] ci_error 終端の log は auth/network を断定せず、実 PR 番号を埋めた gh pr checks 確認手順を含む', async () => {
-  const agentCalls = [];
-  const logs = [];
-  const ctx = makeSandbox(buildAgentStub({ ciStub: () => null, agentCalls }), logs);
-  const { result, error } = await runPrIterate(ctx);
-  assertNoSandboxCrash(error);
+  const { result, logs } = await runWithCi(null);
   assert.equal(result?.status, 'ci_error');
   const line = logs.find((l) => l.includes('CI check returned error'));
   assert.ok(line, `ci_error の log が出ていない: ${JSON.stringify(logs.slice(-5))}`);

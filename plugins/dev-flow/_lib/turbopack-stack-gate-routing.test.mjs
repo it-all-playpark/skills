@@ -1,7 +1,7 @@
 // Setup(stack) routing test: dev-flow.js の Setup phase が読む args.setup.stack.frameworks
 // （dev-flow-prerun の detect-stack 出力）に基づき、Turbopack fallback 規約（TURBOPACK_NOTE 経由）が
 // implementer / evaluator prompt へ注入されるか否か（test prompt へは常に注入しない）を VM sandbox で pin する。
-// green-fix-concerns-routing.test.mjs の makeRecordingSandbox / runDevFlowInSandbox パターンをコピーし、
+// test-helpers/vm-sandbox.mjs の makeRecordingSandbox / runDevFlowInSandbox を使い、
 // args.setup.stack.frameworks だけをテストケースごとに差し替える。
 
 import { test } from 'vitest';
@@ -95,13 +95,15 @@ test('[turbopack-stack-gate] (a) frameworks:["next"] → run 完走 & implemente
   assert.ok(evalCalls.length >= 1, 'evaluator が呼ばれていない');
   assert.ok(testCalls.length >= 1, 'test runner が呼ばれていない');
 
+  // 規約の識別トークン（error 名 TurbopackInternalError と fallback コマンド next build --webpack）が verbatim 到達する
   for (const c of [...implCalls, ...evalCalls]) {
-    assert.ok(c.prompt.includes('Turbopack'), `prompt (label=${c.label}) に 'Turbopack' が含まれない`);
+    assert.ok(c.prompt.includes('TurbopackInternalError'), `prompt (label=${c.label}) に 'TurbopackInternalError' が含まれない`);
     assert.ok(c.prompt.includes('next build --webpack'), `prompt (label=${c.label}) に 'next build --webpack' が含まれない`);
     assert.ok(!/context7/i.test(c.prompt), `prompt (label=${c.label}) に 'context7' が含まれてはいけない`);
   }
   for (const c of testCalls) {
     assert.ok(!c.prompt.includes('Turbopack'), `test prompt (label=${c.label}) に 'Turbopack' が含まれてはいけない`);
+    assert.ok(!c.prompt.includes('next build --webpack'), `test prompt (label=${c.label}) に 'next build --webpack' が含まれてはいけない`);
   }
 });
 

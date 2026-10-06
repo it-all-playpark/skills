@@ -1,176 +1,39 @@
 // F2: CI ポーリング配線の検証テスト（TDD）。
-// AC-1: pending -> passed で pr-iterate が LGTM へ進む。
+// AC-1: CI の判定で pr-iterate が LGTM へ進む。
 // AC-7: waited_seconds/poll_attempts が終端サマリー / return に反映される。
 // issue #488: fetch は subagent の bare `gh pr checks`、check-ci.sh はその snapshot に対する
 // 純変換。ポーリングは pr-iterate.js の script 側 ci-wait ループが持つ（issue #663）。
+// dispatch された ci-check prompt の正負 grep は priterate-ci-failopen.test.mjs (c)（canonical との一致）と
+// ci-check.test.mjs（canonical 本文）が持つ。
+//
+// harness は test-helpers/vm-sandbox.mjs の makePrIterateSandbox / prIterateRounds / runWorkflowCapture。
 
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import vm from 'node:vm';
+import { makePrIterateSandbox, prIterateRounds, runWorkflowCapture } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const repoRoot = join(here, '..');
-const prIteratePath = join(repoRoot, '.claude/workflows/pr-iterate.js');
+const src = readFileSync(join(here, '..', '.claude/workflows/pr-iterate.js'), 'utf8');
 
+// reviewer は常に approve、fix は applied、commit-ensure は「commit 対象なし」（未指定だと fail-safe で fix_failed。issue #437）
 function makeSandbox({ ciResponses }) {
-  const agentCalls = []; // {label, agentType, prompt}
-  let ciCallCount = 0;
-
-  const agentStub = async (prompt, opts) => {
-    const label = opts?.label ?? '';
-    const agentType = opts?.agentType ?? '';
-
-    agentCalls.push({ label, agentType, prompt: typeof prompt === 'string' ? prompt : JSON.stringify(prompt) });
-
-    // pr-reviewer: 常に approve
-    if (agentType === 'dev-flow:pr-reviewer') {
-      return { decision: 'approve', issues: [], summary: 'ok' };
-    }
-
-    // ci-check: 呼び出し順に ciResponses を消費する
-    if (agentType === 'dev-flow:dev-runner-haiku-ro' && typeof prompt === 'string' && prompt.includes('check-ci --checks-data')) {
-      const idx = ciCallCount;
-      ciCallCount += 1;
-      return ciResponses[idx] ?? ciResponses[ciResponses.length - 1];
-    }
-
-    // fix: label が 'fix#' で始まる
-    if (label.startsWith('fix#')) {
-      return { applied: true, summary: 'fixed', files: [] };
-    }
-
-    // 投稿系: label が 'post-' で始まる
-    if (label.startsWith('post-')) {
-      return { posted: true, method: 'gh', url: 'http://x' };
-    }
-
-    // journal-save (stage1, issue #494): 実際の telemetry payload はここに載る
-    if (label === 'journal-save') {
-      return { saved: true, path: '/tmp/wt/.devflow-tmp/payload-test.json' };
-    }
-    // journal-log (stage2)
-    if (label === 'journal-log') {
-      return { logged: true, summary: 'ok' };
-    }
-
-    // commit-ensure（issue #437: fix 適用直後の commit 保証。未 stub だと fail-safe で fix_failed になる）
-    if (label.startsWith('commit-ensure#')) {
-      return { dirty: false, committed: false, pushed: false };
-    }
-
-    // pr-meta: cwd は実 run では常に worktree の絶対パス。journal-save の保存先はここから組み立てられる。
-    if (label === 'pr-meta') {
-      return { url: 'https://github.com/acme/skills/pull/5', cwd: '/tmp/wt' };
-    }
-
-    return null;
-  };
-
-  const parallelStub = async (fns) => Promise.all((fns || []).map((f) => f()));
-  const workflowStub = async () => ({ status: 'lgtm' });
-
-  const sandbox = {
-    phase: () => {},
-    log: () => {},
-    agent: agentStub,
-    parallel: parallelStub,
-    workflow: workflowStub,
-    args: '5',
-    console,
-    JSON,
-    Math,
-    String,
-    Number,
-    Boolean,
-    Array,
-    Object,
-    Error,
-    RegExp,
-    Promise,
-    Symbol,
-    Map,
-    Set,
-    Date,
-  };
-
-  const ctx = vm.createContext(sandbox);
-  return {
-    ctx,
-    getAgentCalls: () => agentCalls,
-  };
-}
-
-async function runPrIterateCapture(src, ctx) {
-  const stripped = src
-    .replace(/^export\s+const\s+/gm, 'const ')
-    .replace(/^export\s+function\s+/gm, 'function ');
-  const wrapped = `(async () => {\n${stripped}\n})();`;
-
-  let caughtError = null;
-  let resolvedResult = null;
-  try {
-    const resultPromise = vm.runInContext(wrapped, ctx, { filename: '.claude/workflows/pr-iterate.js' });
-    if (resultPromise && typeof resultPromise.then === 'function') {
-      resolvedResult = await resultPromise.catch((e) => {
-        caughtError = e;
-        return null;
-      });
-    }
-  } catch (e) {
-    caughtError = e;
-  }
-  return { result: resolvedResult, error: caughtError };
-}
-
-const src = readFileSync(prIteratePath, 'utf8');
-
-test('[ci-wait-telemetry] ci-check#1 の prompt が bare gh fetch + check-ci 純変換で配線される（AC-1配線）', async () => {
-  const { ctx, getAgentCalls } = makeSandbox({
-    ciResponses: [{ status: 'passed', passed: 1, failed: 0, pending: 0, skipped: 0, failed_checks: [], waited_seconds: 0, poll_attempts: 1 }],
+  const { ctx, calls } = makePrIterateSandbox({
+    rounds: prIterateRounds({
+      reviewer: () => ({ decision: 'approve', issues: [], summary: 'ok' }),
+      fix: [{ applied: true, summary: 'fixed', files: [] }],
+      ci: ciResponses,
+      commitEnsure: { dirty: false, committed: false, pushed: false },
+    }),
   });
+  return { ctx, getAgentCalls: () => calls };
+}
 
-  const { result, error } = await runPrIterateCapture(src, ctx);
-  if (error && (error.name === 'ReferenceError' || error.name === 'SyntaxError')) {
-    assert.fail(`pr-iterate.js が sandbox でクラッシュ: ${error.name}: ${error.message}`);
-  }
+const runPrIterateCapture = (source, ctx) => runWorkflowCapture(source, ctx, '.claude/workflows/pr-iterate.js');
 
-  const ciCheck1 = getAgentCalls().find((c) => c.label === 'ci-check#1');
-  assert.ok(ciCheck1 != null, 'label===ci-check#1 の agent 呼び出しが存在するべき');
-  // fetch は subagent の bare `gh pr checks`（先頭トークンが gh）で行う。
-  assert.ok(
-    ciCheck1.prompt.includes('gh pr checks 5') && ciCheck1.prompt.includes('--json name,state,bucket'),
-    `ci-check#1 の prompt に bare gh pr checks fetch が含まれるべき。\nprompt: ${ciCheck1.prompt.slice(0, 900)}`,
-  );
-  // check-ci は fetch 済み snapshot に対する純変換として呼ばれる（issue #499: argv データ渡し）。
-  assert.ok(
-    ciCheck1.prompt.includes('check-ci --checks-data'),
-    `ci-check#1 の prompt が check-ci を --checks-data 入力の純変換として呼ぶべき。\nprompt: ${ciCheck1.prompt.slice(0, 900)}`,
-  );
-  // bounded wait は script 側が持つ（issue #663）: prompt に attempt ループ・sleep 指示が無いこと。
-  assert.ok(
-    !ciCheck1.prompt.includes('--max-attempts'),
-    `ci-check#1 の prompt に --max-attempts が含まれるべきでない（ポーリングは script 側ループが持つ）。\nprompt: ${ciCheck1.prompt.slice(0, 900)}`,
-  );
-  assert.ok(
-    !ciCheck1.prompt.includes('--poll-seconds'),
-    `ci-check#1 の prompt に --poll-seconds が含まれるべきでない（ポーリングは script 側ループが持つ）。\nprompt: ${ciCheck1.prompt.slice(0, 900)}`,
-  );
-  assert.ok(
-    !/\bsleep\b/i.test(ciCheck1.prompt),
-    `ci-check#1 の prompt に sleep 指示が含まれるべきでない（sleep は ci-wait 専用 exec-proxy が持つ）。\nprompt: ${ciCheck1.prompt.slice(0, 900)}`,
-  );
-  // script 内ポーリング（--wait-seconds）は撤去済み。復活は exec-proxy 内 network I/O の再導入を意味する。
-  assert.ok(
-    !ciCheck1.prompt.includes('--wait-seconds'),
-    `ci-check#1 の prompt に --wait-seconds が残っているべきでない（script 内ポーリングは撤去済み）。\nprompt: ${ciCheck1.prompt.slice(0, 900)}`,
-  );
-  assert.equal(result?.status, 'lgtm', `pending->passed 相当（今回は即 passed）で LGTM へ進むべきだが '${result?.status}' だった`);
-});
-
-test('[ci-wait-telemetry] AC-1: pending -> passed で LGTM に進み、waited_seconds/poll_attempts が累積される', async () => {
+test('[ci-wait-telemetry] AC-1: failed -> fix -> passed で LGTM に進み、poll_attempts は script 側で 2 回積算・agent 報告の waited_seconds は積算しない', async () => {
   const { ctx, getAgentCalls } = makeSandbox({
     ciResponses: [
       { status: 'failed', passed: 0, failed: 1, pending: 0, skipped: 0, failed_checks: [{ name: 'bats', bucket: 'fail', state: 'FAILURE' }], waited_seconds: 30, poll_attempts: 3 },
@@ -200,11 +63,7 @@ test('[ci-wait-telemetry] AC-1: pending -> passed で LGTM に進み、waited_se
   assert.equal(result?.terminal_path, 'review', `result.terminal_path は 'review' であるべきだが '${result?.terminal_path}' だった`);
 });
 
-test('[ci-wait-telemetry] CI 呼び出しが 0 回（review が blocking で fix 前に stuck 等）でも ci_wait_seconds/ci_poll_attempts は 0 で返る', async () => {
-  // pr-reviewer を request-changes 固定にして stuck を誘発する簡易ケース: ここでは
-  // ci_gate に到達しない route（review_contract_error 相当ではなく、単純に review が never approve）は
-  // 別テストの守備範囲外のため、ここでは ci-check が 1 度も呼ばれない状況を作らず、
-  // 代わりに ci-check#1 が即 no_checks で終端する最小ケースで 0 加算を検証する。
+test('[ci-wait-telemetry] ci-check#1 が即 no_checks（poll 1 回・待機なし）で終端しても lgtm で、ci_wait_seconds=0 / ci_poll_attempts=1 を返す', async () => {
   const { ctx } = makeSandbox({
     ciResponses: [{ status: 'no_checks', passed: 0, failed: 0, pending: 0, skipped: 0, failed_checks: [], waited_seconds: 0, poll_attempts: 1 }],
   });

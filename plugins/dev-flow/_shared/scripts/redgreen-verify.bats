@@ -46,7 +46,9 @@ EOF
 # シナリオ B: untracked 新規 impl (dev-flow の主要ユースケース)
 # impl を一度も commit せず worktree に置く → git ls-files で認識されない
 # -----------------------------------------------------------------------
-@test "B: untracked 新規 impl ファイルで red→green 判定が成立する" {
+# 同じシナリオの実行 1 回(node --test が red / green の 2 回走る)に、判定・復元・
+# 1 ペア呼び出しの配列形(J6 前半)の assert を並べる。
+@test "B: untracked 新規 impl ファイルで red→green 判定が成立し、impl が復元され、1 ペアでも results 配列で返る" {
   # impl を commit しない(untracked のまま)
   echo "export const ok = true;" > "$REPO/impl.mjs"
   make_test
@@ -55,17 +57,12 @@ EOF
   [ "$status" -eq 0 ]
   [[ "$output" == *'"red":true'* ]]
   [[ "$output" == *'"green":true'* ]]
-}
-
-@test "B: untracked impl 退避後に worktree に impl が復元されている" {
-  echo "export const ok = true;" > "$REPO/impl.mjs"
-  make_test
-
-  run bash "$SCRIPT" "$REPO" "feature.test.mjs" "impl.mjs"
-  [ "$status" -eq 0 ]
   # 判定後も impl が worktree に残っていること(worktree 破損なし)
   [ -f "$REPO/impl.mjs" ]
   grep -q "true" "$REPO/impl.mjs"
+  # J6: 1 ペア呼び出しも配列で返り、判定完了は exit 0
+  [ "$(printf '%s' "$output" | jq -r '.results | type')" = "array" ]
+  [ "$(printf '%s' "$output" | jq -r '.results[0].index')" -eq 0 ]
 }
 
 # -----------------------------------------------------------------------
@@ -807,14 +804,10 @@ EOF
   [[ "$output" == *'usage: redgreen-verify.sh'* ]]
 }
 
-@test "J6: 1 ペア呼び出しも配列で返り exit 意味論は従来通り(判定完了 0 / 入力エラー 2)" {
+# 判定完了 exit 0 で配列が返る側は B のテストが同じ実行で見る
+@test "J6: 1 ペア呼び出しの入力エラーも配列で返り exit 2" {
   echo "export const ok = true;" > "$REPO/impl.mjs"
   make_test
-
-  run bash "$SCRIPT" "$REPO" "feature.test.mjs" "impl.mjs"
-  [ "$status" -eq 0 ]
-  [ "$(printf '%s' "$output" | jq -r '.results | type')" = "array" ]
-  [ "$(printf '%s' "$output" | jq -r '.results[0].index')" -eq 0 ]
 
   run bash "$SCRIPT" "$REPO" "feature.test.mjs" "feature.test.mjs"
   [ "$status" -eq 2 ]

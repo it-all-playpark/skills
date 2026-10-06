@@ -220,6 +220,8 @@ test('[ci-check] ciCheckPrompt にループ・sleep 指示が無い（1 spawn = 
   assert.ok(!p.includes('--max-attempts'), '--max-attempts を含んではならない');
   assert.ok(!p.includes('--poll-seconds'), '--poll-seconds を含んではならない');
   assert.ok(!p.includes('--attempt '), '--attempt を含んではならない');
+  // script 内ポーリング（--wait-seconds）は撤去済み。復活は exec-proxy 内 network I/O の再導入を意味する
+  assert.ok(!p.includes('--wait-seconds'), '--wait-seconds を含んではならない');
   assert.ok(!/\bsleep\b/i.test(p), 'sleep という語を含んではならない');
   assert.ok(!p.includes('繰り返'), '繰り返し指示を含んではならない');
   assert.ok(!p.includes('next_action'), 'next_action への言及を含んではならない');

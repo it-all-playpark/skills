@@ -1,109 +1,28 @@
 // top-level abort handoff のルーティングテスト（issue #607）。
 // pr-iterate.js にも dev-flow.js と同種の穴があった（handoff は終端 1 箇所のみで、isolation probe の
 // fail-closed throw 等の handoff 到達前の例外で telemetry が全損する）ため、同機構
-// （top-level try/catch + journal-log-abort）で同時に塞いだ。makeSandbox / runPrIterateCapture は
-// priterate-journal-log.test.mjs のパターンを踏襲し、isolationProbeResult / journalLogAbortThrows
-// オプションと 'journal-log-abort' stub を追加する。
+// （top-level try/catch + journal-log-abort）で同時に塞いだ。harness は test-helpers/vm-sandbox.mjs の
+// makePrIterateSandbox（pr-iterate 単体起動の既定 responder）/ runWorkflowCapture を使い、
+// isolation-probe と journal-log-abort の応答だけを上書きする。
 
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import vm from 'node:vm';
+import { makePrIterateSandbox, runWorkflowCapture } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const repoRoot = join(here, '..');
-const prIteratePath = join(repoRoot, '.claude/workflows/pr-iterate.js');
+const src = readFileSync(join(here, '..', '.claude/workflows/pr-iterate.js'), 'utf8');
 
 function makeSandbox({ isolationProbeResult, journalLogAbortThrows } = {}) {
-  const calls = [];
-
-  const agentStub = async (prompt, opts) => {
-    const label = opts?.label ?? '';
-    const agentType = opts?.agentType ?? '';
-    calls.push({ label, agentType, prompt: String(prompt ?? '') });
-
-    // pr-meta: repo/cwd probe。isoWt=/tmp/wt, repo=acme/skills を確定させる。
-    if (label === 'pr-meta' && agentType === 'dev-flow:dev-runner-haiku-ro') {
-      return { url: 'https://github.com/acme/skills/pull/5', cwd: '/tmp/wt' };
-    }
-
-    // isolation cleanup: 常に成功させる（probe 成立への影響を排除）。
-    if (label === 'isolation-cleanup' && agentType === 'dev-flow:dev-runner-haiku') {
-      return { cleaned: true };
-    }
-
-    // isolation probe: 既定は書き込み成功。isolationProbeResult が指定されればそれを返す。
-    if (label === 'isolation-probe' && agentType === 'dev-flow:dev-runner-haiku-wo') {
-      return isolationProbeResult ?? { written: true };
-    }
-
-    // pr-reviewer: 1 round で LGTM へ（isolation probe が通った場合の完走経路用）
-    if (agentType === 'dev-flow:pr-reviewer') {
-      return { decision: 'approve', issues: [], summary: 'ok' };
-    }
-
-    // 投稿系
-    if (label.startsWith('post-')) {
-      return { posted: true, method: 'gh', url: 'http://x' };
-    }
-
-    // journal-log（通常終端）: payload を pending/ へ直接書く 1 spawn（issue #807）
-    if (label === 'journal-log' && agentType === 'dev-flow:dev-runner-haiku') {
-      return { saved: true, logged: true };
-    }
-
-    // journal-log-abort（abort 終端）
-    if (label === 'journal-log-abort' && agentType === 'dev-flow:dev-runner-haiku') {
-      if (journalLogAbortThrows) throw new Error('journal-log-abort boom');
-      return { saved: true, logged: true };
-    }
-
-    return null;
-  };
-
-  const parallelStub = async (fns) => Promise.all((fns || []).map((f) => f()));
-  const workflowStub = async () => ({ status: 'lgtm' });
-
-  const sandbox = {
-    phase: () => {},
-    log: () => {},
-    agent: agentStub,
-    parallel: parallelStub,
-    workflow: workflowStub,
-    args: '5',
-    console, JSON, Math, String, Number, Boolean, Array, Object, Error,
-    RegExp, Promise, Symbol, Map, Set, Date,
-  };
-
-  const ctx = vm.createContext(sandbox);
-  return { ctx, calls };
+  const overrides = {};
+  if (isolationProbeResult) overrides['isolation-probe'] = isolationProbeResult;
+  if (journalLogAbortThrows) overrides['journal-log-abort'] = () => { throw new Error('journal-log-abort boom'); };
+  return makePrIterateSandbox({ overrides });
 }
 
-async function runPrIterateCapture(src, ctx) {
-  const stripped = src
-    .replace(/^export\s+const\s+/gm, 'const ')
-    .replace(/^export\s+function\s+/gm, 'function ');
-  const wrapped = `(async () => {\n${stripped}\n})();`;
-
-  let caughtError = null;
-  let resolvedResult = null;
-  try {
-    const resultPromise = vm.runInContext(wrapped, ctx, { filename: '.claude/workflows/pr-iterate.js' });
-    if (resultPromise && typeof resultPromise.then === 'function') {
-      resolvedResult = await resultPromise.catch((e) => {
-        caughtError = e;
-        return null;
-      });
-    }
-  } catch (e) {
-    caughtError = e;
-  }
-  return { result: resolvedResult, error: caughtError };
-}
-
-const src = readFileSync(prIteratePath, 'utf8');
+const runPrIterateCapture = (source, ctx) => runWorkflowCapture(source, ctx, '.claude/workflows/pr-iterate.js');
 
 // ============================================================
 // (1) isolation probe fail-closed

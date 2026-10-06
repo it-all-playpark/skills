@@ -21,14 +21,15 @@ setup() {
 }
 
 @test "ci-wait: durations longer than one internal step are chained to the exact total" {
-    # STEP=5 inside the script; 6 exercises the remainder chunk.
+    # CI_WAIT_STEP=2 shortens the internal step (default 5); 3 exercises the
+    # remainder chunk (2 + 1) without a long real wait.
     local start end
     start=$(date +%s)
-    run bash "$SCRIPT" 6
+    CI_WAIT_STEP=2 run bash "$SCRIPT" 3
     end=$(date +%s)
     [ "$status" -eq 0 ]
-    [ "$output" = '{"slept":true,"seconds":6}' ]
-    [ $(( end - start )) -ge 6 ]
+    [ "$output" = '{"slept":true,"seconds":3}' ]
+    [ $(( end - start )) -ge 3 ]
 }
 
 @test "ci-wait: rejects a missing argument with no stdout" {
