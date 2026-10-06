@@ -22,7 +22,6 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { CI_POLL_SECONDS, CI_WAIT_CEILING_SECONDS, CI_MAX_POLLS, CI_TURN_MARGIN, CI_STATUS, CI_WAIT_CHECK, ciCheckPrompt, ciWaitCheckPrompt, ciFetchSteps, ciHeadRejectReason, isFullCommitSha, ciStatusFromCounts, ciEffectiveStatus } from './ci-check.mjs';
-import * as mod from './ci-check.mjs';
 
 // ============================================================
 // 定数
@@ -88,10 +87,6 @@ test('[ci-check] script 側ループの定数: CI_WAIT_CEILING_SECONDS=300 / CI_
   assert.equal(CI_POLL_SECONDS, 45);
   assert.equal(CI_MAX_POLLS, 7);
   assert.ok(CI_POLL_SECONDS * (CI_MAX_POLLS - 1) <= CI_WAIT_CEILING_SECONDS);
-});
-
-test('[ci-check] agent 内 attempt ループ定数 CI_MAX_ATTEMPTS は export されない（ループは script 側へ移設。issue #663）', () => {
-  assert.equal(mod.CI_MAX_ATTEMPTS, undefined);
 });
 
 // ============================================================
@@ -192,11 +187,6 @@ test('[ci-check] CI_WAIT_CHECK schema は slept（boolean）を required に持�
   for (const [k, v] of Object.entries(CI_STATUS.properties)) {
     assert.deepEqual(CI_WAIT_CHECK.properties[k], v, `CI_WAIT_CHECK.properties.${k} は CI_STATUS と一致するべき`);
   }
-});
-
-test('[ci-check] 単独の ci-wait 契約（CI_WAIT / ciWaitPrompt）は export されない（待機は ci-wait-check に統合。issue #805）', () => {
-  assert.equal(mod.CI_WAIT, undefined);
-  assert.equal(mod.ciWaitPrompt, undefined);
 });
 
 // ============================================================

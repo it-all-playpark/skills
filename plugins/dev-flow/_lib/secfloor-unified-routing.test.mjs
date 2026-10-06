@@ -18,9 +18,7 @@
 //   (a) unified=null（agent drop 相当）→ parseSecfloorFields → risk.ok===false →
 //       seedSecurityLedger 済み ledger に reconcileDanger を適用すると SEC seed 全件
 //       unchecked（fail-closed）で、classifyMergeTier 相当の判定が HOLD になる
-//   (b) stub throw ケース: execSecurityFloorPhase と同型の try/catch → unified=null 化を
-//       再現する薄い harness で、例外が伝播せず（run abort しない）(a) と同一の
-//       fail-closed HOLD へ到達する
+//   (b) throw 経路の fail-closed HOLD は secfloor-schema-contract-routing AC4 が VM で pin する
 //   (c) risk 正常 + files 欠落 → dangerHits は正常算出されつつ realizedCount 相当が NaN →
 //       classifyShape が complex（安全弁）
 //   (d) risk 欠落 + files 正常 → SEC fail-closed だが files は正常配列のまま（独立性）
@@ -150,33 +148,6 @@ test('[secfloor-unified-routing][B-a] unified=null（agent drop）→ risk fail-
   }
   assert.equal(converged, false, 'fail-closed 時は blocking item が全 checked にならず converged=false のはず');
   assert.equal(tier, 'HOLD', `fail-closed 時は classifyMergeTier が HOLD を返すべきだが '${tier}'`);
-});
-
-// (b) stub throw ケース: execSecurityFloorPhase と同型の try/catch → unified=null 化を再現する
-// 薄い harness。throw が伝播しない（run abort しない）ことと、(a) と同一の fail-closed HOLD へ
-// 到達することを pin する。
-async function secfloorCallWithFailoverToNull(agentCall) {
-  let unified = null;
-  try {
-    unified = await agentCall();
-  } catch (_e) {
-    unified = null;
-  }
-  return parseSecfloorFields(unified);
-}
-
-test('[secfloor-unified-routing][B-b] 統合呼び出しが throw（StructuredOutput 未返却等）→ 例外が伝播せず (a) と同一の fail-closed HOLD', async () => {
-  const throwingAgentCall = async () => { throw new Error('proxy execution failed'); };
-  const { risk } = await secfloorCallWithFailoverToNull(throwingAgentCall);
-  assert.equal(risk.ok, false);
-
-  const { secItems, converged, tier } = reconcileAndClassify(risk);
-  for (const it of secItems) {
-    assert.notEqual(it.checked, true);
-    assert.equal(it.fail_closed, true);
-  }
-  assert.equal(converged, false);
-  assert.equal(tier, 'HOLD', `throw 経路も fail-closed HOLD へ到達すべきだが '${tier}'`);
 });
 
 test('[secfloor-unified-routing][B-c] risk 正常 + files 欠落 → dangerHits は正常算出されつつ realizedCount 相当は NaN → classifyShape が complex', () => {

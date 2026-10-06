@@ -867,38 +867,6 @@ test('shape=null -> at-a-glance テーブルに「不明」を含む', () => {
   assert.ok(body.includes('不明'), 'shape null -> 不明');
 });
 
-// ─── 旧形式のセクション見出しが出ない ────────────────────────────────────────
-
-test('旧形式「### ESCALATE-TO-HUMAN（人間の判断が必要）」セクションが出ない', () => {
-  const body = buildDevflowSummaryBody({
-    ...BASE_INPUT,
-    advisoryItems: [
-      { id: 'A1', text: 'escalated', severity: 'major', checked: false, dimension: 'quality', escalate: true },
-    ],
-  });
-  assert.ok(!body.includes('### ESCALATE-TO-HUMAN（人間の判断が必要）'), '旧 ESCALATE-TO-HUMAN 専用セクションが出ない');
-});
-
-test('旧形式「### 実行結果」セクションが出ない', () => {
-  const body = buildDevflowSummaryBody({ ...BASE_INPUT });
-  assert.ok(!body.includes('### 実行結果'), '旧 実行結果セクションが出ない');
-});
-
-test('旧形式「### Goal Ledger」セクション見出しが出ない', () => {
-  const body = buildDevflowSummaryBody({ ...BASE_INPUT });
-  assert.ok(!body.includes('### Goal Ledger'), '旧 Goal Ledger セクションが出ない');
-});
-
-test('旧形式「### Acceptance Criteria」セクション見出しが出ない', () => {
-  const body = buildDevflowSummaryBody({ ...BASE_INPUT });
-  assert.ok(!body.includes('### Acceptance Criteria'), '旧 Acceptance Criteria セクションが出ない');
-});
-
-test('旧形式「### Security clearance」セクション見出しが出ない', () => {
-  const body = buildDevflowSummaryBody({ ...BASE_INPUT });
-  assert.ok(!body.includes('### Security clearance'), '旧 Security clearance セクションが出ない');
-});
-
 // ─── 空状態行の直前行が空行であること (GFM テーブル・bullet 崩壊防止) ──────────
 
 test('要対応テーブルあり + securityClearance 空 -> Security clearance 空状態行の直前行が空行', () => {

@@ -15,11 +15,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const src = readFileSync(join(here, '..', '.claude/workflows/dev-flow.js'), 'utf8');
 
 // complex に落とす: realized 7 件（shapeOverrides('complex')）→ EVAL_PASSES=EVAL_MAX=10 のループ経路
-const COMPLEX_REQ = {
-  summary: 's', acceptance_criteria: ['a', 'b', 'c', 'd'], issue_type: 'feat', scope: 'src',
-  issue_number: 1, issue_title: 'stub-issue-title',
-};
-const COMPLEX_OVERRIDES = { 'analyze#1': COMPLEX_REQ, ...shapeOverrides('complex') };
+const COMPLEX_OVERRIDES = { ...shapeOverrides('complex') };
 
 // 毎回異なる topic を生成（paraphrase 模倣 = evalSeen の stuck 検出が発火しない）
 function designCritical(callIndex) {
@@ -27,7 +23,8 @@ function designCritical(callIndex) {
     verdict: 'fail', total: 5, threshold: 7,
     feedback: [{ severity: 'critical', topic: `design-flaw-paraphrase-${callIndex}`, description: `設計欠陥の言い換え${callIndex}`, suggestion: '再設計せよ' }],
     feedback_level: 'design',
-    ac_results: COMPLEX_REQ.acceptance_criteria.map((_, i) => ({ ac_index: i, satisfied: true, verified_by: 'inspection', evidence: 'ok' })),
+    // 既定 sandbox の AC は 2 件
+    ac_results: [0, 1].map((i) => ({ ac_index: i, satisfied: true, verified_by: 'inspection', evidence: 'ok' })),
     security_clearance: [],
   };
 }

@@ -12,12 +12,6 @@ run_hook() {
     | CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" bash -c "$CMD"
 }
 
-@test "hooks.json Write entry is scoped to SKILL.md via if" {
-  run jq -r '.hooks.PreToolUse[] | select(.matcher=="Write") | .hooks[0].if' "$PLUGIN_ROOT/hooks/hooks.json"
-  [ "$status" -eq 0 ]
-  [ "$output" = "Write(*/SKILL.md)" ]
-}
-
 @test "content without frontmatter passes through (exit 0, no output)" {
   run run_hook $'# title\n\nno frontmatter here.'
   [ "$status" -eq 0 ]

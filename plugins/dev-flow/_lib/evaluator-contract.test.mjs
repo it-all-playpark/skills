@@ -117,14 +117,6 @@ test('[evaluator-contract] eval#1 prompt contains EVALUATOR_OPERATIONAL_CONTRACT
 // complex shape の 2 iteration フィクスチャ（1 回目 critical → 2 回目解消）で eval#2 の prompt を検証する
 // （_lib/eval-convergence.test.mjs の contract test と同じ理由）。
 test('[evaluator-contract] eval#2 prompt contains EVALUATOR_OPERATIONAL_CONTRACT.critical_resolutions verbatim (issue #174)', async () => {
-  const COMPLEX_REQ = {
-    summary: 's',
-    acceptance_criteria: ['a', 'b', 'c', 'd'],
-    issue_type: 'feat',
-    scope: 'src',
-    issue_number: 1,
-    issue_title: 'stub-issue-title',
-  };
   const ac4 = [
     { ac_index: 0, satisfied: true, verified_by: 'inspection', evidence: 'ok' },
     { ac_index: 1, satisfied: true, verified_by: 'inspection', evidence: 'ok' },
@@ -133,7 +125,6 @@ test('[evaluator-contract] eval#2 prompt contains EVALUATOR_OPERATIONAL_CONTRACT
   ];
   const { ctx, calls } = makeSandbox({
     overrides: {
-      'analyze#1': COMPLEX_REQ,
       ...shapeOverrides('complex'),
       'eval#1': {
         verdict: 'fail', total: 5, threshold: 7,

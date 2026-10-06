@@ -22,12 +22,6 @@ const src = readFileSync(join(here, '..', '.claude/workflows/dev-flow.js'), 'utf
 const IMPLEMENTER = 'dev-flow:dev-implementer';
 const GONE_AGENTS = ['dev-flow:dev-planner', 'dev-flow:plan-reviewer', 'dev-flow:implementer'];
 
-// standard shape: count=4 (3-5), AC<=6, issue_type=fix, no breaking keywords
-const STANDARD_REQ = {
-  summary: 's', acceptance_criteria: ['a', 'b', 'c', 'd'], issue_type: 'fix', scope: 'src',
-  issue_number: 1, issue_title: 'stub-issue-title',
-};
-
 const blocked = (detail) => ({
   status: 'BLOCKED', task_id: 'issue-1', files: [], summary: '', concerns: [],
   blocking_reason: { block_class: 'approach_mismatch', detail },
@@ -35,7 +29,7 @@ const blocked = (detail) => ({
 const done = { status: 'DONE', task_id: 'issue-1', files: ['src/x.ts'], summary: 'ok', concerns: [] };
 
 async function run(overrides) {
-  const { ctx, calls, logs } = makeDevFlowSandbox({ overrides: { 'analyze#1': STANDARD_REQ, ...overrides } });
+  const { ctx, calls, logs } = makeDevFlowSandbox({ overrides });
   const { result, error } = await runWorkflowCapture(src, ctx);
   assertNoCrash(error, 'blocked-replan-history');
   return { calls, logs, result, error };

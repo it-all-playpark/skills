@@ -153,6 +153,9 @@ test('[exec-proxy-routing] dev-flow.js: 全 scenario で観測される exec-pro
   for (const name of Object.keys(DEV_FLOW_SCENARIOS)) {
     const calls = await runDevFlowScenario(name);
     for (const k of assertRouting(calls, EXPECTED_DEV_FLOW, `dev-flow.js[${name}]`)) observed.add(k);
+    // model は agentType の frontmatter で決める。dev-runner* の call に opts.model を渡さない
+    const withModel = calls.filter((c) => c.agentType.startsWith('dev-flow:dev-runner') && c.opts?.model !== undefined);
+    assert.deepEqual(withModel.map((c) => c.label), [], `dev-flow.js[${name}]: dev-runner* の call に opts.model がある`);
   }
   const unreached = Object.keys(EXPECTED_DEV_FLOW).filter((k) => !observed.has(k));
   assert.deepEqual(unreached, [], `dev-flow.js: EXPECTED の label が全 scenario で観測されなかった（到達 scenario を追加するか、call site 消滅なら EXPECTED から外す）: ${unreached.join(', ')}`);
