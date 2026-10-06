@@ -277,6 +277,10 @@ test('[pr-artifacts] pr_sections: 閉じていないコードフェンスは閉�
   const balanced = blockOf(bodyOf('```\nx\n```\n後ろ'));
   assert.ok(balanced.includes('```\nx\n```\n後ろ\n\n</details>'), `閉じているフェンスは変えない: ${balanced}`);
   assert.ok(blockOf(bodyOf('   ```\nx\n```')).includes('   ```\nx\n```\n\n</details>'), '3 空白までのインデントもフェンスとして数える');
+  const inline = blockOf(bodyOf('```npm test``` を実行する\n後ろ'));
+  assert.ok(inline.includes('```npm test``` を実行する\n後ろ\n\n</details>'), `行頭のインラインコードはフェンスとみなさず閉じフェンスを足さない: ${inline}`);
+  const inlineThenFence = blockOf(bodyOf('```a``` 説明\n```js\nx'));
+  assert.ok(inlineThenFence.includes('x\n```\n\n</details>'), `インラインコード行の後の本物のフェンスは閉じる: ${inlineThenFence}`);
 
   const comment = bodyOf('前置き <!-- 閉じない');
   assert.ok(!comment.includes('<!--'), comment);

@@ -268,8 +268,10 @@ function closeOpenFence(md) {
   for (const line of md.split('\n')) {
     const m = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
     if (!m) continue;
-    if (open == null) open = m[1];
-    else if (m[1][0] === open[0] && m[1].length >= open.length && m[2].trim() === '') open = null;
+    // CommonMark: info string に backtick を含む backtick 行（行頭の ```npm test``` 等のインラインコード）はフェンスではない
+    if (open == null) {
+      if (!(m[1][0] === '`' && m[2].includes('`'))) open = m[1];
+    } else if (m[1][0] === open[0] && m[1].length >= open.length && m[2].trim() === '') open = null;
   }
   return open == null ? md : `${md}\n${open}`;
 }
