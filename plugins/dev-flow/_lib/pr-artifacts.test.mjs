@@ -22,7 +22,9 @@ import {
   adoptImplPrNotes,
   PR_BODY_OUT_OF_SCOPE_HEADING,
   PR_BODY_OUT_OF_SCOPE_MAX,
+  PR_BODY_OUT_OF_SCOPE_ITEM_MAX,
   PR_BODY_NOTE_MAX,
+  PR_BODY_DECISIONS_MAX,
   PR_BODY_DECISION_MAX,
   PR_BODY_CHANGE_BULLET_MAX,
   PR_SECTIONS_MAX_CHARS,
@@ -790,4 +792,101 @@ test('[pr-artifacts] dev-flow.js: IMPL schema の pr_sections は heading / mark
   assert.match(m[0], /required: \['heading', 'markdown'\]/);
   assert.ok(m[0].includes(`heading: { type: 'string', maxLength: ${PR_SECTION_HEADING_MAX} }`), m[0]);
   assert.ok(m[0].includes(`markdown: { type: 'string', maxLength: ${PR_SECTIONS_MAX_CHARS} }`), m[0]);
+});
+
+// ---- issue #830: design_decisions / pr_notes / out_of_scope は schema の maxLength で書き手に収めさせ、builder は切らない ----
+
+// IMPL schema（dev-flow.js）の 1 行要約欄の maxLength を読む。
+const implSchemaSrc = (() => {
+  const start = devFlowSrc.indexOf('\nconst IMPL = {');
+  assert.ok(start >= 0, 'dev-flow.js に IMPL schema が無い');
+  return devFlowSrc.slice(start, devFlowSrc.indexOf('\n}\n', start));
+})();
+function implMaxLength(re, what) {
+  const m = implSchemaSrc.match(re);
+  assert.ok(m, `IMPL schema の ${what} に maxLength が無い`);
+  return Number(m[1]);
+}
+const IMPL_MAX = {
+  title: implMaxLength(/\btitle: \{ type: 'string', maxLength: (\d+) \}/, 'design_decisions[].title'),
+  rationale: implMaxLength(/\brationale: \{ type: 'string', maxLength: (\d+) \}/, 'design_decisions[].rationale'),
+  note: implMaxLength(/\btext: \{ type: 'string', maxLength: (\d+) \}/, 'pr_notes[].text'),
+  outOfScope: implMaxLength(/\bout_of_scope: \{ type: 'array', items: \{ type: 'string', maxLength: (\d+) \} \}/, 'out_of_scope[]'),
+};
+
+// builder が各欄に付ける区切りの字数（`- 決定 — 理由` / `- 検証: 本文` / `- 本文`）を本文の実出力から測る。
+// 区切りを変えれば測り直されるので、不変条件は builder の実装と schema の両方に追従する。
+function prBodyLineOverheads() {
+  const adopted = adoptImplPrNotes({ serial: [] }, [{
+    design_decisions: [{ title: '甲', rationale: '乙' }],
+    pr_notes: PR_NOTE_SECTIONS.map((section, i) => ({ section, text: `丙${i}` })),
+    out_of_scope: ['丁'],
+  }]);
+  const lines = buildPrBody({ issue: 1, req: req(), plan: adopted, ledger: ledger(), testsurfHits: [], dangerHits: [] }).split('\n');
+  const len = (marker) => Array.from(lines.find((l) => l.includes(marker))).length;
+  return {
+    decision: len('甲') - 2,
+    note: Math.max(...PR_NOTE_SECTIONS.map((_, i) => len(`丙${i}`) - 2)),
+    outOfScope: len('丁') - 1,
+  };
+}
+
+test('[pr-artifacts] dev-flow.js: IMPL schema の design_decisions / pr_notes / out_of_scope の maxLength + 区切りは clip 上限以下', () => {
+  const sep = prBodyLineOverheads();
+  assert.ok(sep.decision > 0 && sep.note > 0 && sep.outOfScope > 0, `区切りを測れない: ${JSON.stringify(sep)}`);
+  assert.ok(IMPL_MAX.title + IMPL_MAX.rationale + sep.decision <= PR_BODY_DECISION_MAX,
+    `design_decisions: title ${IMPL_MAX.title} + rationale ${IMPL_MAX.rationale} + 区切り ${sep.decision} > PR_BODY_DECISION_MAX ${PR_BODY_DECISION_MAX}`);
+  assert.ok(IMPL_MAX.note + sep.note <= PR_BODY_NOTE_MAX,
+    `pr_notes: text ${IMPL_MAX.note} + 区切り ${sep.note} > PR_BODY_NOTE_MAX ${PR_BODY_NOTE_MAX}`);
+  assert.ok(IMPL_MAX.outOfScope + sep.outOfScope <= PR_BODY_OUT_OF_SCOPE_ITEM_MAX,
+    `out_of_scope: item ${IMPL_MAX.outOfScope} + 区切り ${sep.outOfScope} > PR_BODY_OUT_OF_SCOPE_ITEM_MAX ${PR_BODY_OUT_OF_SCOPE_ITEM_MAX}`);
+});
+
+test('[pr-artifacts] PR body: schema の maxLength いっぱいの design_decisions / pr_notes / out_of_scope は 1 行も clip しない', () => {
+  // code point で数えることも確かめるため、多バイト文字と ASCII を混ぜる
+  const fill = (n, c) => Array.from({ length: n }, (_, i) => (i % 2 ? c : 'あ')).join('');
+  const adopted = adoptImplPrNotes({ summary: 's', serial: [] }, [{
+    status: 'DONE', task_id: 'issue-830',
+    design_decisions: Array.from({ length: PR_BODY_DECISIONS_MAX }, () => ({ title: fill(IMPL_MAX.title, 't'), rationale: fill(IMPL_MAX.rationale, 'r') })),
+    pr_notes: Array.from({ length: PR_BODY_NOTES_MAX }, (_, i) => ({ section: PR_NOTE_SECTIONS[i % PR_NOTE_SECTIONS.length], text: fill(IMPL_MAX.note, String(i)) })),
+    out_of_scope: Array.from({ length: PR_BODY_OUT_OF_SCOPE_MAX }, (_, i) => fill(IMPL_MAX.outOfScope, String(i))),
+  }]);
+  const body = buildPrBody({ issue: 830, req: req(), plan: adopted, ledger: ledger(), testsurfHits: [], dangerHits: [] });
+  assert.ok(!body.includes('…'), `上限内の入力が切られた:\n${body.split('\n').filter((l) => l.includes('…')).join('\n')}`);
+  const report = prBodyClipReport(adopted);
+  assert.equal(report.decision, 0);
+  assert.equal(report.note, 0);
+  for (const d of adopted.architecture_decisions) assert.ok(body.includes(`- ${d.decision} — ${d.rationale}\n`), d.decision);
+  for (const n of adopted.pr_notes) assert.ok(body.includes(`: ${n.text}\n`), n.text);
+  for (const o of adopted.out_of_scope) assert.ok(body.includes(`- ${o}\n`), o);
+});
+
+test('[pr-artifacts] PR body: schema を外れた長さの入力は builder が backstop として「…」に切る', () => {
+  const p = plan({
+    architecture_decisions: [{ decision: 'd'.repeat(IMPL_MAX.title + 1), rationale: 'r'.repeat(PR_BODY_DECISION_MAX) }],
+    pr_notes: [{ section: 'verification', text: 'n'.repeat(PR_BODY_NOTE_MAX) }],
+    out_of_scope: ['o'.repeat(PR_BODY_OUT_OF_SCOPE_ITEM_MAX)],
+  });
+  const body = buildPrBody({ issue: 1, req: req(), plan: p, ledger: ledger(), testsurfHits: [], dangerHits: [] });
+  const lineOf = (c) => body.split('\n').find((l) => l.includes(c.repeat(10)));
+  assert.equal(Array.from(lineOf('d')).length, PR_BODY_DECISION_MAX);
+  assert.ok(lineOf('d').endsWith('…'));
+  assert.equal(Array.from(lineOf('n')).length, PR_BODY_NOTE_MAX);
+  assert.ok(lineOf('n').endsWith('…'));
+  assert.equal(Array.from(lineOf('o')).length, PR_BODY_OUT_OF_SCOPE_ITEM_MAX);
+  assert.ok(lineOf('o').endsWith('…'));
+  assert.deepEqual({ note: prBodyClipReport(p).note, decision: prBodyClipReport(p).decision }, { note: 1, decision: 1 });
+});
+
+test('[pr-artifacts] agents/dev-implementer.md: design_decisions / pr_notes / out_of_scope の字数の説明は IMPL schema の maxLength と一致', () => {
+  const md = readFileSync(join(here, '..', 'agents', 'dev-implementer.md'), 'utf8');
+  assert.ok(md.includes(`\`pr_notes[].text\` は ${IMPL_MAX.note} 字`), 'pr_notes の字数');
+  assert.ok(md.includes(`\`title\` ${IMPL_MAX.title} 字・\`rationale\` ${IMPL_MAX.rationale} 字`), 'design_decisions の字数');
+  assert.ok(md.includes(`\`out_of_scope\` は 1 項目 ${IMPL_MAX.outOfScope} 字まで`), 'out_of_scope の字数');
+  const example = md.slice(md.indexOf('```json'), md.indexOf('```', md.indexOf('```json') + 7));
+  assert.ok(example.includes(`決定（${IMPL_MAX.title} 字以内）`) && example.includes(`その理由（${IMPL_MAX.rationale} 字以内）`), example);
+  assert.ok(example.includes(`${IMPL_MAX.note} 字以内）`), example);
+  assert.ok(example.includes(`1 項目 1 文・${IMPL_MAX.outOfScope} 字以内）`), example);
+  // clip 上限（PR 本文で切られる幅）を書き手の上限として案内しない
+  assert.ok(!md.includes(`${PR_BODY_NOTE_MAX} 字`) && !md.includes(`${PR_BODY_DECISION_MAX} 字`), '古い clip 上限の字数が残っている');
 });
