@@ -336,11 +336,13 @@ test('[journal-log] journal-log が throw した場合 run は完走し result.j
 
 // inline 区間整合: journal handoff の choreography は canonical（_lib/journal-handoff.mjs）の inline 区間にのみ
 // 存在し、call site 側に手写しが残っていないこと（否定 pin）。call site の label（journal-log /
-// journal-log-failure）と handoff の挙動は上の VM テストと exec-proxy-routing.test.mjs が観測する。
-test('[journal-log] inline 整合: dev-flow.js の inline 区間外に journal handoff choreography の手写しが残っていない', () => {
-  const anchor = src.indexOf('==== END inline: _lib/journal-handoff.mjs ====');
-  assert.ok(anchor >= 0, 'journal-handoff inline END marker が見つからない');
-  assert.equal(src.indexOf("let journalLogStatus = 'save_failed'", anchor + 1), -1, 'inline 区間外に手写し choreography（journalLogStatus 初期化）が残っている');
+// journal-log-failure / journal-log-abort）と handoff の挙動は各 workflow の VM テスト
+// （本ファイル / priterate-journal-log.test.mjs）と exec-proxy-routing.test.mjs が観測する。
+test.each(['dev-flow.js', 'pr-iterate.js'])('[journal-log] inline 整合: %s の inline 区間外に journal handoff choreography の手写しが残っていない', (file) => {
+  const workflowSrc = readFileSync(join(repoRoot, '.claude/workflows', file), 'utf8');
+  const anchor = workflowSrc.indexOf('==== END inline: _lib/journal-handoff.mjs ====');
+  assert.ok(anchor >= 0, `${file}: journal-handoff inline END marker が見つからない`);
+  assert.equal(workflowSrc.indexOf("let journalLogStatus = 'save_failed'", anchor + 1), -1, `${file}: inline 区間外に手写し choreography（journalLogStatus 初期化）が残っている`);
 });
 
 // issue #561 AC-3: evaluator が confidence を返すケース/省略するケースの両方で run が abort しない。

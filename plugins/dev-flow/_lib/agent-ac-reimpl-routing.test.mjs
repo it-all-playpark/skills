@@ -101,10 +101,11 @@ test('[agent-ac-reimpl] (A-final) fixes_applied>0 の Final AC reconcile にも 
   assert.deepEqual(plain(result.final_unsatisfied_ac_by_actor), { agent: [], human: [] });
 });
 
-test('[agent-ac-reimpl] (A-ctrl) 全 AC 満たせば standard は evaluator 1 回・差し戻しなし', async () => {
-  const { calls } = await run([MEASURE_AC, CODE_AC], { 'eval#1': evalWith([true, true]) });
+test('[agent-ac-reimpl] (A-ctrl) 全 AC 満たせば standard は evaluator 1 回・差し戻しなしで、AC 起因の HOLD を出さない（REVIEW）', async () => {
+  const { result, calls } = await run([MEASURE_AC, CODE_AC], { 'eval#1': evalWith([true, true]) });
   assert.equal(reimplCalls(calls).length, 0);
   assert.equal(evalCalls(calls).length, 1);
+  assert.equal(result?.merge_tier, 'REVIEW', `全 AC satisfied:true の standard は REVIEW のはず: ${JSON.stringify(result?.merge_tier_reasons)}`);
 });
 
 test('[agent-ac-reimpl] (B) （人手）の AC だけが未達 → 差し戻さず HOLD（人手 AC 待ち）', async () => {
@@ -135,5 +136,9 @@ test('[agent-ac-reimpl] (C) agent AC が差し戻し上限後も未達 → HOLD 
   assert.equal(evalCalls(calls).length, AGENT_AC_REIMPL_MAX + 1);
   assert.equal(result?.merge_tier, 'HOLD');
   assert.deepEqual(plain(result.merge_tier_hold_reasons.map((r) => r.code)), ['ac_agent_unsatisfied', 'ac_human_pending']);
+  assert.ok(
+    Array.isArray(result.merge_tier_reasons) && result.merge_tier_reasons.some((x) => /AC 未達/.test(x)),
+    `merge_tier_reasons に 'AC 未達' が含まれるべき: ${JSON.stringify(result.merge_tier_reasons)}`,
+  );
   assert.deepEqual(plain(result.final_unsatisfied_ac_by_actor), { agent: [0], human: [1] });
 });

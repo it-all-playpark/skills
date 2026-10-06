@@ -166,7 +166,7 @@ test('[ac-scope] mixedScopeAcReasons: 混ざった AC だけを AC 番号・本�
 // 観測型 AC の分類規則 v2（issue #844）。過去 issue の AC 本文そのまま。
 // positive control: inspection で達成扱いになり、実際に動かすと満たさなかった既知 9 issue の AC
 const KNOWN_OBSERVATIONAL_ACS = {
-  // 撤去済みキー名は plan-phase-removed-invariant.test.mjs の (c) スキャンに掛かるため join で組み立てる
+  // 撤去済みキー名は removed-phase-invariant.test.mjs の (c) スキャンに掛かるため join で組み立てる
   '423-5': `AC-5: 変更前後で各 5 run 以上の A/B を実施し、\`${['plan', 'iter'].join('_')}\` / \`eval_iter\` / \`iterate_status\` / findings 件数 / \`duration_seconds\` の比較表が作成されている`,
   '431-4': '`error_category` / `error_msg` が失敗 run の journal entry に到達する',
   '431-5': 'pr-iterate 単体起動で `iterate_status` / `ci_wait_seconds` / `ci_poll_attempts` が記録される',

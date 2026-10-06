@@ -60,108 +60,39 @@ function testsurfLedgerItem(pattern, { checked = false, evidence = null } = {}) 
 
 // ─── at-a-glance テーブル絵文字 ──────────────────────────────────────────────
 
-test('mergeTier=HOLD -> at-a-glance テーブルに🔶 **HOLD** を含む', () => {
-  const body = buildDevflowSummaryBody({
-    ...BASE_INPUT,
-    mergeTier: 'HOLD',
-    mergeTierReasons: ['danger hit detected'],
-  });
-  assert.ok(body.includes('🔶 **HOLD**'), 'HOLD 絵文字を含む');
-});
-
-test('mergeTier=REVIEW -> at-a-glance テーブルに🔷 **REVIEW** を含む', () => {
-  const body = buildDevflowSummaryBody({
-    ...BASE_INPUT,
-    mergeTier: 'REVIEW',
-  });
-  assert.ok(body.includes('🔷 **REVIEW**'), 'REVIEW 絵文字を含む');
-});
-
-test('mergeTier=AUTO -> at-a-glance テーブルに✅ **AUTO** を含む', () => {
-  const body = buildDevflowSummaryBody({
-    ...BASE_INPUT,
-    mergeTier: 'AUTO',
-    mergeTierReasons: [],
-  });
-  assert.ok(body.includes('✅ **AUTO**'), 'AUTO 絵文字を含む');
-});
-
 test('at-a-glance テーブルにヘッダー行を含む', () => {
   const body = buildDevflowSummaryBody({ ...BASE_INPUT });
   assert.ok(body.includes('| Merge tier | shape | テスト | 評価 | 台帳 (Ledger) | AC | 危険検出 |'), 'ヘッダー行を含む');
 });
 
-test('testGreen=true -> at-a-glance テーブルに「✅ green」を含む', () => {
-  const body = buildDevflowSummaryBody({ ...BASE_INPUT, testGreen: true });
-  assert.ok(body.includes('✅ green'), 'test green を含む');
-});
+const SIX_SATISFIED_AC = Array.from({ length: 6 }, (_, i) => (
+  { ac_index: i, satisfied: true, evidence: `ok${i + 1}`, verified_by: 'evaluator' }
+));
 
-test('testGreen=false -> at-a-glance テーブルに「❌ red」を含む', () => {
-  const body = buildDevflowSummaryBody({ ...BASE_INPUT, testGreen: false });
-  assert.ok(body.includes('❌ red'), 'test red を含む');
-});
+// name: 入力の上書き / input: BASE_INPUT への上書き / want: at-a-glance テーブルに含む表示
+const AT_A_GLANCE_CASES = [
+  { name: 'mergeTier=HOLD', input: { mergeTier: 'HOLD', mergeTierReasons: ['danger hit detected'] }, want: '🔶 **HOLD**' },
+  { name: 'mergeTier=REVIEW', input: { mergeTier: 'REVIEW' }, want: '🔷 **REVIEW**' },
+  { name: 'mergeTier=AUTO', input: { mergeTier: 'AUTO', mergeTierReasons: [] }, want: '✅ **AUTO**' },
+  { name: 'testGreen=true', input: { testGreen: true }, want: '✅ green' },
+  { name: 'testGreen=false', input: { testGreen: false }, want: '❌ red' },
+  { name: 'testGreen=null', input: { testGreen: null }, want: '不明' },
+  { name: 'evalVerdict=pass', input: { evalVerdict: 'pass' }, want: '✅ pass' },
+  { name: 'evalVerdict=fail', input: { evalVerdict: 'fail' }, want: '❌ fail' },
+  { name: 'evalVerdict=null', input: { evalVerdict: null }, want: '不明' },
+  { name: 'ledgerConverged=true', input: { ledgerConverged: true }, want: '✅ 収束' },
+  { name: 'ledgerConverged=false', input: { ledgerConverged: false }, want: '⚠️ 未収束' },
+  { name: 'dangerHits 2件', input: { dangerHits: ['SQL_INJECTION', 'PATH_TRAVERSAL'] }, want: '⚠️ 2 クラス' },
+  { name: 'dangerHits 0件', input: { dangerHits: [] }, want: '✅ clean' },
+  { name: 'acResults 6件全 satisfied', input: { acResults: SIX_SATISFIED_AC }, want: '✅ 6/6' },
+  { name: 'acResults undefined', input: { acResults: undefined }, want: '—' },
+  { name: 'shape=complex', input: { shape: 'complex' }, want: 'complex' },
+  { name: 'shape=null', input: { shape: null }, want: '不明' },
+];
 
-test('testGreen=null -> at-a-glance テーブルに「不明」を含む', () => {
-  const body = buildDevflowSummaryBody({ ...BASE_INPUT, testGreen: null });
-  assert.ok(body.includes('不明'), 'test 不明を含む');
-});
-
-test('evalVerdict=pass -> at-a-glance テーブルに「✅ pass」を含む', () => {
-  const body = buildDevflowSummaryBody({ ...BASE_INPUT, evalVerdict: 'pass' });
-  assert.ok(body.includes('✅ pass'), 'eval pass を含む');
-});
-
-test('evalVerdict=fail -> at-a-glance テーブルに「❌ fail」を含む', () => {
-  const body = buildDevflowSummaryBody({ ...BASE_INPUT, evalVerdict: 'fail' });
-  assert.ok(body.includes('❌ fail'), 'eval fail を含む');
-});
-
-test('evalVerdict=null -> at-a-glance テーブルに「不明」を含む', () => {
-  const body = buildDevflowSummaryBody({ ...BASE_INPUT, evalVerdict: null });
-  assert.ok(body.includes('不明'), 'eval 不明を含む');
-});
-
-test('ledgerConverged=true -> at-a-glance テーブルに「✅ 収束」を含む', () => {
-  const body = buildDevflowSummaryBody({ ...BASE_INPUT, ledgerConverged: true });
-  assert.ok(body.includes('✅ 収束'), 'ledger 収束を含む');
-});
-
-test('ledgerConverged=false -> at-a-glance テーブルに「⚠️ 未収束」を含む', () => {
-  const body = buildDevflowSummaryBody({ ...BASE_INPUT, ledgerConverged: false });
-  assert.ok(body.includes('⚠️ 未収束'), 'ledger 未収束を含む');
-});
-
-test('dangerHits 2件 -> at-a-glance テーブルに「⚠️ 2 クラス」を含む', () => {
-  const body = buildDevflowSummaryBody({
-    ...BASE_INPUT,
-    dangerHits: ['SQL_INJECTION', 'PATH_TRAVERSAL'],
-  });
-  assert.ok(body.includes('⚠️ 2 クラス'), 'danger 2クラスを含む');
-});
-
-test('dangerHits 0件 -> at-a-glance テーブルに「✅ clean」を含む', () => {
-  const body = buildDevflowSummaryBody({ ...BASE_INPUT, dangerHits: [] });
-  assert.ok(body.includes('✅ clean'), 'danger clean を含む');
-});
-
-test('acResults 6件全 satisfied -> at-a-glance テーブルに「✅ 6/6」を含む', () => {
-  const body = buildDevflowSummaryBody({
-    ...BASE_INPUT,
-    acResults: [
-      { ac_index: 0, satisfied: true, evidence: 'ok1', verified_by: 'evaluator' },
-      { ac_index: 1, satisfied: true, evidence: 'ok2', verified_by: 'evaluator' },
-      { ac_index: 2, satisfied: true, evidence: 'ok3', verified_by: 'evaluator' },
-      { ac_index: 3, satisfied: true, evidence: 'ok4', verified_by: 'evaluator' },
-      { ac_index: 4, satisfied: true, evidence: 'ok5', verified_by: 'evaluator' },
-      { ac_index: 5, satisfied: true, evidence: 'ok6', verified_by: 'evaluator' },
-    ],
-  });
-  assert.ok(body.includes('✅ 6/6'), 'AC 6/6 を含む');
-});
-
-test('acResults undefined -> at-a-glance テーブルに「—」を含む', () => {
-  const body = buildDevflowSummaryBody({ ...BASE_INPUT, acResults: undefined });
-  assert.ok(body.includes('—'), 'AC — を含む');
+test.each(AT_A_GLANCE_CASES)('$name -> at-a-glance テーブルに「$want」を含む', ({ input, want }) => {
+  const body = buildDevflowSummaryBody({ ...BASE_INPUT, ...input });
+  assert.ok(body.includes(want), `「${want}」を含む`);
 });
 
 // ─── gatePolicy ───────────────────────────────────────────────────────────────
@@ -855,18 +786,6 @@ test('undefined が文字列に展開されない', () => {
   assert.ok(!body.includes('undefined'), 'undefined が含まれない');
 });
 
-// ─── shape ────────────────────────────────────────────────────────────────────
-
-test('shape=complex -> at-a-glance テーブルに「complex」を含む', () => {
-  const body = buildDevflowSummaryBody({ ...BASE_INPUT, shape: 'complex' });
-  assert.ok(body.includes('complex'), 'shape complex を含む');
-});
-
-test('shape=null -> at-a-glance テーブルに「不明」を含む', () => {
-  const body = buildDevflowSummaryBody({ ...BASE_INPUT, shape: null });
-  assert.ok(body.includes('不明'), 'shape null -> 不明');
-});
-
 // ─── 空状態行の直前行が空行であること (GFM テーブル・bullet 崩壊防止) ──────────
 
 test('要対応テーブルあり + securityClearance 空 -> Security clearance 空状態行の直前行が空行', () => {
@@ -893,14 +812,16 @@ test('要対応テーブルあり + securityClearance 空 -> Security clearance 
 
 // ─── eval_staleness 4分岐 (issue #288) ───────────────────────────────────────
 
-test('evalStaleness=hash_mismatch -> ⚠️ blockquote で「Evaluate は古い tree に対して実行された」を含む', () => {
-  const body = buildDevflowSummaryBody({
-    ...BASE_INPUT,
-    evalStaleness: 'hash_mismatch',
-  });
+const STALE_WARNINGS = [
+  { evalStaleness: 'hash_mismatch', warning: 'Evaluate は古い tree に対して実行された' },
+  { evalStaleness: 'iterate_incomplete', warning: 'pr-iterate が LGTM 以外で終端' },
+];
+
+test.each(STALE_WARNINGS)('evalStaleness=$evalStaleness -> ⚠️ blockquote で「$warning」を含む', ({ evalStaleness, warning }) => {
+  const body = buildDevflowSummaryBody({ ...BASE_INPUT, evalStaleness });
   const lines = body.split('\n');
-  const warnIdx = lines.findIndex(l => l.includes('Evaluate は古い tree に対して実行された'));
-  assert.ok(warnIdx >= 0, 'stale 警告文字列を含む');
+  const warnIdx = lines.findIndex(l => l.includes(warning));
+  assert.ok(warnIdx >= 0, `${evalStaleness} 警告文字列を含む`);
   assert.ok(lines[warnIdx].startsWith('> ⚠️'), '警告行は ⚠️ blockquote');
 });
 
@@ -933,17 +854,6 @@ test('evalStaleness=hash_mismatch -> テーブル最終行と警告の間に空�
   assert.equal(lines[tableDataIdx + 1], '', `テーブル最終行（index ${tableDataIdx}）の直後行（index ${tableDataIdx + 1}）が空行`);
 });
 
-test('evalStaleness=iterate_incomplete -> ⚠️ blockquote で「pr-iterate が LGTM 以外で終端」を含む', () => {
-  const body = buildDevflowSummaryBody({
-    ...BASE_INPUT,
-    evalStaleness: 'iterate_incomplete',
-  });
-  const lines = body.split('\n');
-  const warnIdx = lines.findIndex(l => l.includes('pr-iterate が LGTM 以外で終端'));
-  assert.ok(warnIdx >= 0, 'iterate_incomplete 警告文字列を含む');
-  assert.ok(lines[warnIdx].startsWith('> ⚠️'), '警告行は ⚠️ blockquote');
-});
-
 test('evalStaleness=iterate_fixed, iterateFixesApplied=2 -> ℹ️ blockquote で件数・担保済み・fix 前 tree 基準を含み stale ⚠️ は出ない', () => {
   const body = buildDevflowSummaryBody({
     ...BASE_INPUT,
@@ -972,42 +882,27 @@ test('evalStaleness=iterate_fixed, iterateFixesApplied=null -> 件数部分が�
   assert.ok(lines[infoIdx].includes('件の fix を適用して LGTM 終端'), '情報行の文言が崩れていない');
 });
 
-test('evalStaleness=none -> stale 系文字列をいずれも含まない', () => {
-  const body = buildDevflowSummaryBody({
-    ...BASE_INPUT,
-    evalStaleness: 'none',
-  });
+test.each([
+  ['none', { evalStaleness: 'none' }],
+  ['未指定', {}],
+  ['null', { evalStaleness: null }],
+])('evalStaleness=%s -> stale 系文字列をいずれも含まない', (_name, input) => {
+  const body = buildDevflowSummaryBody({ ...BASE_INPUT, ...input });
   assert.ok(!body.includes('Evaluate は古い tree に対して実行された'), 'hash_mismatch 警告を含まない');
   assert.ok(!body.includes('pr-iterate が LGTM 以外で終端'), 'iterate_incomplete 警告を含まない');
   assert.ok(!body.includes('件の fix を適用して LGTM 終端'), 'iterate_fixed 情報行を含まない');
 });
 
-test('evalStaleness 未指定 -> stale 系文字列をいずれも含まない', () => {
-  const body = buildDevflowSummaryBody({
-    ...BASE_INPUT,
-  });
-  assert.ok(!body.includes('Evaluate は古い tree に対して実行された'), 'hash_mismatch 警告を含まない');
-  assert.ok(!body.includes('pr-iterate が LGTM 以外で終端'), 'iterate_incomplete 警告を含まない');
-  assert.ok(!body.includes('件の fix を適用して LGTM 終端'), 'iterate_fixed 情報行を含まない');
-});
-
-test('evalStaleness=null -> stale 系文字列をいずれも含まない', () => {
-  const body = buildDevflowSummaryBody({
-    ...BASE_INPUT,
-    evalStaleness: null,
-  });
-  assert.ok(!body.includes('Evaluate は古い tree に対して実行された'), 'hash_mismatch 警告を含まない');
-  assert.ok(!body.includes('pr-iterate が LGTM 以外で終端'), 'iterate_incomplete 警告を含まない');
-  assert.ok(!body.includes('件の fix を適用して LGTM 終端'), 'iterate_fixed 情報行を含まない');
-});
-
-test('evalStaleness=bogus -> out-of-enum は validation error', () => {
+// out-of-enum は validation error（evalStaleness は hash_reconverged、finalReconcile は ci_verified を足した後も閉じた enum のまま）
+test.each([
+  { field: 'evalStaleness', value: 'bogus' },
+  { field: 'finalReconcile', value: 'bogus' },
+  { field: 'finalReconcile', value: 'bogus2' },
+  { field: 'finalAcReconcile', value: 'stale' },
+])('$field=$value -> out-of-enum は validation error', ({ field, value }) => {
   assert.throws(() => {
-    buildDevflowSummaryBody({
-      ...BASE_INPUT,
-      evalStaleness: 'bogus',
-    });
-  }, /invalid evalStaleness/);
+    buildDevflowSummaryBody({ ...BASE_INPUT, [field]: value });
+  }, new RegExp(`invalid ${field}`));
 });
 
 // ─── issue #631 ────────────────────────────────────────────────────────────
@@ -1114,15 +1009,6 @@ test('evalStaleness=hash_reconverged -> 警告行が at-a-glance テーブルよ
   assert.ok(infoIdx > tableRowIdx, 'ℹ️ 行はテーブル行より後');
   assert.ok(infoIdx < youDoIdx, 'ℹ️ 行は「あなたがやること」より前');
   assert.equal(lines[tableRowIdx + 1], '', 'テーブル直後は空行');
-});
-
-test('evalStaleness=bogus は hash_reconverged 追加後も invalid throw を維持する', () => {
-  assert.throws(() => {
-    buildDevflowSummaryBody({
-      ...BASE_INPUT,
-      evalStaleness: 'bogus',
-    });
-  }, /invalid evalStaleness/);
 });
 
 test('evalStaleness=hash_reconverged は enum 検証で throw しない', () => {
@@ -1369,55 +1255,28 @@ test('checked=true の ENV item でも「### ⚠️ 要対応」テーブルに�
 
 // ─── Final reconcile 表示 (issue #320) ───────────────────────────────────────
 
-test('finalReconcile 未指定（既存 BASE_INPUT） -> 本文に「Final reconcile」文字列を含まない', () => {
-  const body = buildDevflowSummaryBody({ ...BASE_INPUT });
-  assert.ok(!body.includes('Final reconcile'), 'finalReconcile 未指定時は Final reconcile 行を出さない');
+const finalReconcileLine = (body) => body.split('\n').find(l => l.startsWith('- Final reconcile'));
+
+test.each([
+  ['未指定（既存 BASE_INPUT）', {}],
+  ['skipped', { finalReconcile: 'skipped', finalTestGreen: null }],
+])('finalReconcile %s -> 本文に「Final reconcile」文字列を含まない', (_name, input) => {
+  const body = buildDevflowSummaryBody({ ...BASE_INPUT, ...input });
+  assert.ok(!body.includes('Final reconcile'), 'Final reconcile 行を出さない');
 });
 
-test('finalReconcile=skipped -> 本文に「Final reconcile」文字列を含まない', () => {
-  const body = buildDevflowSummaryBody({
-    ...BASE_INPUT,
-    finalReconcile: 'skipped',
-    finalTestGreen: null,
-  });
-  assert.ok(!body.includes('Final reconcile'), 'finalReconcile=skipped でも Final reconcile 行を出さない');
-});
-
-test('finalReconcile=reverified, finalTestGreen=true -> 「- Final reconcile」行に「✅ green」を含む', () => {
-  const body = buildDevflowSummaryBody({
-    ...BASE_INPUT,
-    finalReconcile: 'reverified',
-    finalTestGreen: true,
-  });
-  const lines = body.split('\n');
-  const line = lines.find(l => l.startsWith('- Final reconcile'));
+// finalReconcile × finalTestGreen ごとに「- Final reconcile」行が含む / 含まない表示
+test.each([
+  { finalReconcile: 'reverified', finalTestGreen: true, includes: ['reverified', '✅ green'], excludes: [] },
+  { finalReconcile: 'reverified', finalTestGreen: false, includes: ['❌ red'], excludes: [] },
+  { finalReconcile: 'unavailable', finalTestGreen: null, includes: ['不明'], excludes: [] },
+  // issue #599: ci_verified は test を CI へ委譲した結果なので「不明」ではなく CI 委譲と表示する
+  { finalReconcile: 'ci_verified', finalTestGreen: null, includes: ['ci_verified', 'CI 委譲'], excludes: ['不明'] },
+])('finalReconcile=$finalReconcile, finalTestGreen=$finalTestGreen -> 「- Final reconcile」行の表示', ({ finalReconcile, finalTestGreen, includes, excludes }) => {
+  const line = finalReconcileLine(buildDevflowSummaryBody({ ...BASE_INPUT, finalReconcile, finalTestGreen }));
   assert.ok(line, 'Final reconcile 行を含む');
-  assert.ok(line.includes('reverified'), 'finalReconcile 値を含む');
-  assert.ok(line.includes('✅ green'), 'finalTestGreen=true -> ✅ green を含む');
-});
-
-test('finalReconcile=reverified, finalTestGreen=false -> 「❌ red」を含む', () => {
-  const body = buildDevflowSummaryBody({
-    ...BASE_INPUT,
-    finalReconcile: 'reverified',
-    finalTestGreen: false,
-  });
-  const lines = body.split('\n');
-  const line = lines.find(l => l.startsWith('- Final reconcile'));
-  assert.ok(line, 'Final reconcile 行を含む');
-  assert.ok(line.includes('❌ red'), 'finalTestGreen=false -> ❌ red を含む');
-});
-
-test('finalReconcile=unavailable, finalTestGreen=null -> 「不明」を含む', () => {
-  const body = buildDevflowSummaryBody({
-    ...BASE_INPUT,
-    finalReconcile: 'unavailable',
-    finalTestGreen: null,
-  });
-  const lines = body.split('\n');
-  const line = lines.find(l => l.startsWith('- Final reconcile'));
-  assert.ok(line, 'Final reconcile 行を含む');
-  assert.ok(line.includes('不明'), 'finalTestGreen=null -> 不明を含む');
+  for (const s of includes) assert.ok(line.includes(s), `「${s}」を含む: ${line}`);
+  for (const s of excludes) assert.ok(!line.includes(s), `「${s}」を含まない: ${line}`);
 });
 
 test('finalUiVerify 付与 -> 「, final ui-verify: findings」を含む', () => {
@@ -1442,71 +1301,24 @@ test('finalUiVerify 未指定 -> 「final ui-verify」文字列を含まない',
   assert.ok(!body.includes('final ui-verify'), 'finalUiVerify 未指定時は final ui-verify を含まない');
 });
 
-test('finalReconcile=bogus -> out-of-enum は validation error', () => {
-  assert.throws(() => {
-    buildDevflowSummaryBody({
-      ...BASE_INPUT,
-      finalReconcile: 'bogus',
-    });
-  }, /invalid finalReconcile/);
-});
+// （finalReconcile の out-of-enum は上の validation error 表）
 
-// ─── finalReconcile='ci_verified' 表示 (issue #599) ──────────────────────────
+// ─── Final AC reconcile 表示 (issue #331。ci_verified は issue #599) ─────────
 
-test('finalReconcile=ci_verified, finalTestGreen=null -> 「Final reconcile」行に「ci_verified」と「CI 委譲」を含み「不明」を含まない', () => {
+test.each([
+  { finalReconcile: 'reverified', finalTestGreen: true },
+  { finalReconcile: 'ci_verified', finalTestGreen: null },
+])('finalReconcile=$finalReconcile, finalAcReconcile=reverified -> 「, final AC: reverified」と再検証済み注記を含み stale 注記は出ない', ({ finalReconcile, finalTestGreen }) => {
   const body = buildDevflowSummaryBody({
     ...BASE_INPUT,
-    finalReconcile: 'ci_verified',
-    finalTestGreen: null,
-  });
-  const lines = body.split('\n');
-  const line = lines.find(l => l.startsWith('- Final reconcile'));
-  assert.ok(line, 'Final reconcile 行を含む');
-  assert.ok(line.includes('ci_verified'), 'finalReconcile 値を含む');
-  assert.ok(line.includes('CI 委譲'), 'ci_verified 時は CI 委譲文言を含む');
-  assert.ok(!line.includes('不明'), 'ci_verified 時は不明を含まない');
-});
-
-test('finalReconcile=ci_verified + finalAcReconcile=reverified -> 「, final AC: reverified」と再検証済み注記を含む', () => {
-  const body = buildDevflowSummaryBody({
-    ...BASE_INPUT,
-    finalReconcile: 'ci_verified',
-    finalTestGreen: null,
+    finalReconcile,
+    finalTestGreen,
     finalAcReconcile: 'reverified',
     acResults: [
       { ac_index: 0, satisfied: true, evidence: 'ok', verified_by: 'evaluator' },
     ],
   });
-  const lines = body.split('\n');
-  const line = lines.find(l => l.startsWith('- Final reconcile'));
-  assert.ok(line, 'Final reconcile 行を含む');
-  assert.ok(line.includes(', final AC: reverified'), 'final AC 部分を含む');
-  assert.ok(body.includes('✅ AC は最終 PR tree で再検証済み'), '再検証済み注記を含む');
-});
-
-test('finalReconcile=bogus2 -> out-of-enum は不変（ci_verified 追加後も回帰なし）', () => {
-  assert.throws(() => {
-    buildDevflowSummaryBody({
-      ...BASE_INPUT,
-      finalReconcile: 'bogus2',
-    });
-  }, /invalid finalReconcile/);
-});
-
-// ─── Final AC reconcile 表示 (issue #331) ────────────────────────────────────
-
-test('finalReconcile=reverified, finalAcReconcile=reverified -> 「, final AC: reverified」と再検証済み注記を含む', () => {
-  const body = buildDevflowSummaryBody({
-    ...BASE_INPUT,
-    finalReconcile: 'reverified',
-    finalTestGreen: true,
-    finalAcReconcile: 'reverified',
-    acResults: [
-      { ac_index: 0, satisfied: true, evidence: 'ok', verified_by: 'evaluator' },
-    ],
-  });
-  const lines = body.split('\n');
-  const line = lines.find(l => l.startsWith('- Final reconcile'));
+  const line = finalReconcileLine(body);
   assert.ok(line, 'Final reconcile 行を含む');
   assert.ok(line.includes(', final AC: reverified'), 'final AC 部分を含む');
   assert.ok(body.includes('✅ AC は最終 PR tree で再検証済み'), '再検証済み注記を含む');
@@ -1551,14 +1363,7 @@ test('finalReconcile 未指定（fix 非適用）+ finalAcReconcile=skipped -> �
   assert.ok(!body.includes('✅ AC は最終 PR tree で再検証済み'), '再検証済み注記も出ない');
 });
 
-test('finalAcReconcile=stale -> out-of-enum は validation error', () => {
-  assert.throws(() => {
-    buildDevflowSummaryBody({
-      ...BASE_INPUT,
-      finalAcReconcile: 'stale',
-    });
-  }, /invalid finalAcReconcile/);
-});
+// （finalAcReconcile の out-of-enum は上の validation error 表）
 
 // ─── TESTSURF (test-weakening) 表示 (issue #362) ─────────────────────────────
 
@@ -1913,7 +1718,7 @@ test('description に | と改行を含む finding -> mdCell でエスケープ�
 });
 
 // 呼び出し側（dev-flow.js）の iterateStatus / iterateHistory / iterateIterations 配線は
-// plan-iterate-wiring-routing.test.mjs (a) が VM 挙動で検証する（issue #636）。
+// empty-diff-evaluate-routing.test.mjs (P-3) が VM 挙動で検証する（issue #636）。
 
 // ─── 解消済み証跡の件数縮約 (issue #603) ─────────────────────────────────────
 
@@ -2270,57 +2075,26 @@ function glanceCells(body) {
   return glanceRow(body).split('|').slice(1, -1).map((s) => s.trim());
 }
 
-// AC1: finalReconcile='ci_verified' はテスト列を CI 表記へ統一する（testGreen の値に関わらず）。
-test('issue #625 AC1: finalReconcile=ci_verified かつ testGreen=false でも ✅ green (CI)', () => {
-  const body = buildDevflowSummaryBody({ ...BASE_INPUT, finalReconcile: 'ci_verified', testGreen: false });
-  assert.equal(glanceCells(body)[2], '✅ green (CI)');
-});
-
-test('issue #625 AC1: finalReconcile=ci_verified かつ testGreen=true でも ✅ green (CI)', () => {
-  const body = buildDevflowSummaryBody({ ...BASE_INPUT, finalReconcile: 'ci_verified', testGreen: true });
-  assert.equal(glanceCells(body)[2], '✅ green (CI)');
-});
-
-test('issue #625 AC1: finalReconcile=ci_verified かつ testGreen=null でも ✅ green (CI)', () => {
-  const body = buildDevflowSummaryBody({ ...BASE_INPUT, finalReconcile: 'ci_verified', testGreen: null });
-  assert.equal(glanceCells(body)[2], '✅ green (CI)');
-});
-
-// AC2: finalReconcile='reverified' は finalTestGreen（最終 tree の再検証結果）を優先する。
-test('issue #625 AC2: finalReconcile=reverified, finalTestGreen=true, testGreen=false → ✅ green', () => {
-  const body = buildDevflowSummaryBody({ ...BASE_INPUT, finalReconcile: 'reverified', finalTestGreen: true, testGreen: false });
-  assert.equal(glanceCells(body)[2], '✅ green');
-});
-
-test('issue #625 AC2: finalReconcile=reverified, finalTestGreen=false, testGreen=true → ❌ red', () => {
-  const body = buildDevflowSummaryBody({ ...BASE_INPUT, finalReconcile: 'reverified', finalTestGreen: false, testGreen: true });
-  assert.equal(glanceCells(body)[2], '❌ red');
-});
-
-test('issue #625 AC2: finalReconcile=reverified, finalTestGreen=null → 不明（5c の Final reconcile 行と同じ表現）', () => {
-  const body = buildDevflowSummaryBody({ ...BASE_INPUT, finalReconcile: 'reverified', finalTestGreen: null, testGreen: true });
-  assert.equal(glanceCells(body)[2], '不明');
-});
-
-test('issue #625 AC2: finalReconcile=skipped は testGreen そのまま', () => {
-  const bodyRed = buildDevflowSummaryBody({ ...BASE_INPUT, finalReconcile: 'skipped', testGreen: false });
-  assert.equal(glanceCells(bodyRed)[2], '❌ red');
-  const bodyGreen = buildDevflowSummaryBody({ ...BASE_INPUT, finalReconcile: 'skipped', testGreen: true });
-  assert.equal(glanceCells(bodyGreen)[2], '✅ green');
-});
-
-test('issue #625 AC2: finalReconcile=unavailable は testGreen そのまま（finalTestGreen=null でも影響しない）', () => {
-  const bodyRed = buildDevflowSummaryBody({ ...BASE_INPUT, finalReconcile: 'unavailable', finalTestGreen: null, testGreen: false });
-  assert.equal(glanceCells(bodyRed)[2], '❌ red');
-  const bodyGreen = buildDevflowSummaryBody({ ...BASE_INPUT, finalReconcile: 'unavailable', finalTestGreen: null, testGreen: true });
-  assert.equal(glanceCells(bodyGreen)[2], '✅ green');
-  const bodyUnknown = buildDevflowSummaryBody({ ...BASE_INPUT, finalReconcile: 'unavailable', finalTestGreen: null, testGreen: null });
-  assert.equal(glanceCells(bodyUnknown)[2], '不明');
-});
-
-test('issue #625: finalReconcile 未指定は既存挙動不変（testGreen=false → ❌ red）', () => {
-  const body = buildDevflowSummaryBody({ ...BASE_INPUT, testGreen: false });
-  assert.equal(glanceCells(body)[2], '❌ red');
+// テスト列（glanceCells[2]）の表示を finalReconcile × finalTestGreen × testGreen の表で見る:
+//   AC1: finalReconcile='ci_verified' は testGreen の値に関わらず CI 表記へ統一する
+//   AC2: finalReconcile='reverified' は finalTestGreen（最終 tree の再検証結果）を優先する
+//        （finalTestGreen=null は 5c の Final reconcile 行と同じ「不明」）。skipped / unavailable / 未指定は testGreen そのまま
+test.each([
+  { name: 'AC1: ci_verified かつ testGreen=false', input: { finalReconcile: 'ci_verified', testGreen: false }, want: '✅ green (CI)' },
+  { name: 'AC1: ci_verified かつ testGreen=true', input: { finalReconcile: 'ci_verified', testGreen: true }, want: '✅ green (CI)' },
+  { name: 'AC1: ci_verified かつ testGreen=null', input: { finalReconcile: 'ci_verified', testGreen: null }, want: '✅ green (CI)' },
+  { name: 'AC2: reverified, finalTestGreen=true, testGreen=false', input: { finalReconcile: 'reverified', finalTestGreen: true, testGreen: false }, want: '✅ green' },
+  { name: 'AC2: reverified, finalTestGreen=false, testGreen=true', input: { finalReconcile: 'reverified', finalTestGreen: false, testGreen: true }, want: '❌ red' },
+  { name: 'AC2: reverified, finalTestGreen=null, testGreen=true', input: { finalReconcile: 'reverified', finalTestGreen: null, testGreen: true }, want: '不明' },
+  { name: 'AC2: skipped, testGreen=false', input: { finalReconcile: 'skipped', testGreen: false }, want: '❌ red' },
+  { name: 'AC2: skipped, testGreen=true', input: { finalReconcile: 'skipped', testGreen: true }, want: '✅ green' },
+  { name: 'AC2: unavailable, finalTestGreen=null, testGreen=false', input: { finalReconcile: 'unavailable', finalTestGreen: null, testGreen: false }, want: '❌ red' },
+  { name: 'AC2: unavailable, finalTestGreen=null, testGreen=true', input: { finalReconcile: 'unavailable', finalTestGreen: null, testGreen: true }, want: '✅ green' },
+  { name: 'AC2: unavailable, finalTestGreen=null, testGreen=null', input: { finalReconcile: 'unavailable', finalTestGreen: null, testGreen: null }, want: '不明' },
+  { name: '未指定（既存挙動不変）, testGreen=false', input: { testGreen: false }, want: '❌ red' },
+])('issue #625 $name → テスト列は $want', ({ input, want }) => {
+  const body = buildDevflowSummaryBody({ ...BASE_INPUT, ...input });
+  assert.equal(glanceCells(body)[2], want);
 });
 
 // AC3: evalVerdict='fail' は evalStaleness/iterateStatus/finalAcReconcile の 4 条件 AND が

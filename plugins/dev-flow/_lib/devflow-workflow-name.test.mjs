@@ -8,7 +8,7 @@
 //   (a) meta.name === 'dev-flow-run'（`export const meta` はハーネスが読む pure literal で VM 返り値に
 //       現れないため、リテラル本体を vm で評価し declared name を観測する。issue #636）
 //   (b) 旧 meta 名 `name: 'dev-flow',`（完全一致文字列）が存在しないこと（否定 pin）
-//   (c) VM 挙動: success / empty-diff failure / abort の 3 run いずれも journal-log 系 prompt の
+//   (c) VM 挙動: success / abort の 2 run（empty-diff failure は devflow-failure-telemetry-routing.test.mjs (3)）で journal-log 系 prompt の
 //       telemetry JSON が `"skill":"dev-flow"` を含む（集計連続性 invariant を挙動で pin。
 //       abort run はさらに `"error_category":"abort"` も含む）
 //   (d) .claude/workflows/ 配下の全 *.js に workflow('dev-flow') 形式の nested 呼び出しが
@@ -70,26 +70,8 @@ test('[workflow-name] VM: 成功 run の journal-log prompt JSON が "skill":"de
   );
 });
 
-test('[workflow-name] VM: empty-diff 失敗 run の journal-log 系 prompt JSON が "skill":"dev-flow" を含む', async () => {
-  const { ctx, calls } = makeDevFlowSandbox({
-    overrides: {
-      'diff-gate': { hash: 'H', empty: true },
-      'diff-gate-retry': { hash: 'H', empty: true },
-      'issue-labels': null,
-    },
-  });
-  const { error } = await runWorkflowCapture(devFlowSrc, ctx);
-  // empty-diff gate は 1 回の差し戻し後も空 diff なら throw する（fail-fast、issue #215）。
-  // writeFailureTelemetry（journal-log 呼び出し）は throw の直前に実行済みなので calls に残る。
-  assert.ok(error !== null, 'empty-diff 失敗 run は throw するはずだが error が null だった');
-
-  const journalSave = calls.find((c) => c.label.startsWith('journal-log'));
-  assert.ok(journalSave != null, 'empty-diff 失敗 run に journal-log の call が見つからない');
-  assert.ok(
-    journalSave.prompt.includes('"skill":"dev-flow"'),
-    `empty-diff 失敗 run の journal-log prompt に '"skill":"dev-flow"' が含まれない。\nprompt (先頭800文字): ${journalSave.prompt.slice(0, 800)}`,
-  );
-});
+// empty-diff 失敗 run（writeFailureTelemetry）の "skill":"dev-flow" は
+// devflow-failure-telemetry-routing.test.mjs (3) の共有 run が検査する。
 
 test('[workflow-name] VM: abort run の journal-log 系 prompt JSON が "skill":"dev-flow" かつ "error_category":"abort" を含む', async () => {
   // need() で包まれた evaluator（'eval#1'）の throw は top-level catch で abort handoff 後に rethrow される。

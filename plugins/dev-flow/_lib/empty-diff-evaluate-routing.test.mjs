@@ -338,3 +338,34 @@ test('[empty-diff] (P-2) status=lgtm + fixes_applied=0 + hash 一致 → merge_t
   assert.ok(returned !== null, '(P-2) return object を返すべき');
   assert.strictEqual(returned?.merge_tier, 'REVIEW', `(P-2) status=lgtm + hash 一致なら merge_tier==='REVIEW' のはずだが ${JSON.stringify(returned?.merge_tier)}`);
 });
+
+// (P-3) pr-iterate 非 LGTM 終端の history が post-summary へ配線される（iterateHistory / iterateIterations の配線切れ検出）
+test('[empty-diff] (P-3) iterate status=fix_failed + history → HOLD / iterate_incomplete、post-summary に HOLD marker と history 末尾 round の file パス', async () => {
+  const history = [{
+    iteration: 3,
+    decision: 'request_changes',
+    summary: 's',
+    blocking: [{ severity: 'major', topic: 't', file: 'src/wired-by-history.ts', line: 7, description: 'd', suggestion: null }],
+    minor: [],
+  }];
+  const { ctx, calls } = makeCountingSandbox(STANDARD_REQ, {
+    gateEmpty: false,
+    evalHash: 'AAA',
+    prHash: 'AAA',
+    iterateResult: { status: 'fix_failed', iterations: 3, fixes_applied: 1, history },
+  });
+  const { error, returned } = await runDevFlowInSandbox(src, ctx);
+  if (error && (error.name === 'ReferenceError' || error.name === 'SyntaxError')) assert.fail(`dev-flow.js crash: ${error.name}: ${error.message}`);
+  if (error) assert.fail(`(P-3) 想定外エラー: ${error.message}`);
+  assert.ok(returned !== null, '(P-3) return object を返すべき');
+  assert.strictEqual(returned?.iterate_status, 'fix_failed');
+  assert.strictEqual(returned?.eval_staleness, 'iterate_incomplete', `(P-3) eval_staleness: ${JSON.stringify(returned?.eval_staleness)}`);
+  assert.strictEqual(returned?.merge_tier, 'HOLD', `(P-3) merge_tier: ${JSON.stringify(returned?.merge_tier)}`);
+  assert.ok((returned?.merge_tier_reasons ?? []).some((r) => r.includes('fix_failed')), `(P-3) merge_tier_reasons に iterate status を含む理由が無い: ${JSON.stringify(returned?.merge_tier_reasons)}`);
+  const journalCall = calls.find((c) => c.label === 'journal-log');
+  assert.ok(journalCall?.prompt?.includes('"iterate_status":"fix_failed"'), `(P-3) telemetry に iterate_status が無い: ${journalCall?.prompt?.slice(0, 500)}`);
+  const post = calls.find((c) => c.label === 'post-summary');
+  assert.ok(post, '(P-3) post-summary が呼ばれていない');
+  assert.ok(post.prompt.includes('<!-- dev-flow:HOLD -->'), '(P-3) post-summary に HOLD marker が無い');
+  assert.ok(post.prompt.includes('src/wired-by-history.ts'), '(P-3) post-summary に iterateHistory 末尾 round の file パスが無い（iterateHistory / iterateIterations の配線切れ）');
+});

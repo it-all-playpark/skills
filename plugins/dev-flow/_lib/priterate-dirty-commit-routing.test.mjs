@@ -5,72 +5,25 @@
 //   - status !== 'lgtm' の終端でのみ、worktree-dirty-check（--check-only）の advisory probe を実行する。
 //     probe 失敗は fail-open（'unknown' + 警告のみ）。lgtm 終端では probe しない（agent 呼び出し追加ゼロ）。
 //
-// vm sandbox パターンは _lib/priterate-review-contract-routing.test.mjs と同一構造。
+// harness は test-helpers/vm-sandbox.mjs の makePrIterateSandbox / runWorkflowCapture。round 系 call の応答だけを
+// buildAgentStub の rounds で返し、それ以外は pr-iterate 単体起動の既定 responder に任せる。
 
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import vm from 'node:vm';
+import { makePrIterateSandbox, runWorkflowCapture } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const repoRoot = join(here, '..');
-const prIteratePath = join(repoRoot, '.claude/workflows/pr-iterate.js');
-const src = readFileSync(prIteratePath, 'utf8');
+const src = readFileSync(join(here, '..', '.claude/workflows/pr-iterate.js'), 'utf8');
 
-/**
- * pr-iterate.js を vm sandbox で実行するための context を作る。
- * agentStub は呼び出しごとに { label, agentType, prompt } を agentCalls に記録する。
- */
-function makeSandbox(agentStub) {
-  const sandbox = {
-    phase: () => {},
-    log: () => {},
-    agent: agentStub,
-    parallel: async (fns) => Promise.all((fns || []).map((f) => f())),
-    workflow: async () => ({ status: 'lgtm' }),
-    args: '5',
-    console,
-    JSON,
-    Math,
-    String,
-    Number,
-    Boolean,
-    Array,
-    Object,
-    Error,
-    RegExp,
-    Promise,
-    Symbol,
-    Map,
-    Set,
-    Date,
-  };
-  return vm.createContext(sandbox);
+/** buildAgentStub の戻り値（rounds と記録先 agentCalls）から pr-iterate.js の vm context を作る。 */
+function makeSandbox({ rounds, agentCalls }) {
+  return makePrIterateSandbox({ rounds, calls: agentCalls }).ctx;
 }
 
-async function runPrIterate(ctx) {
-  const stripped = src
-    .replace(/^export\s+const\s+/gm, 'const ')
-    .replace(/^export\s+function\s+/gm, 'function ');
-  const wrapped = `(async () => {\n${stripped}\n})();`;
-
-  let caughtError = null;
-  let resolvedResult = null;
-  try {
-    const resultPromise = vm.runInContext(wrapped, ctx, { filename: '.claude/workflows/pr-iterate.js' });
-    if (resultPromise && typeof resultPromise.then === 'function') {
-      resolvedResult = await resultPromise.catch((e) => {
-        caughtError = e;
-        return null;
-      });
-    }
-  } catch (e) {
-    caughtError = e;
-  }
-  return { result: resolvedResult, error: caughtError };
-}
+const runPrIterate = (ctx) => runWorkflowCapture(src, ctx, '.claude/workflows/pr-iterate.js');
 
 function assertNoSandboxCrash(error) {
   if (error && (error.name === 'ReferenceError' || error.name === 'SyntaxError')) {
@@ -79,7 +32,7 @@ function assertNoSandboxCrash(error) {
 }
 
 /**
- * agentCalls を記録しつつ分岐する共通 agentStub ファクトリ。
+ * round 系 call の応答を label で分岐する rounds と、呼び出しの記録先 agentCalls を返す。
  * reviewerStub(label) -> review result（pr-reviewer 呼び出しごとに呼ばれる）
  * ciStub(label) -> CI status result（省略時は常に passed）
  * fixStub(label) -> fix result（省略時は常に applied:true）
@@ -87,16 +40,11 @@ function assertNoSandboxCrash(error) {
  * dirtyCheckStub(label) -> worktree-dirty-check（--check-only）result（省略時は未 stub 扱い＝null、fail-open）
  */
 function buildAgentStub({ reviewerStub, ciStub, fixStub, commitEnsureStub, dirtyCheckStub, agentCalls }) {
-  return async (prompt, opts) => {
-    const label = opts?.label ?? '';
-    const agentType = opts?.agentType ?? '';
-    const promptStr = typeof prompt === 'string' ? prompt : JSON.stringify(prompt);
-    agentCalls.push({ label, agentType, prompt: promptStr });
-
+  const rounds = ({ label, agentType, prompt }) => {
     if (agentType === 'dev-flow:pr-reviewer') {
       return reviewerStub(label);
     }
-    if (agentType === 'dev-flow:dev-runner-haiku-ro' && promptStr.includes('check-ci --checks-data')) {
+    if (agentType === 'dev-flow:dev-runner-haiku-ro' && prompt.includes('check-ci --checks-data')) {
       return ciStub ? ciStub(label) : { status: 'passed', passed: 1, failed: 0, pending: 0, skipped: 0, failed_checks: [] };
     }
     if (label.startsWith('fix#')) {
@@ -108,22 +56,9 @@ function buildAgentStub({ reviewerStub, ciStub, fixStub, commitEnsureStub, dirty
     if (label === 'worktree-dirty-check') {
       return dirtyCheckStub ? dirtyCheckStub(label) : null;
     }
-    if (label.startsWith('post-')) {
-      return { posted: true, method: 'gh', url: 'http://x' };
-    }
-    // journal-save (stage1, issue #494): 実際の telemetry payload はここに載る
-    if (label === 'journal-save') {
-      return { saved: true, path: '/tmp/wt/.devflow-tmp/payload-test.json' };
-    }
-    if (label === 'journal-log') {
-      return { logged: true, summary: 'ok' };
-    }
-    // pr-meta: cwd は実 run では常に worktree の絶対パス。journal-save の保存先はここから組み立てられる。
-    if (label === 'pr-meta') {
-      return { url: 'https://github.com/acme/skills/pull/5', cwd: '/tmp/wt' };
-    }
-    return null;
+    return undefined;
   };
+  return { rounds, agentCalls };
 }
 
 // ---- D1 [AC-3]: commit-ensure が dirty:false（正常ケース）-> no-op で継続、lgtm ----

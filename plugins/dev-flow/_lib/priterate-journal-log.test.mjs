@@ -7,117 +7,34 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import vm from 'node:vm';
+import { makePrIterateSandbox, runWorkflowCapture } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const repoRoot = join(here, '..');
-const prIteratePath = join(repoRoot, '.claude/workflows/pr-iterate.js');
+const src = readFileSync(join(here, '..', '.claude/workflows/pr-iterate.js'), 'utf8');
 
+// harness は test-helpers/vm-sandbox.mjs の makePrIterateSandbox。journal-log の応答だけを差し替える:
+// payload を pending/ へ直接書く 1 spawn（issue #807）。journalResult が Error なら throw する
+// （schema 不一致・proxy 実行失敗の再現）。pr-meta は repo probe（issue #309）の最小応答（epoch なし）。
 function makeSandbox(journalResult) {
-  let journalCallCount = 0;
-  let capturedPrompt = null;
-  const labels = [];
-
-  const agentStub = async (prompt, opts) => {
-    const label = opts?.label ?? '';
-    const agentType = opts?.agentType ?? '';
-    labels.push(label);
-
-    // pr-reviewer: 1 round で LGTM へ
-    if (agentType === 'dev-flow:pr-reviewer') {
-      return { decision: 'approve', issues: [], summary: 'ok' };
-    }
-
-    // CI チェック: agentType 'dev-runner-haiku-ro' かつ prompt に 'check-ci.sh' を含む
-    if (agentType === 'dev-flow:dev-runner-haiku-ro' && typeof prompt === 'string' && prompt.includes('check-ci --checks-data')) {
-      return { status: 'passed', passed: 1, failed: 0, pending: 0, skipped: 0, failed_checks: [] };
-    }
-
-    // 投稿系: label が 'post-' で始まる
-    if (label.startsWith('post-')) {
-      return { posted: true, method: 'gh', url: 'http://x' };
-    }
-
-    // pr-meta: repo probe（F3。issue #309）
-    if (label === 'pr-meta' && agentType === 'dev-flow:dev-runner-haiku-ro') {
-      return { url: 'https://github.com/acme/skills/pull/5', cwd: '/tmp/wt' };
-    }
-
-    // journal-log: 実際の telemetry payload はここに載り、pending/ へ直接書く 1 spawn（issue #807）。
-    // journalResult が Error なら throw する（schema 不一致・proxy 実行失敗の再現）。
-    if (label === 'journal-log' && agentType === 'dev-flow:dev-runner-haiku') {
-      journalCallCount += 1;
-      capturedPrompt = typeof prompt === 'string' ? prompt : null;
-      if (journalResult instanceof Error) throw journalResult;
-      return journalResult;
-    }
-
-    // デフォルト
-    return null;
-  };
-
-  // parallel() stub（pr-iterate では不要だが入れても無害）
-  const parallelStub = async (fns) => Promise.all((fns || []).map((f) => f()));
-
-  // workflow() stub（pr-iterate では不要だが入れても無害）
-  const workflowStub = async () => ({ status: 'lgtm' });
-
-  const sandbox = {
-    phase: () => {},
-    log: () => {},
-    agent: agentStub,
-    parallel: parallelStub,
-    workflow: workflowStub,
-    args: '5',
-    console,
-    JSON,
-    Math,
-    String,
-    Number,
-    Boolean,
-    Array,
-    Object,
-    Error,
-    RegExp,
-    Promise,
-    Symbol,
-    Map,
-    Set,
-    Date,
-  };
-
-  const ctx = vm.createContext(sandbox);
+  const { ctx, calls } = makePrIterateSandbox({
+    overrides: {
+      'pr-meta': { url: 'https://github.com/acme/skills/pull/5', cwd: '/tmp/wt' },
+      'journal-log': () => {
+        if (journalResult instanceof Error) throw journalResult;
+        return journalResult;
+      },
+    },
+  });
+  const journalCalls = () => calls.filter((c) => c.label === 'journal-log' && c.agentType === 'dev-flow:dev-runner-haiku');
   return {
     ctx,
-    getJournalCallCount: () => journalCallCount,
-    getCapturedPrompt: () => capturedPrompt,
-    getLabels: () => labels,
+    getJournalCallCount: () => journalCalls().length,
+    getCapturedPrompt: () => journalCalls().at(-1)?.prompt ?? null,
+    getLabels: () => calls.map((c) => c.label),
   };
 }
 
-async function runPrIterateCapture(src, ctx) {
-  const stripped = src
-    .replace(/^export\s+const\s+/gm, 'const ')
-    .replace(/^export\s+function\s+/gm, 'function ');
-  const wrapped = `(async () => {\n${stripped}\n})();`;
-
-  let caughtError = null;
-  let resolvedResult = null;
-  try {
-    const resultPromise = vm.runInContext(wrapped, ctx, { filename: '.claude/workflows/pr-iterate.js' });
-    if (resultPromise && typeof resultPromise.then === 'function') {
-      resolvedResult = await resultPromise.catch((e) => {
-        caughtError = e;
-        return null;
-      });
-    }
-  } catch (e) {
-    caughtError = e;
-  }
-  return { result: resolvedResult, error: caughtError };
-}
-
-const src = readFileSync(prIteratePath, 'utf8');
+const runPrIterateCapture = (source, ctx) => runWorkflowCapture(source, ctx, '.claude/workflows/pr-iterate.js');
 
 test('[journal-log] journalResult={saved:true, logged:true} で完走 → journal-log が 1 spawn だけ呼ばれ、payload と pending パスを含み、result.status === lgtm', async () => {
   const journalResult = { saved: true, logged: true };
@@ -260,11 +177,5 @@ test('[journal-log] journal-log が throw した場合 result.journal_log_status
   );
 });
 
-// inline 区間整合: journal handoff の choreography は canonical（_lib/journal-handoff.mjs）の inline 区間にのみ
-// 存在し、call site 側に手写しが残っていないこと（否定 pin）。call site の label（journal-log）と
-// handoff の挙動は上の VM テストと exec-proxy-routing.test.mjs が観測する。
-test('[journal-log] inline 整合: pr-iterate.js の inline 区間外に journal handoff choreography の手写しが残っていない', () => {
-  const anchor = src.indexOf('==== END inline: _lib/journal-handoff.mjs ====');
-  assert.ok(anchor >= 0, 'journal-handoff inline END marker が見つからない');
-  assert.equal(src.indexOf("let journalLogStatus = 'save_failed'", anchor + 1), -1, 'inline 区間外に手写し choreography（journalLogStatus 初期化）が残っている');
-});
+// inline 区間外に journal handoff choreography の手写しが残っていないこと（否定 pin）は
+// devflow-journal-log.test.mjs が dev-flow.js / pr-iterate.js の両方を test.each で見る。

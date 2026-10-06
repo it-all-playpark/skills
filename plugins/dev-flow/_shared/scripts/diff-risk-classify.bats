@@ -4,18 +4,22 @@
 # Strategy: mktemp -d で隔離 git repo を作成し、各 danger class の陽性/陰性 diff を
 # commit してスクリプトの出力を検証する。
 #
+# 速度: base commit だけの repo と FAKE_BIN は setup_file で 1 回だけ作り、各 test は
+# その repo を cp -R で複製する (test ごとの git init / commit / which を省く)。
+# 同じ assertion を入力違いで並べる陽性群・無害変更群は、1 repo に複数ファイルを
+# 1 回 commit して 1 回の実行で hits[] をファイルごとに照合する表駆動にしている。
+#
 # Class 文字列: auth / crypto / config / data-migration / public-api / exec-sink /
 # dependency / test-weakening (issue #361/#362 spike -- 8th class, has an optional
 # "pattern" sub-field: skip / only / todo / xfail / tautology / exclude-cfg)
 
-setup() {
-    SCRIPT="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd)/_shared/scripts/diff-risk-classify.sh"
-    REPO="$(mktemp -d)"
-    git -C "$REPO" init -q
-    git -C "$REPO" config user.email t@t
-    git -C "$REPO" config user.name t
-    git -C "$REPO" commit -q --allow-empty -m base
-    BASE="$(git -C "$REPO" rev-parse HEAD)"
+setup_file() {
+    TEMPLATE_REPO="$(mktemp -d)"
+    git -C "$TEMPLATE_REPO" init -q
+    git -C "$TEMPLATE_REPO" config user.email t@t
+    git -C "$TEMPLATE_REPO" config user.name t
+    git -C "$TEMPLATE_REPO" commit -q --allow-empty -m base
+    BASE="$(git -C "$TEMPLATE_REPO" rev-parse HEAD)"
 
     # FAKE_BIN: minimal PATH containing exactly the external commands the script
     # needs (bash/git/grep/sed/cut/sort/cat/dirname/pwd), symlinked from wherever
@@ -27,6 +31,18 @@ setup() {
         real="$(/usr/bin/which -a "$c" 2>/dev/null | head -1)"
         [[ -n "$real" ]] && ln -s "$real" "$FAKE_BIN/$c"
     done
+    export TEMPLATE_REPO BASE FAKE_BIN
+}
+
+teardown_file() {
+    rm -rf "$TEMPLATE_REPO" "$FAKE_BIN"
+}
+
+setup() {
+    SCRIPT="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd)/_shared/scripts/diff-risk-classify.sh"
+    REPO="$(mktemp -d)"
+    cp -R "$TEMPLATE_REPO/." "$REPO/"
+
     # CORE_BIN_DIR: common.sh locator (issue #571) resolves playpark-core's
     # _lib/common.sh via `dirname "$(command -v journal)")/../_lib`, which only
     # works if `journal` is found at its *real* location (not a symlink into a
@@ -38,7 +54,16 @@ setup() {
 }
 
 teardown() {
-    rm -rf "$REPO" "$FAKE_BIN"
+    rm -rf "$REPO"
+}
+
+# hits[] に file × class (× pattern) の hit が 1 件以上あることを確認する。
+# 表駆動テストで、どの行が欠けたかを失敗時に出す。
+assert_hit() {
+    local file="$1" class="$2" pattern="${3:-}"
+    printf '%s\n' "$output" | jq -e --arg f "$file" --arg c "$class" --arg p "$pattern" \
+        '[.hits[] | select(.file == $f and .class == $c and ($p == "" or .pattern == $p))] | length > 0' >/dev/null \
+        || { echo "missing hit: file=$file class=$class pattern=$pattern"; echo "$output"; return 1; }
 }
 
 # ---------------------------------------------------------------------------
@@ -59,18 +84,6 @@ teardown() {
 }
 
 # ---------------------------------------------------------------------------
-# 2. auth NEGATIVE
-# ---------------------------------------------------------------------------
-@test "auth NEGATIVE: README に hello world の変更 -> 出力は []" {
-    printf 'hello world\n' > "$REPO/README.md"
-    git -C "$REPO" add -A
-    git -C "$REPO" commit -q -m change
-    run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
-    [ "$status" -eq 0 ]
-    printf '%s\n' "$output" | jq -e '.ok == true and .hits == []'
-}
-
-# ---------------------------------------------------------------------------
 # 3. crypto POSITIVE
 # ---------------------------------------------------------------------------
 @test "crypto POSITIVE: crypto.createHash を含むファイル -> class crypto の hit オブジェクトを返す" {
@@ -84,19 +97,6 @@ teardown() {
     [[ "$output" == *'"class":"crypto"'* ]]
     [[ "$output" == *'"severity":"critical"'* ]]
     printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "crypto")] | length > 0'
-}
-
-# ---------------------------------------------------------------------------
-# 4. crypto NEGATIVE
-# ---------------------------------------------------------------------------
-@test "crypto NEGATIVE: 無害な変更 -> 出力は []" {
-    mkdir -p "$REPO/src"
-    printf 'const x = 1;\n' > "$REPO/src/index.js"
-    git -C "$REPO" add -A
-    git -C "$REPO" commit -q -m change
-    run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
-    [ "$status" -eq 0 ]
-    printf '%s\n' "$output" | jq -e '.ok == true and .hits == []'
 }
 
 # ---------------------------------------------------------------------------
@@ -114,18 +114,6 @@ teardown() {
 }
 
 # ---------------------------------------------------------------------------
-# 6. config NEGATIVE
-# ---------------------------------------------------------------------------
-@test "config NEGATIVE: 無害な変更 -> 出力は []" {
-    printf 'just a comment\n' > "$REPO/notes.txt"
-    git -C "$REPO" add -A
-    git -C "$REPO" commit -q -m change
-    run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
-    [ "$status" -eq 0 ]
-    printf '%s\n' "$output" | jq -e '.ok == true and .hits == []'
-}
-
-# ---------------------------------------------------------------------------
 # 7. data-migration POSITIVE
 # ---------------------------------------------------------------------------
 @test "data-migration POSITIVE: migrations/ 配下の ALTER TABLE 含むファイル -> class data-migration を返す" {
@@ -139,18 +127,6 @@ teardown() {
     [[ "$output" == *'"class":"data-migration"'* ]]
     [[ "$output" == *'"severity":"critical"'* ]]
     printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "data-migration")] | length > 0'
-}
-
-# ---------------------------------------------------------------------------
-# 8. data-migration NEGATIVE
-# ---------------------------------------------------------------------------
-@test "data-migration NEGATIVE: 無害な変更 -> 出力は []" {
-    printf 'select 1;\n' > "$REPO/query.sql"
-    git -C "$REPO" add -A
-    git -C "$REPO" commit -q -m change
-    run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
-    [ "$status" -eq 0 ]
-    printf '%s\n' "$output" | jq -e '.ok == true and .hits == []'
 }
 
 # ---------------------------------------------------------------------------
@@ -200,19 +176,6 @@ teardown() {
 }
 
 # ---------------------------------------------------------------------------
-# 12. exec-sink NEGATIVE
-# ---------------------------------------------------------------------------
-@test "exec-sink NEGATIVE: 無害な変更 -> 出力は []" {
-    mkdir -p "$REPO/src"
-    printf 'const x = 2 + 2;\n' > "$REPO/src/math.js"
-    git -C "$REPO" add -A
-    git -C "$REPO" commit -q -m change
-    run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
-    [ "$status" -eq 0 ]
-    printf '%s\n' "$output" | jq -e '.ok == true and .hits == []'
-}
-
-# ---------------------------------------------------------------------------
 # [EXEC-1] exec-sink NEGATIVE: JS 匿名関数式 function({ ... }) は hit しない
 # (Function\( alternative 削除 + case-sensitive 化の pin, issue #616)
 # ---------------------------------------------------------------------------
@@ -254,108 +217,6 @@ teardown() {
 }
 
 # ---------------------------------------------------------------------------
-# [EXEC-3] exec-sink POSITIVE: 既存 sink 群が引き続き hit する (回帰 pin, issue #616)
-# ---------------------------------------------------------------------------
-@test "[EXEC-3a] exec-sink POSITIVE: new Function は引き続き hit する" {
-    mkdir -p "$REPO/src"
-    printf "const f = new Function('x', 'return x');\n" > "$REPO/src/a.js"
-    git -C "$REPO" add -A
-    git -C "$REPO" commit -q -m change
-    run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
-    [ "$status" -eq 0 ]
-    [[ "$output" == *'"class":"exec-sink"'* ]]
-    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "exec-sink")] | length > 0'
-}
-
-@test "[EXEC-3b] exec-sink POSITIVE: child_process は引き続き hit する" {
-    mkdir -p "$REPO/src"
-    printf 'const cp = require("child_process");\n' > "$REPO/src/b.js"
-    git -C "$REPO" add -A
-    git -C "$REPO" commit -q -m change
-    run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
-    [ "$status" -eq 0 ]
-    [[ "$output" == *'"class":"exec-sink"'* ]]
-    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "exec-sink")] | length > 0'
-}
-
-@test "[EXEC-3c] exec-sink POSITIVE: execSync( は引き続き hit する" {
-    mkdir -p "$REPO/src"
-    printf 'const out = execSync("ls");\n' > "$REPO/src/c.js"
-    git -C "$REPO" add -A
-    git -C "$REPO" commit -q -m change
-    run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
-    [ "$status" -eq 0 ]
-    [[ "$output" == *'"class":"exec-sink"'* ]]
-    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "exec-sink")] | length > 0'
-}
-
-@test "[EXEC-3d] exec-sink POSITIVE: spawn( は引き続き hit する" {
-    mkdir -p "$REPO/src"
-    printf 'const p = spawn("ls");\n' > "$REPO/src/d.js"
-    git -C "$REPO" add -A
-    git -C "$REPO" commit -q -m change
-    run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
-    [ "$status" -eq 0 ]
-    [[ "$output" == *'"class":"exec-sink"'* ]]
-    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "exec-sink")] | length > 0'
-}
-
-@test "[EXEC-3e] exec-sink POSITIVE: deserialize は引き続き hit する" {
-    mkdir -p "$REPO/src"
-    printf 'const obj = deserialize(buf);\n' > "$REPO/src/e.js"
-    git -C "$REPO" add -A
-    git -C "$REPO" commit -q -m change
-    run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
-    [ "$status" -eq 0 ]
-    [[ "$output" == *'"class":"exec-sink"'* ]]
-    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "exec-sink")] | length > 0'
-}
-
-@test "[EXEC-3f] exec-sink POSITIVE: Marshal.load は引き続き hit する" {
-    mkdir -p "$REPO/src"
-    printf 'obj = Marshal.load(data)\n' > "$REPO/src/f.rb"
-    git -C "$REPO" add -A
-    git -C "$REPO" commit -q -m change
-    run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
-    [ "$status" -eq 0 ]
-    [[ "$output" == *'"class":"exec-sink"'* ]]
-    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "exec-sink")] | length > 0'
-}
-
-@test "[EXEC-3g] exec-sink POSITIVE: pickle.loads は引き続き hit する" {
-    mkdir -p "$REPO/src"
-    printf 'obj = pickle.loads(data)\n' > "$REPO/src/g.py"
-    git -C "$REPO" add -A
-    git -C "$REPO" commit -q -m change
-    run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
-    [ "$status" -eq 0 ]
-    [[ "$output" == *'"class":"exec-sink"'* ]]
-    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "exec-sink")] | length > 0'
-}
-
-@test "[EXEC-3h] exec-sink POSITIVE: yaml.load( は引き続き hit する" {
-    mkdir -p "$REPO/src"
-    printf 'cfg = yaml.load(stream)\n' > "$REPO/src/h.py"
-    git -C "$REPO" add -A
-    git -C "$REPO" commit -q -m change
-    run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
-    [ "$status" -eq 0 ]
-    [[ "$output" == *'"class":"exec-sink"'* ]]
-    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "exec-sink")] | length > 0'
-}
-
-@test "[EXEC-3i] exec-sink POSITIVE: execFile( は引き続き hit する" {
-    mkdir -p "$REPO/src"
-    printf 'execFile("bin", [], cb);\n' > "$REPO/src/i.js"
-    git -C "$REPO" add -A
-    git -C "$REPO" commit -q -m change
-    run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
-    [ "$status" -eq 0 ]
-    [[ "$output" == *'"class":"exec-sink"'* ]]
-    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "exec-sink")] | length > 0'
-}
-
-# ---------------------------------------------------------------------------
 # 13. dependency POSITIVE
 # ---------------------------------------------------------------------------
 @test "dependency POSITIVE: package.json に dependencies 変更 -> class dependency を返す" {
@@ -371,21 +232,18 @@ teardown() {
 }
 
 # ---------------------------------------------------------------------------
-# 14. dependency NEGATIVE
+# [HARMLESS] 無害な変更のみ -> {"ok":true,"hits":[]} かつ exit 0
+# auth / crypto / config / data-migration / exec-sink / dependency NEGATIVE と
+# EMPTY の 7 種の入力を 1 回の commit にまとめ、どのファイルも hit しないことを見る。
 # ---------------------------------------------------------------------------
-@test "dependency NEGATIVE: 無害な変更 -> 出力は []" {
+@test "HARMLESS: 無害な変更 7 種を 1 commit にまとめても hits は [] かつ exit 0" {
+    mkdir -p "$REPO/src"
+    printf 'hello world\n' > "$REPO/README.md"
+    printf 'const x = 1;\n' > "$REPO/src/index.js"
+    printf 'just a comment\n' > "$REPO/notes.txt"
+    printf 'select 1;\n' > "$REPO/query.sql"
+    printf 'const x = 2 + 2;\n' > "$REPO/src/math.js"
     printf 'version = "1.0.0"\nauthor = "Alice"\n' > "$REPO/metadata.txt"
-    git -C "$REPO" add -A
-    git -C "$REPO" commit -q -m change
-    run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
-    [ "$status" -eq 0 ]
-    printf '%s\n' "$output" | jq -e '.ok == true and .hits == []'
-}
-
-# ---------------------------------------------------------------------------
-# 15a. EMPTY: 明らかに無害なファイルのみ変更 -> [] かつ exit 0
-# ---------------------------------------------------------------------------
-@test "EMPTY: 無害な変更のみ -> stdout が [] でかつ exit 0" {
     printf 'This is just a changelog entry.\n' > "$REPO/CHANGELOG.txt"
     git -C "$REPO" add -A
     git -C "$REPO" commit -q -m change
@@ -818,87 +676,63 @@ teardown() {
 }
 
 # ---------------------------------------------------------------------------
-# [TW-b] test-weakening POSITIVE: x-prefix skip aliases (xit/xtest/xdescribe)
-# each map to pattern "skip" too
+# [POS-TABLE] 陽性の表駆動: 1 repo に複数ファイルを 1 回 commit し、1 回の実行で
+# hits[] をファイルごとに照合する。
+#   EXEC-3a..3i: 既存 exec-sink sink 群が引き続き hit する (回帰 pin, issue #616)
+#   TW-b1..b3:   x-prefix skip aliases (xit/xtest/xdescribe) が pattern "skip" になる
+#   TW-c1..c4:   only / todo / xfail / tautology が各 pattern になる
 # ---------------------------------------------------------------------------
-@test "TW-b1 test-weakening POSITIVE: xit( in *.spec.ts -> pattern skip" {
+@test "POS-TABLE: EXEC-3a..3i は exec-sink、TW-b1..c4 は test-weakening の各 pattern でファイルごとに hit する" {
     mkdir -p "$REPO/src"
-    printf "xit('checks value', () => {\n  expect(1).toBe(1);\n});\n" \
-        > "$REPO/src/sample.spec.ts"
+    # EXEC-3a..3i
+    printf "const f = new Function('x', 'return x');\n" > "$REPO/src/a.js"
+    printf 'const cp = require("child_process");\n' > "$REPO/src/b.js"
+    printf 'const out = execSync("ls");\n' > "$REPO/src/c.js"
+    printf 'const p = spawn("ls");\n' > "$REPO/src/d.js"
+    printf 'const obj = deserialize(buf);\n' > "$REPO/src/e.js"
+    printf 'obj = Marshal.load(data)\n' > "$REPO/src/f.rb"
+    printf 'obj = pickle.loads(data)\n' > "$REPO/src/g.py"
+    printf 'cfg = yaml.load(stream)\n' > "$REPO/src/h.py"
+    printf 'execFile("bin", [], cb);\n' > "$REPO/src/i.js"
+    # TW-b1..b3
+    printf "xit('checks value', () => {\n  expect(1).toBe(1);\n});\n" > "$REPO/src/b1.spec.ts"
+    printf "xtest('checks value', () => {\n  expect(1).toBe(1);\n});\n" > "$REPO/src/b2.spec.ts"
+    printf "xdescribe('group', () => {\n  it('x', () => { expect(1).toBe(1); });\n});\n" > "$REPO/src/b3.spec.ts"
+    # TW-c1..c4
+    printf "test.only('x', () => {\n  expect(1).toBe(1);\n});\n" > "$REPO/src/c1.test.js"
+    printf "test.todo('x')\n" > "$REPO/src/c2.test.js"
+    printf "test.fails('x', () => {\n  expect(1).toBe(2);\n});\n" > "$REPO/src/c3.test.js"
+    printf "test('x', () => {\n  expect(true).toBe(true);\n});\n" > "$REPO/src/c4.test.js"
     git -C "$REPO" add -A
     git -C "$REPO" commit -q -m change
     run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
     [ "$status" -eq 0 ]
-    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "test-weakening" and .pattern == "skip")] | length > 0'
-}
 
-@test "TW-b2 test-weakening POSITIVE: xtest( in *.spec.ts -> pattern skip" {
-    mkdir -p "$REPO/src"
-    printf "xtest('checks value', () => {\n  expect(1).toBe(1);\n});\n" \
-        > "$REPO/src/sample.spec.ts"
-    git -C "$REPO" add -A
-    git -C "$REPO" commit -q -m change
-    run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
-    [ "$status" -eq 0 ]
-    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "test-weakening" and .pattern == "skip")] | length > 0'
-}
-
-@test "TW-b3 test-weakening POSITIVE: xdescribe( in *.spec.ts -> pattern skip" {
-    mkdir -p "$REPO/src"
-    printf "xdescribe('group', () => {\n  it('x', () => { expect(1).toBe(1); });\n});\n" \
-        > "$REPO/src/sample.spec.ts"
-    git -C "$REPO" add -A
-    git -C "$REPO" commit -q -m change
-    run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
-    [ "$status" -eq 0 ]
-    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "test-weakening" and .pattern == "skip")] | length > 0'
-}
-
-# ---------------------------------------------------------------------------
-# [TW-c] test-weakening POSITIVE: only / todo / xfail / tautology (1 each)
-# ---------------------------------------------------------------------------
-@test "TW-c1 test-weakening POSITIVE: test.only( in *.test.js -> pattern only" {
-    mkdir -p "$REPO/src"
-    printf "test.only('x', () => {\n  expect(1).toBe(1);\n});\n" \
-        > "$REPO/src/sample.test.js"
-    git -C "$REPO" add -A
-    git -C "$REPO" commit -q -m change
-    run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
-    [ "$status" -eq 0 ]
-    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "test-weakening" and .pattern == "only")] | length > 0'
-}
-
-@test "TW-c2 test-weakening POSITIVE: test.todo( in *.test.js -> pattern todo" {
-    mkdir -p "$REPO/src"
-    printf "test.todo('x')\n" \
-        > "$REPO/src/sample.test.js"
-    git -C "$REPO" add -A
-    git -C "$REPO" commit -q -m change
-    run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
-    [ "$status" -eq 0 ]
-    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "test-weakening" and .pattern == "todo")] | length > 0'
-}
-
-@test "TW-c3 test-weakening POSITIVE: test.fails( in *.test.js -> pattern xfail" {
-    mkdir -p "$REPO/src"
-    printf "test.fails('x', () => {\n  expect(1).toBe(2);\n});\n" \
-        > "$REPO/src/sample.test.js"
-    git -C "$REPO" add -A
-    git -C "$REPO" commit -q -m change
-    run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
-    [ "$status" -eq 0 ]
-    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "test-weakening" and .pattern == "xfail")] | length > 0'
-}
-
-@test "TW-c4 test-weakening POSITIVE: expect(true).toBe(true) in *.test.js -> pattern tautology" {
-    mkdir -p "$REPO/src"
-    printf "test('x', () => {\n  expect(true).toBe(true);\n});\n" \
-        > "$REPO/src/sample.test.js"
-    git -C "$REPO" add -A
-    git -C "$REPO" commit -q -m change
-    run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
-    [ "$status" -eq 0 ]
-    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "test-weakening" and .pattern == "tautology")] | length > 0'
+    # file<TAB>class<TAB>pattern (pattern 空 = class のみ照合)
+    local expected
+    expected="$(printf '%s\n' \
+        $'src/a.js\texec-sink\t' \
+        $'src/b.js\texec-sink\t' \
+        $'src/c.js\texec-sink\t' \
+        $'src/d.js\texec-sink\t' \
+        $'src/e.js\texec-sink\t' \
+        $'src/f.rb\texec-sink\t' \
+        $'src/g.py\texec-sink\t' \
+        $'src/h.py\texec-sink\t' \
+        $'src/i.js\texec-sink\t' \
+        $'src/b1.spec.ts\ttest-weakening\tskip' \
+        $'src/b2.spec.ts\ttest-weakening\tskip' \
+        $'src/b3.spec.ts\ttest-weakening\tskip' \
+        $'src/c1.test.js\ttest-weakening\tonly' \
+        $'src/c2.test.js\ttest-weakening\ttodo' \
+        $'src/c3.test.js\ttest-weakening\txfail' \
+        $'src/c4.test.js\ttest-weakening\ttautology')"
+    local rows=0 f c p
+    while IFS=$'\t' read -r f c p; do
+        assert_hit "$f" "$c" "$p"
+        rows=$((rows + 1))
+    done <<< "$expected"
+    [ "$rows" -eq 16 ]
 }
 
 # ---------------------------------------------------------------------------
@@ -985,7 +819,7 @@ teardown() {
 # ---------------------------------------------------------------------------
 # [TW-i] jq-absent fallback path: pattern key still appears for test-weakening
 # hits, and is still absent for the 7 legacy classes, when jq is unavailable
-# on PATH (FAKE_BIN excludes jq -- see setup()).
+# on PATH (FAKE_BIN excludes jq -- see setup_file()).
 # ---------------------------------------------------------------------------
 @test "TW-i jq-absent fallback: test-weakening hit still carries pattern key" {
     mkdir -p "$REPO/src"

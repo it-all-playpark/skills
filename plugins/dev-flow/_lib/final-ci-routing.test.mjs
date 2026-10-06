@@ -20,8 +20,8 @@
 //   (i) fixesApplied=0 → ci-final 不発 + final_reconcile=skipped
 //   (j) (a) の条件 + evaluator あり → final-ac-reconcile が起動する（ci_verified を reverified 同等に扱う）
 //       / (g) では final-ac-reconcile は起動しない
-//   (k) FINAL_CI_KIND_* と HOLD_REASON_KINDS の同値性
-//   (l) dev-flow.js の ci-final 呼び出し周辺・finalCiPrompt 出力に禁止語が含まれない
+//   (l) dev-flow.js の ci-final 呼び出し周辺に禁止語が含まれない
+//   （(k) FINAL_CI_KIND_* と HOLD_REASON_KINDS の同値性・finalCiPrompt 出力の禁止語は final-ci.test.mjs）
 //   (m) note の文言が hold_kind に応じて変わる
 //   (n) test#final tests:'error'（起動失敗）+ sha 一致 + 全 success → ci_verified + REVIEW + final_test_green null
 //       + reasons に 'final test red' 不含 + final-ac-reconcile 起動（issue #619）
@@ -38,8 +38,6 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
 import { makeRecordingSandbox, devFlowArgs, mergeTierFacts } from './test-helpers/vm-sandbox.mjs';
-import { FINAL_CI_KIND_DETERMINISTIC, FINAL_CI_KIND_HUMAN, finalCiPrompt } from './final-ci.mjs';
-import { HOLD_REASON_KINDS } from './merge-tier.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -415,20 +413,11 @@ test("[final-ci] (j2) unavailable のまま（no-expected-sha）では final-ac-
   assert.ok(!calls.some((c) => c.label === 'final-ac-reconcile'), "(j2) unavailable のままでは 'final-ac-reconcile' が起動しないはず");
 });
 
-// ============================================================
-// (k) FINAL_CI_KIND_* と HOLD_REASON_KINDS の同値性
-// ============================================================
-
-test('[final-ci] (k) FINAL_CI_KIND_DETERMINISTIC/HUMAN は merge-tier.mjs の HOLD_REASON_KINDS と同値', () => {
-  assert.deepEqual(
-    [FINAL_CI_KIND_DETERMINISTIC, FINAL_CI_KIND_HUMAN],
-    HOLD_REASON_KINDS,
-    `[FINAL_CI_KIND_DETERMINISTIC, FINAL_CI_KIND_HUMAN]（${JSON.stringify([FINAL_CI_KIND_DETERMINISTIC, FINAL_CI_KIND_HUMAN])}）は HOLD_REASON_KINDS（${JSON.stringify(HOLD_REASON_KINDS)}）と一致するはず`,
-  );
-});
+// (k) FINAL_CI_KIND_* と HOLD_REASON_KINDS の同値性は final-ci.test.mjs が持つ。
 
 // ============================================================
-// (l) 禁止語チェック: ci-final 呼び出し周辺コメント・finalCiPrompt 出力に迂回/実行制御語を含まない
+// (l) 禁止語チェック: ci-final 呼び出し周辺コメントに迂回/実行制御語を含まない
+// （finalCiPrompt 出力の禁止語は final-ci.test.mjs が上位集合の語彙で見る）
 // ============================================================
 
 const FORBIDDEN_RE = /sandbox|excludedCommands|permission|EPERM|迂回|代替手順/i;
@@ -441,12 +430,6 @@ test("[final-ci] (l) dev-flow.js の label:'ci-final' 呼び出し周辺（前�
   const windowLines = lines.slice(Math.max(0, idx - 30), idx + 30).join('\n');
   assert.ok(!FORBIDDEN_RE.test(windowLines), `(l) ci-final 呼び出し周辺に禁止語を含んではならないが検出: ${windowLines.match(FORBIDDEN_RE)}`);
   void stripped;
-});
-
-test('[final-ci] (l2) finalCiPrompt 出力に禁止語を含まない', () => {
-  const out = finalCiPrompt({ pr: 1, repo: null });
-  assert.ok(!FORBIDDEN_RE.test(out), `(l2) finalCiPrompt 出力に禁止語を含んではならないが検出: ${out.match(FORBIDDEN_RE)}`);
-  assert.ok(out.includes('gh pr view 1 --json headRefOid,statusCheckRollup'), "(l2) finalCiPrompt 出力に対象コマンドが含まれるはず");
 });
 
 // ============================================================

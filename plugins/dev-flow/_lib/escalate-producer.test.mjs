@@ -21,7 +21,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
 const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
 
-// ---- VM sandbox helpers（merge-tier-unsatisfied-ac.test.mjs の makeSandbox / runDevFlowCapture をベースに拡張）----
+// ---- VM sandbox helpers ----
 
 /**
  * escalate-producer 検証専用の VM sandbox を組む。
@@ -111,7 +111,7 @@ function makeSandbox(analyzeReq, evaluatorResponse) {
     workflow: workflowStub,
     // 引数（ISSUE 解決用）
     args: devFlowArgs('1'),
-    // JS 組み込み（merge-tier-unsatisfied-ac.test.mjs と同一セット）
+    // JS 組み込み
     console,
     JSON,
     Math,
@@ -138,7 +138,6 @@ function makeSandbox(analyzeReq, evaluatorResponse) {
 
 /**
  * dev-flow.js ソースを strip して async IIFE でラップし vm sandbox で実行する。
- * merge-tier-unsatisfied-ac.test.mjs の runDevFlowCapture と同型。
  * IIFE の **resolved 値（return object）を捕捉して返す**。
  *
  * @param {string} src - dev-flow.js の raw ソース

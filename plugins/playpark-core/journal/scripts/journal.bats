@@ -351,51 +351,53 @@ JSON
 # ===========================================================================
 
 # ---------------------------------------------------------------------------
-# Test (h): --error-category needs_clarification で failure が exit 0 で記録される
+# カテゴリ受理の表: 各行を journal.sh log に渡し、exit 0 で entry が書かれ、
+# outcome / error.category（と指定時は error.message / error.phase）がそのまま記録されることを見る。
+# telemetry を渡した行は、省略した merge_tier キーが telemetry に無いことも見る。
+#   needs_clarification / empty_diff (#225) / runtime（既存カテゴリの回帰） /
+#   partial + cross_repo (#432) / success・failure + guard_blocked (#530) /
+#   pr_phase_failed + PR phase (#823) / abort + --error-phase (#607)
 # ---------------------------------------------------------------------------
-@test "failure with needs_clarification category exits 0 and records entry" {
-    run "$SCRIPT" log dev-flow failure \
-        --error-category needs_clarification \
-        --error-msg 'user clarification needed' \
-        --telemetry-json '{"plugin_version":"1.2.3"}'
-    [ "$status" -eq 0 ]
 
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
+# assert_category_accepted <outcome> <category> <error-msg|""> <error-phase|""> [telemetry-json]
+assert_category_accepted() {
+    local outcome="$1" category="$2" msg="$3" phase="$4" telemetry="${5:-}" label="$1/$2"
+    local -a args=(log dev-flow "$outcome" --error-category "$category")
+    [[ -n "$msg" ]] && args+=(--error-msg "$msg")
+    [[ -n "$phase" ]] && args+=(--error-phase "$phase")
+    [[ -n "$telemetry" ]] && args+=(--telemetry-json "$telemetry")
+    rm -f "$CLAUDE_JOURNAL_DIR"/*.json
+    "$SCRIPT" "${args[@]}" >/dev/null || { echo "[$label] journal.sh log exited non-zero"; return 1; }
 
-    outcome=$(jq -r '.outcome' "$entry_file")
-    [ "$outcome" = "failure" ]
-
-    error_category=$(jq -r '.error.category' "$entry_file")
-    [ "$error_category" = "needs_clarification" ]
-
-    # merge_tier キーが telemetry に無いこと（省略時は含まれない）
-    has_merge_tier=$(jq '.telemetry | has("merge_tier")' "$entry_file")
-    [ "$has_merge_tier" = "false" ]
+    local entry_file
+    entry_file="$(latest_entry)"
+    [ -n "$entry_file" ] || { echo "[$label] no entry written"; return 1; }
+    jq -e --arg o "$outcome" --arg c "$category" '.outcome == $o and .error.category == $c' "$entry_file" >/dev/null \
+        || { echo "[$label] outcome/category mismatch: $(cat "$entry_file")"; return 1; }
+    if [[ -n "$msg" ]]; then
+        jq -e --arg m "$msg" '.error.message == $m' "$entry_file" >/dev/null \
+            || { echo "[$label] error.message mismatch"; return 1; }
+    fi
+    if [[ -n "$phase" ]]; then
+        jq -e --arg p "$phase" '.error.phase == $p' "$entry_file" >/dev/null \
+            || { echo "[$label] error.phase mismatch"; return 1; }
+    fi
+    if [[ -n "$telemetry" ]]; then
+        # merge_tier キーが telemetry に無いこと（省略時は含まれない）
+        jq -e '.telemetry | has("merge_tier") | not' "$entry_file" >/dev/null \
+            || { echo "[$label] telemetry unexpectedly has merge_tier"; return 1; }
+    fi
 }
 
-# ---------------------------------------------------------------------------
-# Test (i): --error-category empty_diff で failure が exit 0 で記録される
-# ---------------------------------------------------------------------------
-@test "failure with empty_diff category exits 0 and records entry" {
-    run "$SCRIPT" log dev-flow failure \
-        --error-category empty_diff \
-        --error-msg 'no changes produced' \
-        --telemetry-json '{"plugin_version":"1.2.3"}'
-    [ "$status" -eq 0 ]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    outcome=$(jq -r '.outcome' "$entry_file")
-    [ "$outcome" = "failure" ]
-
-    error_category=$(jq -r '.error.category' "$entry_file")
-    [ "$error_category" = "empty_diff" ]
-
-    # merge_tier キーが telemetry に無いこと
-    has_merge_tier=$(jq '.telemetry | has("merge_tier")' "$entry_file")
-    [ "$has_merge_tier" = "false" ]
+@test "error category の受理: 表の各 outcome × category が exit 0 で記録される" {
+    assert_category_accepted failure needs_clarification 'user clarification needed' '' '{"plugin_version":"1.2.3"}'
+    assert_category_accepted failure empty_diff 'no changes produced' '' '{"plugin_version":"1.2.3"}'
+    assert_category_accepted failure runtime 'runtime error' ''
+    assert_category_accepted partial cross_repo 'x' ''
+    assert_category_accepted success guard_blocked '' ''
+    assert_category_accepted failure guard_blocked 'guard blocked the run' ''
+    assert_category_accepted failure pr_phase_failed 'dev-flow: PR phase 失敗（step: push、reason: remote: 403）' PR
+    assert_category_accepted failure abort 'abort@Evaluate/eval#1: evaluator boom' Evaluate
 }
 
 # ---------------------------------------------------------------------------
@@ -418,45 +420,6 @@ JSON
 }
 
 # ---------------------------------------------------------------------------
-# Test (l): 既存 8 カテゴリへの回帰（runtime が引き続き受理される）
-# ---------------------------------------------------------------------------
-@test "existing category runtime is still accepted" {
-    run "$SCRIPT" log dev-flow failure \
-        --error-category runtime \
-        --error-msg 'runtime error'
-    [ "$status" -eq 0 ]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    error_category=$(jq -r '.error.category' "$entry_file")
-    [ "$error_category" = "runtime" ]
-}
-
-# ===========================================================================
-# Tests for new error category: cross_repo (issue #432)
-# ===========================================================================
-
-# ---------------------------------------------------------------------------
-# Test (n): --error-category cross_repo で partial が exit 0 で記録される
-# ---------------------------------------------------------------------------
-@test "partial with cross_repo category exits 0 and records entry" {
-    run "$SCRIPT" log dev-flow partial \
-        --error-category cross_repo \
-        --error-msg 'x'
-    [ "$status" -eq 0 ]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    outcome=$(jq -r '.outcome' "$entry_file")
-    [ "$outcome" = "partial" ]
-
-    error_category=$(jq -r '.error.category' "$entry_file")
-    [ "$error_category" = "cross_repo" ]
-}
-
-# ---------------------------------------------------------------------------
 # Test (o): 未知カテゴリは引き続き die_json で拒否される（enum が閉じたままの回帰確認）
 # ---------------------------------------------------------------------------
 @test "partial with bogus category still exits non-zero (enum stays closed)" {
@@ -464,65 +427,6 @@ JSON
         --error-category bogus \
         --error-msg 'some error'
     [ "$status" -ne 0 ]
-}
-
-# ===========================================================================
-# Tests for new error category: guard_blocked (issue #530)
-# ===========================================================================
-
-# ---------------------------------------------------------------------------
-# Test (a): --error-category guard_blocked で success が exit 0 で記録される
-# ---------------------------------------------------------------------------
-@test "success with guard_blocked category exits 0 and records entry" {
-    run "$SCRIPT" log dev-flow success \
-        --error-category guard_blocked
-    [ "$status" -eq 0 ]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    error_category=$(jq -r '.error.category' "$entry_file")
-    [ "$error_category" = "guard_blocked" ]
-}
-
-# ---------------------------------------------------------------------------
-# Test (b): --error-category guard_blocked で failure が exit 0 で記録される
-# ---------------------------------------------------------------------------
-@test "failure with guard_blocked category exits 0 and records entry" {
-    run "$SCRIPT" log dev-flow failure \
-        --error-category guard_blocked \
-        --error-msg 'guard blocked the run'
-    [ "$status" -eq 0 ]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    error_category=$(jq -r '.error.category' "$entry_file")
-    [ "$error_category" = "guard_blocked" ]
-    outcome=$(jq -r '.outcome' "$entry_file")
-    [ "$outcome" = "failure" ]
-}
-
-# ===========================================================================
-# Tests for new error category: pr_phase_failed (issue #823)
-# ===========================================================================
-
-# ---------------------------------------------------------------------------
-# dev-flow の PR phase 失敗終端（throw しない failure entry）が error.category / phase 付きで記録される
-# ---------------------------------------------------------------------------
-@test "failure with pr_phase_failed category and PR phase exits 0 and records entry" {
-    run "$SCRIPT" log dev-flow failure \
-        --error-category pr_phase_failed \
-        --error-msg 'dev-flow: PR phase 失敗（step: push、reason: remote: 403）' \
-        --error-phase PR
-    [ "$status" -eq 0 ]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    [ "$(jq -r '.outcome' "$entry_file")" = "failure" ]
-    [ "$(jq -r '.error.category' "$entry_file")" = "pr_phase_failed" ]
-    [ "$(jq -r '.error.phase' "$entry_file")" = "PR" ]
 }
 
 # ===========================================================================
@@ -636,31 +540,7 @@ JSON
 # Tests for new error category: abort (issue #607)
 # ===========================================================================
 
-# ---------------------------------------------------------------------------
-# --error-category abort と --error-phase が exit 0 で記録される
-# ---------------------------------------------------------------------------
-@test "failure with abort category and --error-phase exits 0 and records entry" {
-    run "$SCRIPT" log dev-flow failure \
-        --error-category abort \
-        --error-msg "abort@Evaluate/eval#1: evaluator boom" \
-        --error-phase Evaluate
-    [ "$status" -eq 0 ]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    outcome=$(jq -r '.outcome' "$entry_file")
-    [ "$outcome" = "failure" ]
-
-    error_category=$(jq -r '.error.category' "$entry_file")
-    [ "$error_category" = "abort" ]
-
-    error_message=$(jq -r '.error.message' "$entry_file")
-    [ "$error_message" = "abort@Evaluate/eval#1: evaluator boom" ]
-
-    error_phase=$(jq -r '.error.phase' "$entry_file")
-    [ "$error_phase" = "Evaluate" ]
-}
+# abort + --error-phase の受理は上の「error category の受理」表が見る
 
 # ---------------------------------------------------------------------------
 # stats --source skill の by_category が abort entry を集計できる

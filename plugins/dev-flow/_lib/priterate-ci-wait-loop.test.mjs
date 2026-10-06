@@ -8,7 +8,6 @@
 //   1 spawn（dev-runner-haiku-ro）で行い、独立した ci-wait spawn は無い。
 // - ci-wait-check の slept !== true（slept:false / null / throw）は積算せず、同じ応答の status も採らずに
 //   ci_pending で終端する。
-// - ci-check exec-proxy の prompt に attempt ループ・sleep 指示が無く、1 spawn で 1 回の判定だけを返す。
 
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
@@ -139,15 +138,5 @@ test('[ci-wait-loop] agent 報告値 waited_seconds/poll_attempts は積算に�
   assert.equal(result?.ci_poll_attempts, 2, `agent 報告値を無視し script 側積算 2 であるべきだが ${result?.ci_poll_attempts} だった`);
 });
 
-test('[ci-wait-loop] ci-check prompt にループ・sleep 指示が無い（dispatch された prompt で観測）', async () => {
-  const { calls, error } = await run({});
-  assert.equal(error, null, `run が throw した: ${error?.message}`);
-
-  const ciCheck1 = calls.find((c) => c.label === 'ci-check#1');
-  assert.ok(ciCheck1 != null, "label==='ci-check#1' の呼び出しが存在するべき");
-  assert.ok(!/\battempt\b/i.test(ciCheck1.prompt), `ci-check#1 の prompt に attempt 語が含まれるべきでない。prompt: ${ciCheck1.prompt.slice(0, 900)}`);
-  assert.ok(!ciCheck1.prompt.includes('--max-attempts'), `ci-check#1 の prompt に --max-attempts が含まれるべきでない。prompt: ${ciCheck1.prompt.slice(0, 900)}`);
-  assert.ok(!ciCheck1.prompt.includes('--poll-seconds'), `ci-check#1 の prompt に --poll-seconds が含まれるべきでない。prompt: ${ciCheck1.prompt.slice(0, 900)}`);
-  assert.ok(!/\bsleep\b/i.test(ciCheck1.prompt), `ci-check#1 の prompt に sleep 指示が含まれるべきでない。prompt: ${ciCheck1.prompt.slice(0, 900)}`);
-  assert.ok(!ciCheck1.prompt.includes('繰り返'), `ci-check#1 の prompt に繰り返し指示が含まれるべきでない。prompt: ${ciCheck1.prompt.slice(0, 900)}`);
-});
+// ci-check prompt にループ・sleep 指示が無いことは ci-check.test.mjs（canonical ciCheckPrompt）が、
+// dispatch された prompt が canonical と一致することは priterate-ci-failopen.test.mjs (c) が見る。

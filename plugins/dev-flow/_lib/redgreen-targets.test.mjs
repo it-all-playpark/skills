@@ -180,6 +180,35 @@ test('[redgreen-targets] dev-flow: 異なるペアは従来どおり別ペアで
   assert.ok(logs.some((l) => l.includes('AC-2: red→green 未成立(test passed without impl)→ inspection 据え置き')));
 });
 
+const distinctAcs = (n) => Array.from({ length: n }, (_, i) => sameAc(i, [`t${i}.test.mjs`], [`impl${i}.mjs`]));
+
+test('[redgreen-targets] dev-flow: test 実証 AC 3 件（別ペア）→ redgreen spawn は 1 回で prompt に 3 ペアが引数順に並び、results の index 突合で全 AC が昇格する', async () => {
+  const { redgreenPrompts, logs } = await runWith(distinctAcs(3), (p, k) => ({ index: k, red: true, green: true }));
+  assert.equal(redgreenPrompts.length, 1, `redgreen は AC 数に関わらず 1 iteration 1 spawn であるべきだが ${redgreenPrompts.length} 回`);
+  assert.ok(
+    redgreenPrompts[0].includes("redgreen-verify /tmp/wt 't0.test.mjs' 'impl0.mjs' 't1.test.mjs' 'impl1.mjs' 't2.test.mjs' 'impl2.mjs'"),
+    `prompt に 3 ペアが引数順で並ぶべきだが: ${redgreenPrompts[0]}`,
+  );
+  for (const ac of ['AC-1', 'AC-2', 'AC-3']) {
+    assert.ok(logs.some((l) => l.includes(`${ac}: red→green 実証 → deterministic 昇格 + checked`)), `${ac} が昇格するべきだが: ${JSON.stringify(logs.filter((l) => l.includes(ac)))}`);
+  }
+});
+
+test('[redgreen-targets] dev-flow: results の欠落ペア（script 側の入力エラー等で index が返らない）は当該 AC だけ inspection 据え置きで他 AC は昇格し、欠落を log に出す', async () => {
+  // AC-2（ペア index 1）だけ results から落とす
+  const { logs } = await runWith(distinctAcs(3), (p, k) => (k === 1 ? null : { index: k, red: true, green: true }));
+  assert.ok(logs.some((l) => l.includes('AC-1: red→green 実証 → deterministic 昇格 + checked')));
+  assert.ok(logs.some((l) => l.includes('AC-3: red→green 実証 → deterministic 昇格 + checked')));
+  assert.ok(
+    logs.some((l) => l.includes('AC-2: red→green 未成立(null)→ inspection 据え置き')),
+    `欠落ペアの AC-2 は inspection 据え置きであるべきだが: ${JSON.stringify(logs.filter((l) => l.includes('AC-2')))}`,
+  );
+  assert.ok(
+    logs.some((l) => l.includes('redgreen-verify の results が 2 件（期待 3 件）')),
+    `欠落は log で可視化されるべきだが: ${JSON.stringify(logs.filter((l) => l.includes('results')))}`,
+  );
+});
+
 test('[redgreen-targets] dev-flow: redgreen の prompt は redgreenVerifyPrompt と同一 byte 列', async () => {
   const acResults = [sameAc(0), sameAc(1)];
   const { redgreenPrompts } = await runWith(acResults, () => ({ index: 0, red: true, green: true }));

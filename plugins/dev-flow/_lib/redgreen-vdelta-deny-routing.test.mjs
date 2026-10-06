@@ -286,46 +286,5 @@ test('[redgreen-vdelta] (e) AC 2 件 → AC ごとの verdict で両 AC とも�
   }
 });
 
-const ANALYZE_REQ_3AC = { ...ANALYZE_REQ_2AC, acceptance_criteria: ['a', 'b', 'c'] };
-
-test('[redgreen-batch] (f) test 実証 AC 3 件 → redgreen spawn は 1 回で prompt に 3 ペアが引数順に並び、results の index 突合で全 AC が昇格する', async () => {
-  const src = readFileSync(devFlowPath, 'utf8');
-  const { ctx, counters } = makeSandbox(ANALYZE_REQ_3AC, evalTestVerified(3), () => ({ red: true, green: true }));
-  const { error } = await runDevFlowCapture(src, ctx);
-  assertNoCrash(error);
-
-  const calls = counters.redgreenCalls();
-  assert.equal(calls.length, 1, `redgreen は AC 数に関わらず 1 iteration 1 spawn であるべきだが ${calls.length} 回: ${JSON.stringify(calls.map((c) => c.label))}`);
-  assert.ok(
-    calls[0].prompt.includes("redgreen-verify /tmp/wt 't0.test.mjs' 'impl0.mjs' 't1.test.mjs' 'impl1.mjs' 't2.test.mjs' 'impl2.mjs'"),
-    `prompt に 3 ペアが引数順で並ぶべきだが: ${calls[0].prompt}`,
-  );
-
-  const logs = counters.logs();
-  for (const ac of ['AC-1', 'AC-2', 'AC-3']) {
-    assert.ok(
-      logs.some((l) => l.includes(`${ac}: red→green 実証 → deterministic 昇格 + checked`)),
-      `${ac} が昇格するべきだが: ${JSON.stringify(logs.filter((l) => l.includes(ac)))}`,
-    );
-  }
-});
-
-test('[redgreen-batch] (g) results の欠落ペア（script 側の入力エラー等で index が返らない）は当該 AC だけ inspection 据え置きで他 AC は昇格する', async () => {
-  const src = readFileSync(devFlowPath, 'utf8');
-  // AC-2（ac_index 1）だけ results から落とす
-  const { ctx, counters } = makeSandbox(ANALYZE_REQ_3AC, evalTestVerified(3), (acIndex) => (acIndex === 1 ? null : { red: true, green: true }));
-  const { error } = await runDevFlowCapture(src, ctx);
-  assertNoCrash(error);
-
-  const logs = counters.logs();
-  assert.ok(logs.some((l) => l.includes('AC-1: red→green 実証 → deterministic 昇格 + checked')));
-  assert.ok(logs.some((l) => l.includes('AC-3: red→green 実証 → deterministic 昇格 + checked')));
-  assert.ok(
-    logs.some((l) => l.includes('AC-2: red→green 未成立(null)→ inspection 据え置き')),
-    `欠落ペアの AC-2 は inspection 据え置きであるべきだが: ${JSON.stringify(logs.filter((l) => l.includes('AC-2')))}`,
-  );
-  assert.ok(
-    logs.some((l) => l.includes('redgreen-verify の results が 2 件（期待 3 件）')),
-    `欠落は log で可視化されるべきだが: ${JSON.stringify(logs.filter((l) => l.includes('results')))}`,
-  );
-});
+// redgreen のバッチ集約（AC 3 件 → 1 spawn・引数順・results の index 突合・欠落ペアの据え置き）は
+// redgreen-targets.test.mjs が持つ。

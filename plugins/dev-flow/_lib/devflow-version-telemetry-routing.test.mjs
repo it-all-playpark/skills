@@ -49,18 +49,8 @@ test('dev-flow.js 成功 run の journal-log prompt が eval_model_config / revi
   assertJournalSaveHasKeys(calls, 'dev-flow success', { evalModel: true });
 });
 
-test('dev-flow.js empty-diff 失敗 run の journal-log prompt が eval_model_config / review_model_config / plugin_version を含む', async () => {
-  const { ctx, calls } = makeDevFlowSandbox({
-    overrides: {
-      'diff-gate': { hash: 'H', empty: true },
-      'diff-gate-retry': { hash: 'H', empty: true },
-      'issue-labels': null,
-    },
-  });
-  const { error } = await runWorkflowCapture(devFlowSrc, ctx, '.claude/workflows/dev-flow.js');
-  assert.ok(error, 'empty-diff gate で throw するべき');
-  assertJournalSaveHasKeys(calls, 'dev-flow empty-diff failure', { evalModel: true });
-});
+// empty-diff 失敗 run の model config / plugin_version / plugin_commit は
+// devflow-failure-telemetry-routing.test.mjs (3) の共有 run が必須キー表で検査する。
 
 test('dev-flow.js abort run（eval#1 null）の journal-log prompt が eval_model_config / review_model_config / plugin_version を含む', async () => {
   const { ctx, calls } = makeDevFlowSandbox({ overrides: { 'eval#1': null } });
@@ -126,18 +116,8 @@ test('dev-flow.js 成功 run: args.setup.plugin_commit が journal entry と nes
   }
 });
 
-test('dev-flow.js 失敗 run（empty-diff）/ abort run（eval#1 null）の journal entry にも plugin_commit が載る', async () => {
-  const failure = devFlowSandboxWithCommit({ plugin_commit: COMMIT }, {
-    overrides: {
-      'diff-gate': { hash: 'H', empty: true },
-      'diff-gate-retry': { hash: 'H', empty: true },
-      'issue-labels': null,
-    },
-  });
-  const r1 = await runWorkflowCapture(devFlowSrc, failure.ctx, '.claude/workflows/dev-flow.js');
-  assert.ok(r1.error, 'empty-diff gate で throw するべき');
-  assertPluginCommit(failure.calls, COMMIT, 'dev-flow empty-diff failure');
-
+// 失敗 run（empty-diff）の plugin_commit は devflow-failure-telemetry-routing.test.mjs (3) が検査する
+test('dev-flow.js abort run（eval#1 null）の journal entry にも plugin_commit が載る', async () => {
   const abort = devFlowSandboxWithCommit({ plugin_commit: COMMIT }, { overrides: { 'eval#1': null } });
   const r2 = await runWorkflowCapture(devFlowSrc, abort.ctx, '.claude/workflows/dev-flow.js');
   assert.ok(r2.error, 'eval#1 null は abort するべき');

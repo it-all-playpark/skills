@@ -1,4 +1,4 @@
-// AC#4 (F4): VM カウントテスト（merge-tier-unsatisfied-ac.test.mjs と同型）
+// AC#4 (F4): VM カウントテスト
 // Merge tier phase 後に投稿用 dev-runner 呼び出しが 1 回発生すること、
 // および投稿失敗 stub でも workflow が正常 return することを検証する。
 //
@@ -17,7 +17,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
 const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
 
-// ---- VM sandbox helpers（merge-tier-unsatisfied-ac.test.mjs の makeSandbox / runDevFlowCapture と同型）----
+// ---- VM sandbox helpers ----
 
 /**
  * post-summary 投稿検証専用の VM sandbox を組む。
@@ -112,7 +112,7 @@ function makeSandbox(analyzeReq, postResult) {
   // pr-iterate stub: workflow() の呼び出し
   const workflowStub = async () => ({ status: 'lgtm', iterations: 1, fixes_applied: 0 });
 
-  // sandbox object（merge-tier-unsatisfied-ac.test.mjs と同一セット）
+  // sandbox object
   const sandbox = {
     // workflow 制御関数
     phase: () => {},
@@ -123,7 +123,7 @@ function makeSandbox(analyzeReq, postResult) {
     workflow: workflowStub,
     // 引数（ISSUE 解決用）
     args: devFlowArgs('1'),
-    // JS 組み込み（merge-tier-unsatisfied-ac.test.mjs と同一セット）
+    // JS 組み込み
     console,
     JSON,
     Math,
@@ -150,7 +150,6 @@ function makeSandbox(analyzeReq, postResult) {
 
 /**
  * dev-flow.js ソースを strip して async IIFE でラップし vm sandbox で実行する。
- * merge-tier-unsatisfied-ac.test.mjs の runDevFlowCapture と同型：
  * IIFE の **resolved 値（return object）を捕捉して返す**。
  *
  * @param {string} src - dev-flow.js の raw ソース

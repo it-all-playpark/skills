@@ -209,7 +209,7 @@ hit で `runEval=true` になったケースは lite ゲート条件を満たさ
   effort は原則 subagent frontmatter で決める。`agent()` の `opts.effort` は frontmatter より優先して実効値に反映される
   （transcript で確認済み。dev-flow-canary の `agent_opts_effort_accepted` probe は受理の有無だけを見る）が、
   opts で effort を渡すのは pr-iterate の fix（`fix#i` / `fix#i-retry`、`FIX_EFFORT = 'medium'`）のみ
-  （`_lib/agent-effort.test.mjs` が pin）。
+  （`_lib/agent-frontmatter.test.mjs` が pin）。
   model は subagent frontmatter で決める。品質ゲート agent の call site は `opts.model` を渡さない —
   evaluator（`eval#i` / `eval-green-fix` / `final-ac-reconcile` / `security-clearance-final`）と pr-reviewer（`review#i` /
   schema-retry / `pr-review-lite`）はともに frontmatter（evaluator は opus / medium、pr-reviewer は opus / high）で spawn し、workflow 側に model 定数・
@@ -224,7 +224,7 @@ hit で `runEval=true` になったケースは lite ゲート条件を満たさ
   （reviewer 指摘は設計判断を伴う修正が中心で、sonnet は maxTurns 50 内に終わらず fix_failed になりやすい。
   失敗 6 ケースの盲検 replay で opus は完走 5/6 対 3/6・品質同等以上だった。effort は paired replay で high と
   完走率・品質同等のまま所要・コストが下がった。frontmatter は analyze-clarify と共用なので変えない。
-  `_lib/priterate-fix-null-retry.test.mjs` が pin）。
+  `_lib/priterate-fix-retry.test.mjs` が pin）。
   `_lib/plugin-version.mjs` の `PLUGIN_VERSION` は inline 生成方式（dev-flow.js / pr-iterate.js）。
   model を恒久的に別系統へ固定したい leaf には専用 agent 定義
   （例: `dev-runner-haiku.md`、`model: haiku`）を用意し `agentType` を切り替える。

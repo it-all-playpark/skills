@@ -1,6 +1,6 @@
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
-import { parseSecfloorFields, lineStatsFor } from './secfloor-unified.mjs';
+import { parseSecfloorFields, lineStatsFor, isWellFormedRiskField } from './secfloor-unified.mjs';
 
 // (1) null 入力 → risk.ok===false かつ hits===[]、files/struct/hash は null。hits フィールド欠落を
 // clean と同一視しない fail-closed が要件。
@@ -221,4 +221,62 @@ test('lineStatsFor: 行数の無い file（binary 等）が 1 件でもあれば
 test('lineStatsFor: files / lines のどちらかが null なら null', () => {
   assert.equal(lineStatsFor(null, []), null);
   assert.equal(lineStatsFor(['a.ts'], null), null);
+});
+
+// ---- isWellFormedRiskField: fail-closed の 2 原因を呼び出し側が区別するための述語 (issue #617) ----
+//
+// risk.ok!==true には (a) 形状不一致（top-level risk 欠落 → parseRiskField が合成）と
+// (b) proxy が契約通りの形で ok:false を報告（secfloor-classify.sh 自体の失敗）の 2 通りがある。
+// 述語は「採用されたか合成されたか」を返し、診断 log の文言・出力値の出し分けに使う。
+
+test.each([
+  ['契約通り（ok:true）', { risk: { ok: true, hits: [] } }, true],
+  ['proxy が契約通りの形で失敗を報告（ok:false でも形状は正しい）', { risk: { ok: false, hits: [], error: 'boom' } }, true],
+  ['null', null, false],
+  ['undefined', undefined, false],
+  ['top-level risk 欠落', {}, false],
+  ['payload が struct にネストされた #614 実測形状', { struct: { risk: { ok: true, hits: [] } } }, false],
+  ['ok が boolean でない', { risk: { ok: 'true', hits: [] } }, false],
+  ['hits 欠落', { risk: { ok: true } }, false],
+  ['hits が配列でない', { risk: { ok: true, hits: 'x' } }, false],
+])('isWellFormedRiskField: %s → %s', (_name, unified, want) => {
+  assert.equal(isWellFormedRiskField(unified), want);
+});
+
+test.each([
+  // 述語 true: 契約通りの失敗報告では proxy の error がそのまま残り、診断値として log できる
+  ['述語 true のとき proxy の risk をそのまま採用する（error も保持）',
+    { risk: { ok: false, hits: [], error: 'secfloor-classify.sh exited 2' } },
+    { ok: false, error: 'secfloor-classify.sh exited 2' }],
+  ['述語 false のとき fail-closed を合成する',
+    { struct: { risk: { ok: true, hits: [] } } },
+    { ok: false, error: 'secfloor unified proxy unavailable (fail-closed)' }],
+])('parseSecfloorFields(unified).risk: %s', (_name, unified, want) => {
+  const { risk } = parseSecfloorFields(unified);
+  assert.equal(risk.ok, want.ok);
+  assert.equal(risk.error, want.error);
+});
+
+// ---- struct フィールドの fail-open（issue #350）----
+// struct が null / ok!==true / available 非 boolean / format_only・structural 非配列のいずれでも struct=null
+// （呼び出し元は formatOnlySet を空にして全ファイル structural 扱いへフォールバックする）。
+
+test('parseSecfloorFields(unified).struct: 形の正しい struct は非 null で format_only を保持する', () => {
+  const unified = { risk: { ok: true, hits: [] }, struct: { ok: true, available: true, format_only: ['a'], structural: [] } };
+  const { struct } = parseSecfloorFields(unified);
+  assert.notEqual(struct, null);
+  assert.deepEqual(struct.format_only, ['a']);
+});
+
+test.each([
+  ['ok!==true', { ok: false, available: true, format_only: [], structural: [] }],
+  ['available が boolean でない', { ok: true, available: 'yes', format_only: [], structural: [] }],
+  ['format_only が配列でない', { ok: true, available: true, format_only: 'x', structural: [] }],
+  ['structural が配列でない', { ok: true, available: true, format_only: [], structural: 'x' }],
+  ['struct が null', null],
+  ['struct 欠落', undefined],
+])('parseSecfloorFields(unified).struct: %s → null（fail-open）', (_name, struct) => {
+  const unified = { risk: { ok: true, hits: [] } };
+  if (struct !== undefined) unified.struct = struct;
+  assert.equal(parseSecfloorFields(unified).struct, null);
 });

@@ -1,17 +1,22 @@
-// _lib/analyze-phase-removed-invariant.test.mjs
-// issue #695: 空殻化した Analyze phase（phase マーカー・analyze の開始/終了 clock mark・常に 0 だった
-// phase_durations の analyze 列・doctor の analyze/plan 列）を撤去し、決定論ゲートを Setup 末尾に吸収した後、
-// 旧シンボルが dev-flow.js と _lib/devflow-durations.mjs に再登場しないことを静的に pin する
-// （issue #678 の plan-phase-removed-invariant と同型）。(d) はコメントの phase 名表記を pin する。
+// _lib/removed-phase-invariant.test.mjs
+// 撤去済み phase の旧シンボルが再登場しないことを静的に pin する:
+//   - Analyze phase（issue #695）: phase マーカー・analyze の開始/終了 clock mark・常に 0 だった
+//     phase_durations の analyze 列・doctor の analyze/plan 列。決定論ゲートは Setup 末尾に吸収した
+//   - Plan phase（issue #678）: phase マーカー・常時 0/null の plan iteration / plan verdict telemetry・
+//     plan 終端の clock mark・summary の plan concerns 配線
+//   - plan.parallel（issue #697）: parallel fan-out 撤去後に残った常に空の plan.parallel と参照ゼロの schema。
+//     plan は serial のみを持つ（synthesizeImplPlan の出力。値を積む経路は serial だけ）
 //
-// ゲート本体（buildReqFromContract / analyzeGateReasons / clarifyPrompt / analyze-clarify spawn /
-// needs_clarification の source: 'analyze' | 'analyze_prerun' | 'blocked_by'）と telemetry の analyze_path /
-// analyze_ineligible_reason / prerun_durations.analyze は生きているため対象外。
+// 対象外（生きている）: Analyze ゲート本体（buildReqFromContract / analyzeGateReasons / clarifyPrompt /
+// analyze-clarify spawn / needs_clarification の source: 'analyze' | 'analyze_prerun' | 'blocked_by'）と
+// telemetry の analyze_path / analyze_ineligible_reason / prerun_durations.analyze。`plan` オブジェクト
+// （synthesizeImplPlan の出力）は Implement の spawn 単位・報告キャリアとして生きている — その consumer の
+// 関数シグネチャは implementer-naming-invariant.test.mjs (c) が pin する。
 //
 // 禁止トークンは join で組み立てる — 本ファイル自身が plugins/dev-flow 配下の *.mjs であり、
 // (c) の grep 相当スキャンの対象に入るため、literal を書くと自分で invariant を破る。
 //
-// Run: npx vitest run _lib/analyze-phase-removed-invariant.test.mjs
+// Run: npx vitest run _lib/removed-phase-invariant.test.mjs
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
@@ -20,39 +25,55 @@ import { dirname, join, relative, extname } from 'node:path';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const pluginRoot = join(here, '..');
+const pluginsRoot = join(pluginRoot, '..');
 
-const ANALYZE_START = ['analyze', 'start'].join('_');
-const ANALYZE_END = ['analyze', 'end'].join('_');
+const PLAN_ITER = ['plan', 'iter'].join('_');
+const PLAN_VERDICT = ['plan', 'verdict'].join('_');
 
-// AC-1 の 6 文字列
-const FORBIDDEN = [
-  ['phase(', "'Analyze')"].join(''),
-  ['title: ', "'Analyze'"].join(''),
-  ANALYZE_START,
-  ANALYZE_END,
-  ['phase: ', "'Analyze'"].join(''),
-  ['ABORT_CTX.phase = ', "'Analyze'"].join(''),
-];
+// phase ごとの撤去済みトークン（Analyze: #695 AC-1 の 6 文字列 / Plan: #678 AC-1 の 7 文字列）
+const FORBIDDEN_BY_PHASE = {
+  Analyze: [
+    ['phase(', "'Analyze')"].join(''),
+    ['title: ', "'Analyze'"].join(''),
+    ['analyze', 'start'].join('_'),
+    ['analyze', 'end'].join('_'),
+    ['phase: ', "'Analyze'"].join(''),
+    ['ABORT_CTX.phase = ', "'Analyze'"].join(''),
+  ],
+  Plan: [
+    ['phase(', "'Plan')"].join(''),
+    ['plan', 'Verdict'].join(''),
+    ['plan', 'Concerns'].join(''),
+    ['plan', 'Iters'].join(''),
+    ['plan', 'end'].join('_'),
+    PLAN_ITER,
+    PLAN_VERDICT,
+  ],
+};
 
 const TARGETS = [
   '.claude/workflows/dev-flow.js',
   '_lib/devflow-durations.mjs',
 ];
 
+const devFlowSrc = readFileSync(join(pluginRoot, '.claude/workflows/dev-flow.js'), 'utf8');
+
 // ---- (a) 静的 pin: dev-flow.js / devflow-durations.mjs ----
 
 for (const rel of TARGETS) {
-  test(`[analyze-phase-removed] (a) ${rel} に Analyze phase 由来の 6 トークンが出現しない`, () => {
-    const src = readFileSync(join(pluginRoot, rel), 'utf8');
-    const hits = FORBIDDEN.filter((tok) => src.includes(tok));
-    assert.deepEqual(hits, [], `${rel} に撤去済みトークンが残っている: ${hits.join(', ')}`);
-  });
+  for (const [phaseName, forbidden] of Object.entries(FORBIDDEN_BY_PHASE)) {
+    test(`[removed-phase] (a) ${rel} に ${phaseName} phase 由来の ${forbidden.length} トークンが出現しない`, () => {
+      const src = readFileSync(join(pluginRoot, rel), 'utf8');
+      const hits = forbidden.filter((tok) => src.includes(tok));
+      assert.deepEqual(hits, [], `${rel} に撤去済みトークンが残っている: ${hits.join(', ')}`);
+    });
+  }
 }
 
-// ---- (b) 構造 pin: ゲート本体は Setup 末尾（phase('Setup') の後・phase('Implement') の前）に残り、2 経路の source は不変 ----
+// ---- (b) 構造 pin ----
 
-test("[analyze-phase-removed] (b) dev-flow.js のゲート本体（buildReqFromContract / analyzeGateReasons / analyze-clarify / needs_clarification 2 経路）は phase('Setup') と phase('Implement') の間に残る", () => {
-  const src = readFileSync(join(pluginRoot, '.claude/workflows/dev-flow.js'), 'utf8');
+test("[removed-phase] (b) Analyze: dev-flow.js のゲート本体（buildReqFromContract / analyzeGateReasons / analyze-clarify / needs_clarification 2 経路）は phase('Setup') と phase('Implement') の間に残る", () => {
+  const src = devFlowSrc;
   const setup = src.indexOf("phase('Setup')");
   const impl = src.indexOf("phase('Implement')");
   assert.ok(setup >= 0, "phase('Setup') が無い");
@@ -76,7 +97,53 @@ test("[analyze-phase-removed] (b) dev-flow.js のゲート本体（buildReqFromC
   assert.equal((gateSlice.match(/error_category: 'needs_clarification'[^\n]*phase: 'Setup'/g) || []).length, 3, 'needs_clarification の writeFailureTelemetry 3 経路（analyze_prerun / blocked_by / analyze）の phase 帰属が Setup になっていない');
 });
 
-// ---- (c) telemetry 経路: plugins/dev-flow 配下の *.sh / *.mjs / *.json / *.bats に phase_durations の analyze / plan 列と doctor の analyze/plan 列が無い ----
+test("[removed-phase] (b) Plan: dev-flow.js の meta.phases に Plan が無く、合成 plan は phase('Implement') より前で作られる", () => {
+  assert.ok(!devFlowSrc.includes("{ title: 'Plan' }"), 'meta.phases に Plan が残っている');
+  const synth = devFlowSrc.indexOf('let plan = synthesizeImplPlan(req, ISSUE)');
+  const impl = devFlowSrc.indexOf("phase('Implement')");
+  assert.ok(synth >= 0, 'synthesizeImplPlan(req, ISSUE) の呼び出しが無い（plan オブジェクトは削除対象外）');
+  assert.ok(impl >= 0, "phase('Implement') が無い");
+  assert.ok(synth < impl, '合成 plan は Implement phase より前に作られるべき');
+});
+
+// ---- (b) plan.parallel: dev-flow.js と _lib/*.mjs（test 除く）に plan.parallel の参照が無い ----
+
+const FORBIDDEN_PARALLEL = ['plan.parallel', 'plan?.parallel', 'parallel: []', '.parallel ??'];
+
+const parallelTargets = [
+  '.claude/workflows/dev-flow.js',
+  ...readdirSync(here)
+    .filter((n) => n.endsWith('.mjs') && !n.endsWith('.test.mjs'))
+    .map((n) => `_lib/${n}`),
+];
+
+test('[removed-phase] (b) plan.parallel: dev-flow.js と _lib canonical のどれにも plan.parallel の参照が無い', () => {
+  assert.ok(parallelTargets.includes('.claude/workflows/dev-flow.js'));
+  assert.ok(parallelTargets.includes('_lib/pr-artifacts.mjs'), '_lib の走査 root が違う');
+  assert.ok(parallelTargets.length > 20, `スキャン対象が少なすぎる（${parallelTargets.length} 件）`);
+  const hits = parallelTargets.flatMap((rel) => {
+    const src = readFileSync(join(pluginRoot, rel), 'utf8');
+    return FORBIDDEN_PARALLEL.filter((tok) => src.includes(tok)).map((tok) => `${rel}: ${tok}`);
+  });
+  assert.deepEqual(hits, [], `撤去済みの plan.parallel 参照が残っている:\n${hits.join('\n')}`);
+});
+
+// ---- (b) plan.parallel: 合成 plan と plan を読む側は serial のみを扱う ----
+
+test('[removed-phase] (b) plan.parallel: synthesizeImplPlan は serial のみを返し、isImplPlan / adoptReportedFiles / planPaths は serial だけを読む', () => {
+  const synthStart = devFlowSrc.indexOf('function synthesizeImplPlan(req, issue)');
+  assert.ok(synthStart >= 0, 'synthesizeImplPlan が無い');
+  const synthBody = devFlowSrc.slice(synthStart, devFlowSrc.indexOf('\n}\n', synthStart));
+  assert.ok(synthBody.includes('serial: ['), synthBody);
+  assert.ok(!synthBody.includes('parallel'), `synthesizeImplPlan に parallel が残っている:\n${synthBody}`);
+  assert.ok(devFlowSrc.includes('function isImplPlan(p) { return (p?.serial ?? []).some(isImplTask) }'));
+  assert.ok(devFlowSrc.includes('return { ...plan, serial: (plan.serial ?? []).map(adopt) }'));
+  const prArtifacts = readFileSync(join(here, 'pr-artifacts.mjs'), 'utf8');
+  assert.ok(prArtifacts.includes('for (const t of arr(plan?.serial)) {'), 'planPaths は plan.serial だけを走査する');
+});
+
+// ---- (c) telemetry 経路: plugins/dev-flow / plugins/playpark-core 配下の *.sh / *.mjs / *.json / *.bats に
+// phase_durations / phase_latency の analyze・plan 列、PHASE_NAMES の analyze・plan、Plan の iteration / verdict キーが無い ----
 
 const SCAN_EXT = new Set(['.sh', '.mjs', '.json', '.bats']);
 const SKIP_DIRS = new Set(['node_modules', '.git', '.agents', '.serena', '.system']);
@@ -97,6 +164,7 @@ const PD_PLAN = ['phase_durations', 'plan'].join('.');
 const PL_ANALYZE = ['phase_latency', 'analyze'].join('.');
 const PL_PLAN = ['phase_latency', 'plan'].join('.');
 
+const REMOVED_TOKENS = [PD_ANALYZE, PD_PLAN, PL_ANALYZE, PL_PLAN, PLAN_ITER, PLAN_VERDICT];
 const REMOVED_PHASES = ['analyze', 'plan'];
 const PHASE_PARENTS = ['phase_latency', 'phase_durations'];
 
@@ -146,7 +214,7 @@ function findRemovedPhaseKeysInText(src) {
 
 function scanFile(rel, src) {
   const hits = [];
-  for (const tok of [PD_ANALYZE, PD_PLAN, PL_ANALYZE, PL_PLAN]) {
+  for (const tok of REMOVED_TOKENS) {
     if (src.includes(tok)) hits.push(`${rel}: ${tok}`);
   }
   const ext = extname(rel);
@@ -168,17 +236,21 @@ function scanFile(rel, src) {
   return hits;
 }
 
-test(`[analyze-phase-removed] (c) plugins/dev-flow 配下の *.sh / *.mjs / *.json / *.bats に ${PD_ANALYZE} / ${PD_PLAN} / phase_latency の analyze・plan 列 / PHASE_NAMES の analyze・plan の参照が無い`, () => {
-  const files = walk(pluginRoot, []);
+test(`[removed-phase] (c) plugins/dev-flow / plugins/playpark-core 配下の *.sh / *.mjs / *.json / *.bats に ${PD_ANALYZE} / ${PD_PLAN} / phase_latency の analyze・plan 列 / PHASE_NAMES の analyze・plan / ${PLAN_ITER} / ${PLAN_VERDICT} の参照が無い`, () => {
+  const files = [
+    ...walk(pluginRoot, []),
+    ...walk(join(pluginsRoot, 'playpark-core'), []),
+  ];
   assert.ok(files.length > 50, `スキャン対象が少なすぎる（${files.length} 件）— walk の root が違う`);
   assert.ok(files.some((f) => extname(f) === '.json'), 'スキャン対象に *.json が無い — JSON.parse 経路が空振りしている');
-  const hits = files.flatMap((f) => scanFile(relative(pluginRoot, f), readFileSync(f, 'utf8')));
+  assert.ok(files.some((f) => f.startsWith(join(pluginsRoot, 'playpark-core'))), 'スキャン対象に playpark-core が無い');
+  const hits = files.flatMap((f) => scanFile(relative(pluginsRoot, f), readFileSync(f, 'utf8')));
   assert.deepEqual(hits, [], `telemetry 経路に撤去済みキーの参照が残っている:\n${hits.join('\n')}`);
 });
 
 // ---- (c) positive control: 検出器が red になる入力で pin する（検出器を弱めると (c) が vacuous に通るため） ----
 
-test('[analyze-phase-removed] (c) positive control: phase_latency / phase_durations の入れ子 object で 2 番目以降のキーにある analyze / plan を *.json から検出する', () => {
+test('[removed-phase] (c) positive control: phase_latency / phase_durations の入れ子 object で 2 番目以降のキーにある analyze / plan を *.json から検出する', () => {
   const nested = {
     phase_latency: {
       implement: { count: 2, p50: 150, p95: 195 },
@@ -197,13 +269,13 @@ test('[analyze-phase-removed] (c) positive control: phase_latency / phase_durati
   assert.deepEqual(scanFile('clean.json', JSON.stringify(clean)), []);
 });
 
-test('[analyze-phase-removed] (c) positive control: parse できない *.json は hit として落ちる', () => {
+test('[removed-phase] (c) positive control: parse できない *.json は hit として落ちる', () => {
   const hits = scanFile('broken.json', '{ "phase_latency": ');
   assert.equal(hits.length, 1);
   assert.match(hits[0], /^broken\.json: JSON\.parse 失敗/);
 });
 
-test('[analyze-phase-removed] (c) positive control: PHASE_NAMES 配列の先頭以外にある analyze / plan を *.sh から検出する', () => {
+test('[removed-phase] (c) positive control: PHASE_NAMES 配列の先頭以外にある analyze / plan を *.sh から検出する', () => {
   const key = ['PHASE', 'NAMES'].join('_');
   assert.deepEqual(scanFile('x.sh', `${key}='["implement","validate","analyze"]'\n`), ['x.sh: PHASE_NAMES に analyze']);
   assert.deepEqual(scanFile('x.sh', `${key}='["implement", "plan", "validate"]'\n`), ['x.sh: PHASE_NAMES に plan']);
@@ -213,6 +285,13 @@ test('[analyze-phase-removed] (c) positive control: PHASE_NAMES 配列の先頭�
   ]);
   // analyze_path のような部分一致は phase 名ではないので hit しない（negative control）
   assert.deepEqual(scanFile('x.sh', `${key}='["implement","analyze_path","validate"]'\n`), []);
+});
+
+test('[removed-phase] (c) positive control: plan iteration / plan verdict の telemetry キーを *.mjs / *.bats から検出する', () => {
+  assert.deepEqual(scanFile('x.mjs', `telemetry.${PLAN_ITER} = 0\n`), [`x.mjs: ${PLAN_ITER}`]);
+  assert.deepEqual(scanFile('x.bats', `jq -e '.telemetry.${PLAN_VERDICT} == null'\n`), [`x.bats: ${PLAN_VERDICT}`]);
+  // plan オブジェクト自体（生きている）は hit しない（negative control）
+  assert.deepEqual(scanFile('x.mjs', 'const plan = synthesizeImplPlan(req, issue)\n'), []);
 });
 
 // ---- (d) 表記: 撤去済み phase 名としての「Analyze」をコメントに残さない ----
@@ -232,13 +311,13 @@ function findAnalyzePhaseWording(src) {
 }
 
 for (const rel of PHASE_WORDING_TARGETS) {
-  test(`[analyze-phase-removed] (d) ${rel} に phase 名としての Analyze 表記が残っていない`, () => {
+  test(`[removed-phase] (d) ${rel} に phase 名としての Analyze 表記が残っていない`, () => {
     const hits = findAnalyzePhaseWording(readFileSync(join(pluginRoot, rel), 'utf8'));
     assert.deepEqual(hits, [], `${rel} に Analyze phase 前提の表記が残っている:\n${hits.join('\n')}`);
   });
 }
 
-test('[analyze-phase-removed] (d) positive control: phase 名の Analyze は検出し、動詞の "Analyze dev-flow" と小文字の analyze ゲートは検出しない', () => {
+test('[removed-phase] (d) positive control: phase 名の Analyze は検出し、動詞の "Analyze dev-flow" と小文字の analyze ゲートは検出しない', () => {
   assert.deepEqual(findAnalyzePhaseWording('# x\n// Analyze で freeze した AC\n'), ['2: // Analyze で freeze した AC']);
   assert.deepEqual(findAnalyzePhaseWording('sonnet は Analyze ゲート後'), ['1: sonnet は Analyze ゲート後']);
   assert.deepEqual(findAnalyzePhaseWording('# x.sh - Analyze dev-flow / pr-iterate journal telemetry\n'), []);

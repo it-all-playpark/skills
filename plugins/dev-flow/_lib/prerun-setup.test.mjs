@@ -127,66 +127,31 @@ test('validatePrerunSetup: ok:false のとき base_error/worktree_error/worktree
 
 // ── validatePrerunSetup: 必須キーの型 ───────────────────────────────────────
 
-test('validatePrerunSetup: base 欠落は「必須キーが欠落/型不正: base」で throw する', () => {
+// name, 入力（overrides。delete はキーを欠落させる）, 期待する欠落/型不正キー
+const DELETE = Symbol('delete');
+const REQUIRED_KEY_CASES = [
+  ['base 欠落', { base: DELETE }, 'base'],
+  ['worktree が相対パス', { worktree: 'relative/path' }, 'worktree'],
+  ['head が空文字', { head: '' }, 'head'],
+  ['deps.ok が非 boolean', { deps: { ok: 'true', note: 'x' } }, 'deps.ok'],
+  ['deps.note が非 string', { deps: { ok: true, note: 123 } }, 'deps.note'],
+  ['stack.frameworks が非配列', { stack: { frameworks: 'next' } }, 'stack.frameworks'],
+  ['epoch が 0', { epoch: 0 }, 'epoch'],
+  ['epoch が非整数(12.5)', { epoch: 12.5 }, 'epoch'],
+  ['epoch が文字列("1000")', { epoch: '1000' }, 'epoch'],
+  ['epoch_end が 0', { epoch_end: 0 }, 'epoch_end'],
+  ['epoch_end 欠落', { epoch_end: DELETE }, 'epoch_end'],
+  ['epoch_end が非整数(12.5)', { epoch_end: 12.5 }, 'epoch_end'],
+];
+
+test.each(REQUIRED_KEY_CASES)('validatePrerunSetup: %s は「必須キーが欠落/型不正: <key>」で throw する', (_name, overrides, key) => {
   const raw = validRaw();
-  delete raw.base;
-  assert.throws(() => validatePrerunSetup(raw, 641), /必須キーが欠落\/型不正: base/);
-});
-
-test('validatePrerunSetup: worktree が相対パスは「必須キーが欠落/型不正: worktree」で throw する', () => {
-  const raw = validRaw({ worktree: 'relative/path' });
-  assert.throws(() => validatePrerunSetup(raw, 641), /必須キーが欠落\/型不正: worktree/);
-});
-
-test('validatePrerunSetup: head が空文字は「必須キーが欠落/型不正: head」で throw する', () => {
-  const raw = validRaw({ head: '' });
-  assert.throws(() => validatePrerunSetup(raw, 641), /必須キーが欠落\/型不正: head/);
-});
-
-test('validatePrerunSetup: deps.ok が非 boolean は「必須キーが欠落/型不正: deps.ok」で throw する', () => {
-  const raw = validRaw({ deps: { ok: 'true', note: 'x' } });
-  assert.throws(() => validatePrerunSetup(raw, 641), /必須キーが欠落\/型不正: deps\.ok/);
-});
-
-test('validatePrerunSetup: deps.note が非 string は「必須キーが欠落/型不正: deps.note」で throw する', () => {
-  const raw = validRaw({ deps: { ok: true, note: 123 } });
-  assert.throws(() => validatePrerunSetup(raw, 641), /必須キーが欠落\/型不正: deps\.note/);
-});
-
-test('validatePrerunSetup: stack.frameworks が非配列は「必須キーが欠落/型不正: stack.frameworks」で throw する', () => {
-  const raw = validRaw({ stack: { frameworks: 'next' } });
-  assert.throws(() => validatePrerunSetup(raw, 641), /必須キーが欠落\/型不正: stack\.frameworks/);
-});
-
-test('validatePrerunSetup: epoch が 0 は「必須キーが欠落/型不正: epoch」で throw する', () => {
-  const raw = validRaw({ epoch: 0 });
-  assert.throws(() => validatePrerunSetup(raw, 641), /必須キーが欠落\/型不正: epoch/);
-});
-
-test('validatePrerunSetup: epoch が非整数(12.5)は「必須キーが欠落/型不正: epoch」で throw する', () => {
-  const raw = validRaw({ epoch: 12.5 });
-  assert.throws(() => validatePrerunSetup(raw, 641), /必須キーが欠落\/型不正: epoch/);
-});
-
-test('validatePrerunSetup: epoch が文字列("1000")は「必須キーが欠落/型不正: epoch」で throw する', () => {
-  const raw = validRaw({ epoch: '1000' });
-  assert.throws(() => validatePrerunSetup(raw, 641), /必須キーが欠落\/型不正: epoch/);
-});
-
-test('validatePrerunSetup: epoch_end が 0 は「必須キーが欠落/型不正: epoch_end」で throw する', () => {
-  const raw = validRaw({ epoch_end: 0 });
-  assert.throws(() => validatePrerunSetup(raw, 641), /必須キーが欠落\/型不正: epoch_end/);
-});
-
-test('validatePrerunSetup: epoch_end 欠落は「必須キーが欠落/型不正: epoch_end」で throw する', () => {
-  const raw = validRaw();
-  delete raw.epoch_end;
-  assert.throws(() => validatePrerunSetup(raw, 641), /必須キーが欠落\/型不正: epoch_end/);
-});
-
-test('validatePrerunSetup: epoch_end が非整数(12.5)は「必須キーが欠落/型不正: epoch_end」で throw する', () => {
-  const raw = validRaw({ epoch_end: 12.5 });
-  assert.throws(() => validatePrerunSetup(raw, 641), /必須キーが欠落\/型不正: epoch_end/);
+  for (const [k, v] of Object.entries(overrides)) {
+    if (v === DELETE) delete raw[k];
+    else raw[k] = v;
+  }
+  const escaped = key.replace(/\./g, '\\.');
+  assert.throws(() => validatePrerunSetup(raw, 641), new RegExp(`必須キーが欠落/型不正: ${escaped}`));
 });
 
 // ── validatePrerunSetup: issue 一致（stale setup の持ち込み防止） ──────────────
@@ -281,20 +246,13 @@ test('summarizePrerunDeps: ok:false かつ note 空でも implNote は非 null',
 
 // ── hasNextJs ────────────────────────────────────────────────────────────────
 
-test('hasNextJs: next を含む配列は true', () => {
-  assert.equal(hasNextJs(['next']), true);
-});
-
-test('hasNextJs: next を含まない配列は false', () => {
-  assert.equal(hasNextJs(['react']), false);
-});
-
-test('hasNextJs: 空配列は false', () => {
-  assert.equal(hasNextJs([]), false);
-});
-
-test('hasNextJs: undefined は false', () => {
-  assert.equal(hasNextJs(undefined), false);
+test.each([
+  ['next を含む配列は true', ['next'], true],
+  ['next を含まない配列は false', ['react'], false],
+  ['空配列は false', [], false],
+  ['undefined は false', undefined, false],
+])('hasNextJs: %s', (_name, frameworks, want) => {
+  assert.equal(hasNextJs(frameworks), want);
 });
 
 // ── 静的検査: inline 制約（ESM import / require / Date.now / Math.random を含まない） ──

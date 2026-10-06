@@ -6,11 +6,11 @@
 // LLM に適用可否を判定させない）。Next.js 判定そのものと標準経路（implementer / evaluator。test は注入しない）の
 // 注入有無は turbopack-stack-gate-routing.test.mjs が担う。
 //
-// このテストは dev-flow.js を VM で実行し、標準経路に加えて分岐経路（Validate red→green-fix / Evaluate
-// implementation 差し戻し fix#i）でも規約の識別トークン（error 名 `TurbopackInternalError` と fallback
-// コマンド `next build --webpack`）が verbatim 到達し、Next.js 非検出時はどの経路にも現れないことで観測する
+// このテストは dev-flow.js を VM で実行し、分岐経路（Validate red→green-fix / Evaluate implementation 差し戻し
+// fix#i）でも規約の識別トークン（error 名 `TurbopackInternalError` と fallback コマンド `next build --webpack`）が
+// verbatim 到達し、Next.js 非検出時はどの経路にも現れないことで観測する
 // （issue #636: 識別子出現回数・区間切り出し・定義文字列のキーワード pin を VM 挙動へ置換）。
-//   (1) Next.js 検出: impl:serial:issue-1 / eval#1 の prompt にトークンが含まれ、test#1 には含まれない（issue #821）
+// 標準経路（implementer / eval#1 に含まれ test#1 には含まれない。issue #821）は turbopack-stack-gate-routing.test.mjs (a)。
 //   (2) Next.js 検出: green-fix#1 の prompt にトークンが含まれる
 //   (3) Next.js 検出: fix#1 の prompt にトークンが含まれる
 //   (2')(3') Next.js 非検出: green-fix#1 / fix#1 の prompt にトークンが含まれない
@@ -71,15 +71,6 @@ async function run(overrides, frameworks, name) {
   assertNoCrash(error, name);
   return calls;
 }
-
-// (1) Next.js 検出・標準経路
-test('[turbopack-fallback] Next.js 検出: implementer / eval#1 の prompt に規約トークンが含まれ、test#1（run-tests の転写）には含まれない', async () => {
-  const calls = await run({}, NEXT_FRAMEWORKS, 'next-standard');
-  for (const label of ['impl:serial:issue-1', 'eval#1']) {
-    assertTokens(calls.find((c) => c.label === label), label, true);
-  }
-  assertTokens(calls.find((c) => c.label === 'test#1'), 'test#1', false);
-});
 
 // (2)(2') Validate red→green-fix 経路
 test('[turbopack-fallback] green-reimpl#1 prompt: Next.js 検出時は規約トークンが含まれ、非検出時は含まれない', async () => {

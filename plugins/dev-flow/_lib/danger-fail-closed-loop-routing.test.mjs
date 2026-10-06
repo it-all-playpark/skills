@@ -2,7 +2,7 @@
 // break すること・merge tier が HOLD になること・fail-closed が return で
 // danger_hits とは別軸で判別できることを検証する workflow レベル統合テスト。
 //
-// _lib/merge-tier-unsatisfied-ac.test.mjs / _lib/eval-convergence.test.mjs の VM sandbox
+// _lib/eval-convergence.test.mjs の VM sandbox
 // パターン（node:vm で dev-flow.js を読み込み、agent() を label/agentType で stub、
 // evaluator 呼び出し回数を counter で記録）を踏襲する。
 //
@@ -24,7 +24,7 @@ const repoRoot = join(here, '..');
 const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
 const src = readFileSync(devFlowPath, 'utf8');
 
-// ---- VM sandbox helpers（merge-tier-unsatisfied-ac.test.mjs / eval-convergence.test.mjs をベースに拡張）----
+// ---- VM sandbox helpers（eval-convergence.test.mjs をベースに拡張）----
 
 /**
  * danger-fail-closed 専用の VM sandbox を組む。
@@ -130,7 +130,7 @@ function makeSandbox(analyzeReq, dangerGrepResponse, evaluatorResponse) {
     workflow: workflowStub,
     // 引数（ISSUE 解決用）
     args: devFlowArgs('1'),
-    // JS 組み込み（merge-tier-unsatisfied-ac.test.mjs / eval-convergence.test.mjs と同一セット）
+    // JS 組み込み（eval-convergence.test.mjs と同一セット）
     console,
     JSON,
     Math,
@@ -160,7 +160,6 @@ function makeSandbox(analyzeReq, dangerGrepResponse, evaluatorResponse) {
 
 /**
  * dev-flow.js ソースを strip して async IIFE でラップし vm sandbox で実行する。
- * merge-tier-unsatisfied-ac.test.mjs の runDevFlowCapture と同型。
  * IIFE の **resolved 値（return object）を捕捉して返す**。
  *
  * @param {string} src - dev-flow.js の raw ソース

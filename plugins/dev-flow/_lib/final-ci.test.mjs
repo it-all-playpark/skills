@@ -8,6 +8,7 @@ import {
   finalCiPrompt,
   finalCiVerdict,
 } from './final-ci.mjs';
+import { HOLD_REASON_KINDS } from './merge-tier.mjs';
 
 const SHA_A = '7c4fcadc81d948db6f3053ddbc9788af15a470d6';
 const SHA_B = 'b55733ea1234567890abcdef1234567890abcdef';
@@ -321,6 +322,16 @@ test('finalCiPrompt: repo が null なら --repo を含まない', () => {
 test('finalCiPrompt: 禁止語を含まない（exec-proxy 規範）', () => {
   const prompt = finalCiPrompt({ pr: 12, repo: 'o/r' });
   assert.ok(!/sandbox|excludedCommands|permission|EPERM|迂回|代替手順|guard/i.test(prompt));
+});
+
+// --- FINAL_CI_KIND_* は Merge tier の hold kind enum と同値（final CI の HOLD を merge-tier の分類へそのまま渡す） ---
+
+test('FINAL_CI_KIND_DETERMINISTIC/HUMAN は merge-tier.mjs の HOLD_REASON_KINDS と同値', () => {
+  assert.deepEqual(
+    [FINAL_CI_KIND_DETERMINISTIC, FINAL_CI_KIND_HUMAN],
+    HOLD_REASON_KINDS,
+    `[FINAL_CI_KIND_DETERMINISTIC, FINAL_CI_KIND_HUMAN]（${JSON.stringify([FINAL_CI_KIND_DETERMINISTIC, FINAL_CI_KIND_HUMAN])}）は HOLD_REASON_KINDS（${JSON.stringify(HOLD_REASON_KINDS)}）と一致するはず`,
+  );
 });
 
 // --- (o) FINAL_CI_REASONS closed enum ---
