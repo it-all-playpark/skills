@@ -28,6 +28,16 @@ PATHS_HEADING_RE = re.compile(r"^##[ \t]+変更対象パス[ \t]*$", re.MULTILIN
 NEXT_SECTION_RE = re.compile(r"^#{1,2}[ \t]", re.MULTILINE)
 PATH_ENTRY_RE = re.compile(r"^-[ \t]+(\S.*?)[ \t]*$", re.MULTILINE)
 ISSUE_URL_RE = re.compile(r"/issues/(\d+)$")
+# dev-flow の analyze（dev-issue-analyze/scripts/analyze-issue.sh の SCOPE_MAX_CHARS）は AC 節を除いた本文を
+# この字数で切り、切られた部分は implementer に届かない。agent issue はこの上限内でしか起票しない。
+# 字数は analyze-issue.sh の scope_total_chars と同じ規則で数える（下の 3 正規表現と scope_total_chars()）。
+SCOPE_MAX_CHARS = 4000
+AC_HEADING_LINE_RE = re.compile(
+    r"^#{2,6}[ \t\n\v\f\r]+(acceptance criteria|受け入れ基準|受け入れ条件|受入基準|受入条件|完了条件)",
+    re.IGNORECASE,
+)
+HEADING_LINE_RE = re.compile(r"^#{1,6}[ \t\n\v\f\r]+")
+FENCE_LINE_RE = re.compile(r"^[ \t\n\v\f\r]{0,3}(`{3,}|~{3,})")
 
 
 def split_csv(raw: str | None) -> list[str]:
@@ -155,6 +165,41 @@ def check_target_paths(body: str) -> None:
             raise ValueError(f"`## 変更対象パス` のエントリが `..` セグメントを含む（repo の外を指せない）: {entry}")
 
 
+def scope_total_chars(body: str) -> int:
+    """AC 節（最初の AC 見出しから次の見出しまで。フェンス内の見出しは数えない）を除いた本文の字数。
+
+    analyze-issue.sh の extract_non_ac_body と ${#SCOPE_FULL} の移植。bash の $(...) が末尾改行を落とすので、
+    入力と出力の末尾改行は数えない。
+    """
+    kept: list[str] = []
+    skip = found = in_fence = False
+    for line in body.rstrip("\n").split("\n"):
+        if FENCE_LINE_RE.match(line):
+            in_fence = not in_fence
+            if not skip:
+                kept.append(line)
+            continue
+        if not in_fence and HEADING_LINE_RE.match(line):
+            if found:
+                skip = False
+            elif AC_HEADING_LINE_RE.match(line):
+                found = skip = True
+                continue
+        if not skip:
+            kept.append(line)
+    return len("\n".join(kept).rstrip("\n"))
+
+
+def check_scope_chars(body: str) -> None:
+    total = scope_total_chars(body)
+    if total > SCOPE_MAX_CHARS:
+        raise ValueError(
+            f"agent issue の本文（AC 節を除く）が {total} 字で、上限 {SCOPE_MAX_CHARS} 字を {total - SCOPE_MAX_CHARS} 字超えている。"
+            "dev-flow の analyze は超えた部分を切り、implementer に届かない。"
+            "調査結果・実装計画・レビュー履歴を書き写さず、ゴールと制約・取らないことに要点を絞って書き直す"
+        )
+
+
 def has_blocked_by_line(body: str, number: int) -> bool:
     pattern = re.compile(
         rf"^[ \t]*(?:[-*][ \t]+)?blocked by\b[^\n]*(?<![\w./-])#{number}\b",
@@ -280,6 +325,9 @@ def run(args: argparse.Namespace) -> int:
 
     blocked_by = parse_blocked_by(args.blocked_by)
     final_body = ensure_blocked_by_lines(body, blocked_by)
+    if args.kind == "agent":
+        # 起票される本文（先頭に足す Blocked by 行を含む）を analyze が読むので、追記後の本文で数える
+        check_scope_chars(final_body)
 
     if args.dry_run:
         preview = final_body.splitlines()
@@ -357,7 +405,8 @@ def parse_args() -> argparse.Namespace:
         "--kind",
         choices=["agent", "human"],
         default="agent",
-        help="agent: implementation issue (rejects `executor: human`, requires `## 変更対象パス`) / human: human-task issue",
+        help="agent: implementation issue (rejects `executor: human`, requires `## 変更対象パス`, "
+        "caps the non-AC body at 4000 chars) / human: human-task issue",
     )
     parser.add_argument("--blocked-by", help="Comma-separated issue numbers this issue is blocked by")
     parser.add_argument("--dry-run", action="store_true", help="Preview only")

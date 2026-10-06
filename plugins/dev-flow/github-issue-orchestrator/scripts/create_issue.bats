@@ -4,7 +4,8 @@ bats_require_minimum_version 1.5.0
 #
 # Focus: the pre-flight AC lint gate (lint_ac()) invoked at the top of run(),
 # exercised only through the --dry-run path so `gh` is never required, plus the
-# --kind agent|human gate (incl. the agent `## 変更対象パス` gate, tests 20+) and
+# --kind agent|human gate (incl. the agent `## 変更対象パス` gate, tests 20+, and the
+# 4000-char non-AC body cap pinned to analyze-issue.sh's scope_total_chars, tests 27+) and
 # --blocked-by dependency wiring (tests 5+; the non-dry-run ones put a recording
 # gh stub first on PATH).
 #
@@ -92,6 +93,7 @@ setup() {
 #   issue create → --body-file の中身を $SENT_BODY に写し、URL .../issues/$GH_STUB_NEW_ISSUE を返す
 #   api repos/.../issues/N → {"id": N+9000}（GH_STUB_MISSING に含む番号は 404）
 #   api --method POST .../dependencies/blocked_by → 成功（GH_STUB_DEP_FAIL で失敗）
+#   issue view → $GH_STUB_ISSUE_JSON の中身（analyze-issue.sh に読ませる issue JSON）
 use_gh_stub() {
     local bin="$BATS_TEST_TMPDIR/bin"
     mkdir -p "$bin"
@@ -109,6 +111,7 @@ case "$1 $2" in
         done
         echo "https://github.com/acme/app/issues/${GH_STUB_NEW_ISSUE:-50}"
         exit 0 ;;
+    "issue view") cat "$GH_STUB_ISSUE_JSON"; exit 0 ;;
 esac
 if [[ "$1" == "api" && "$2" == "--method" ]]; then
     if [[ -n "${GH_STUB_DEP_FAIL:-}" ]]; then
@@ -507,4 +510,111 @@ write_paths_body() {
 
     [ "$status" -eq 0 ]
     [[ "$output" == *"Dry run: issue will not be created."* ]]
+}
+
+# ---- --kind agent: AC 節を除いた本文の 4000 字上限（analyze-issue.sh の scope_total_chars と同じ数え方）----
+
+# repeat_char <char> <n>: <char> を n 個並べる
+repeat_char() {
+    local pad
+    pad="$(printf '%*s' "$2" '')"
+    printf '%s' "${pad// /$1}"
+}
+
+# write_scope_body <file> <pad 字数>: AC 節を除いた字数が 31 + <pad 字数> になる agent 本文
+#   "## 変更対象パス\n- src/foo.py\n\n## ゴール\n" = 31 字。AC 節（見出しと項目）と末尾改行は数えない
+write_scope_body() {
+    write_body "$1" \
+        "## 受け入れ基準" \
+        "- [ ] AC-1 foo" \
+        "" \
+        "## 変更対象パス" \
+        "- src/foo.py" \
+        "" \
+        "## ゴール" \
+        "$(repeat_char あ "$2")"
+}
+
+@test "(27) --kind agent + AC 節を除いて 4000 字ちょうど（マルチバイト）+ --dry-run -> exit 0" {
+    BODY="$BATS_TEST_TMPDIR/body.md"
+    write_scope_body "$BODY" 3969
+
+    run --separate-stderr python3 "$SCRIPT" --title "Test" --body-file "$BODY" --dry-run
+
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Dry run: issue will not be created."* ]]
+}
+
+@test "(28) --kind agent + AC 節を除いて 4001 字 + --dry-run -> exit 1、超過字数と書き直しの指示を stderr に出す" {
+    BODY="$BATS_TEST_TMPDIR/body.md"
+    write_scope_body "$BODY" 3970
+
+    run --separate-stderr python3 "$SCRIPT" --title "Test" --body-file "$BODY" --dry-run
+
+    [ "$status" -eq 1 ]
+    [[ "$stderr" == *"（AC 節を除く）が 4001 字"*"上限 4000 字を 1 字超えている"* ]]
+    [[ "$stderr" == *"要点を絞って書き直す"* ]]
+    [[ "$output" != *"Dry run: issue will not be created."* ]]
+}
+
+@test "(29) --blocked-by が先頭に足す行も字数に入る（4000 字ちょうど + Blocked by #12 -> exit 1）" {
+    BODY="$BATS_TEST_TMPDIR/body.md"
+    write_scope_body "$BODY" 3969
+
+    run --separate-stderr python3 "$SCRIPT" --title "Test" --body-file "$BODY" --blocked-by 12 --dry-run
+
+    [ "$status" -eq 1 ]
+    # "Blocked by #12\n\n" の 16 字が加わる
+    [[ "$stderr" == *"（AC 節を除く）が 4016 字"* ]]
+}
+
+@test "(30) 4000 字超の本文（非 dry-run）-> exit 1、gh issue create を呼ばない" {
+    use_gh_stub
+    BODY="$BATS_TEST_TMPDIR/body.md"
+    write_scope_body "$BODY" 3970
+
+    run --separate-stderr python3 "$SCRIPT" --title "Test" --body-file "$BODY"
+
+    [ "$status" -eq 1 ]
+    [[ "$stderr" == *"4001 字"* ]]
+    ! grep -q '^issue create' "$GH_LOG"
+}
+
+@test "(31) 字数は同じ本文で analyze-issue.sh の scope_total_chars と一致する（フェンス・AC 節の境界・マルチバイト）" {
+    command -v jq >/dev/null || skip "jq not available"
+    use_gh_stub
+    ANALYZE="$SKILLS_REPO/dev-issue-analyze/scripts/analyze-issue.sh"
+    BODY="$BATS_TEST_TMPDIR/body.md"
+    write_body "$BODY" \
+        "## ゴール" \
+        "  日本語のゴールと末尾の空白  " \
+        '```bash' \
+        "# フェンス内のコメントは見出しではない" \
+        '```' \
+        "## 受け入れ基準（Acceptance Criteria）" \
+        "- [ ] AC-1 foo" \
+        "~~~" \
+        "## フェンス内の見出しは AC 節を閉じない" \
+        "~~~" \
+        "- [ ] AC-2 bar" \
+        "### 受け入れ基準の補足" \
+        "補足は AC 節に入らない（最初の AC 見出しだけを除く）" \
+        "## 変更対象パス" \
+        "- src/foo.py" \
+        "####### 7 個の # は見出しではない" \
+        "$(repeat_char い 4100)" \
+        "" \
+        ""
+    jq -n --rawfile body "$BODY" \
+        '{title: "feat: x", state: "open", body: $body, labels: [], assignees: [], milestone: null, comments: [], author: {login: "a"}}' \
+        >"$BATS_TEST_TMPDIR/issue.json"
+    export GH_STUB_ISSUE_JSON="$BATS_TEST_TMPDIR/issue.json"
+
+    expected="$("$ANALYZE" 1 --contract | jq -r '.scope_total_chars')"
+    [ "$expected" -gt 4000 ]
+
+    run --separate-stderr python3 "$SCRIPT" --title "Test" --body-file "$BODY" --dry-run
+
+    [ "$status" -eq 1 ]
+    [[ "$stderr" == *"（AC 節を除く）が ${expected} 字"* ]]
 }
