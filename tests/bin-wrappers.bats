@@ -44,6 +44,7 @@ dev-flow-ready-set
 diff-risk-classify
 ensure-worktree-deps
 merge-tier-facts
+pr-push
 redgreen-verify
 secfloor-classify
 structural-classify
@@ -96,6 +97,7 @@ target_for() {
         detect-stack) echo "_lib/scripts/detect-stack.sh" ;;
         dev-flow-prerun) echo "dev-flow/scripts/prerun.sh" ;;
         dev-flow-ready-set) echo "dev-flow/scripts/ready-set.sh" ;;
+        pr-push) echo "dev-flow/scripts/pr-push.sh" ;;
         ac-lint) echo "_lib/scripts/ac-lint.sh" ;;
         *) echo "" ;;
     esac
@@ -135,7 +137,7 @@ skills_target_for() {
     [ "$actual" = "$expected" ]
 }
 
-@test "plugins/dev-flow/bin の entry は対象20本と完全一致する" {
+@test "plugins/dev-flow/bin の entry は対象21本と完全一致する" {
     expected="$(devflow_expected_names)"
     actual="$(/bin/ls -1 "$REPO_ROOT/plugins/dev-flow/bin" | sort)"
     [ "$actual" = "$expected" ]

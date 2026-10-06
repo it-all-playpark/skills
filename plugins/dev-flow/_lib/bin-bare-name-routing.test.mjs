@@ -5,7 +5,7 @@
 // AC1: 絶対パス literal が 0 箇所。
 // AC2: workflow が使う call site が bare 名で配線されている。
 // [first-token]: bash 前置の bare 名呼び出しや拡張子付き呼び出しの残存が無い。
-// [bin]: workflow が使う bare 名は全て bin/ に存在し、bin/ は core 1 本 + dev-flow 20 本に分割一致する。
+// [bin]: workflow が使う bare 名は全て bin/ に存在し、bin/ は core 1 本 + dev-flow 21 本に分割一致する。
 //
 // AC1 の検査文字列自体が禁止パターンの literal を含むと自己矛盾するため、
 // join() で組み立てる（_lib/*.mjs は本テストファイル自身も走査対象に含むため）。
@@ -48,6 +48,7 @@ const BARE = [
   'dev-flow-ready-set',
   'merge-tier-facts',
   'ci-wait',
+  'pr-push',
   'workspace-prebuild',
 ];
 
@@ -103,6 +104,7 @@ const DEV_FLOW_CALL_SITES = [
   ['danger-grep', 'secfloor-classify /tmp/wt origin/main', {}],
   ['merge-tier-facts', '`merge-tier-facts --worktree /tmp/wt --base origin/main --pr-view-data ', {}],
   ['test#1', '`workspace-prebuild /tmp/wt`', {}],
+  ['pr#', '`pr-push /tmp/wt/.devflow-tmp/push-output.log`', {}],
   ['redgreen', "redgreen-verify /tmp/wt 't.test.mjs' 'src/x.ts'", { 'eval#1': PASS_EVAL_TEST_AC, redgreen: { results: [{ index: 0, red: true, green: true }] } }],
   ['ui-verify-stack', "ui-verify-stack up --worktree '/tmp/wt' ", {
     'danger-grep': { risk: { ok: true, hits: [] }, files: ['src/components/Foo.tsx'], struct: null, diffhash: { hash: 'AAA', empty: false } },
@@ -188,12 +190,12 @@ for (const [name, src] of [
   });
 }
 
-// ---- [bin] workflow が使う bare 名は全て bin/ に存在し、bin/ は core 1 本 + dev-flow 20 本に分割一致する ----
+// ---- [bin] workflow が使う bare 名は全て bin/ に存在し、bin/ は core 1 本 + dev-flow 21 本に分割一致する ----
 
-test('[bin-bare-name-routing][bin] plugins/dev-flow/bin は BARE から journal を除いた 20 名に完全一致する', () => {
+test('[bin-bare-name-routing][bin] plugins/dev-flow/bin は BARE から journal を除いた 21 名に完全一致する', () => {
   const actual = readdirSync(binDir).sort();
   const expected = BARE.filter((name) => name !== 'journal').sort();
-  assert.deepEqual(actual, expected, `plugins/dev-flow/bin の内容が期待 20 名と一致しない: actual=${JSON.stringify(actual)}`);
+  assert.deepEqual(actual, expected, `plugins/dev-flow/bin の内容が期待 21 名と一致しない: actual=${JSON.stringify(actual)}`);
 });
 
 test("[bin-bare-name-routing][bin] plugins/playpark-core/bin は ['journal'] に完全一致する", () => {
