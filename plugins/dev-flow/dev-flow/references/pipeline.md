@@ -118,7 +118,13 @@ ledger 収束だけでは未達 AC がループを回さない。そこで agent
 `AGENT_AC_REIMPL_MAX` 回まで）。human AC は worktree 外の作業なので差し戻さない。Merge tier の HOLD 理由は
 `ac_agent_unsatisfied`（差し戻し上限後も未達 = ループの取りこぼし）と `ac_human_pending`（人手 AC 待ち）に分ける。
 `dev-implementer` が返す `design_decisions` / `pr_notes` は plan（`architecture_decisions` / `pr_notes`）に取り込み、
-PR body の「設計判断」「検証」に載せる（evaluator も plan 経由で読み、「PR 本文に書く」型の AC を判定する）。
+PR body の「設計判断」「検証」に 1 行要約として clip して載せる。対応表など複数行の記録は `pr_sections` で返させ、
+`## 検証` の後に `<details>` で改行を保ったまま clip せず載せる（`PR_BODY_MAX_CHARS` は `<details>` の外にだけ掛ける）。
+`pr_sections` の合計が `PR_SECTIONS_MAX_CHARS`（3000 字）を超えたら、Implement / reimpl の直後（Evaluate より前）に
+`dev-implementer` へ要約を 1 回差し戻す（`sections-trim` / `sections-trim#<i>`。builder は切らない）。
+要約行の clip と、差し戻し後も残った合計上限超過は telemetry `pr_body_clips` と終端サマリーに出す。
+evaluator（Evaluate / final-ac-reconcile）には plan の本文材料ではなく `buildPrBody` の出力（Evaluate は PR 作成前の
+プレビュー）を渡し、「PR 本文に書く」型の AC を本文テキストで判定させる — builder が切った内容を充足と見なさないため。
 `out_of_scope`（issue 本文にあるが AC 外・worktree 外として実施しなかった作業）は `plan.out_of_scope` に取り込み、
 PR body と終端サマリーの「この PR に含めなかったもの」節にそのまま転記する（空なら節ごと出さない）。
 

@@ -12,7 +12,7 @@ dev-flow.js / pr-iterate.js は run の終端（成功・失敗・abort）で te
 
 telemetry の読み手は `dev-flow-health` だけ。`health-report.sh` がプログラムから読むのは `plugin_commit`、
 LLM ステップは原因推定のときに該当 run の telemetry を手で読む。読み手の無いキーは書かない — 書くキーは下の
-12 個に限り、`_lib/telemetry-keys.test.mjs` が workflow の telemetry object literal（成功・失敗・abort）と
+13 個に限り、`_lib/telemetry-keys.test.mjs` が workflow の telemetry object literal（成功・失敗・abort）と
 VM 実行の handoff の両方で pin する。キーを足すときは読み手を先に決め、この一覧と同テストを同時に更新する。
 いずれも記録専用で、gate・merge tier・ledger・shape 判定の入力にはしない（軸A 非抵触）。
 
@@ -32,6 +32,7 @@ VM 実行の handoff の両方で pin する。キーを足すときは読み手
 | `review_model_config` | dev-flow / pr-iterate | 成功・失敗・abort | pr-reviewer に渡す model（`opus`） |
 | `plugin_version` | dev-flow / pr-iterate | 成功・失敗・abort | `_lib/plugin-version.mjs` の `PLUGIN_VERSION` |
 | `plugin_commit` | dev-flow / pr-iterate | 成功・失敗・abort | 実行中の dev-flow plugin の skills repo commit SHA 先頭 12 桁、決められなければ `null` |
+| `pr_body_clips` | dev-flow | 成功（発火した run のみ） | PR 本文で末尾を切った要約行の件数と長文欄の上限超過字数 `{note, decision, change_bullet, sections_over_chars}` |
 
 nested pr-iterate を起動した dev-flow run は pr-iterate と dev-flow の entry が 1 件ずつ残る。集計は dev-flow entry
 を使う。
@@ -67,6 +68,10 @@ nested pr-iterate を起動した dev-flow run は pr-iterate と dev-flow の e
   link mode は checkout の HEAD）、`args.setup.plugin_commit` → nested pr-iterate へは `args.plugin_commit` で渡る。
   単体起動の pr-iterate は prerun を経ないので `null`。12 桁 hex 以外は `normalizePluginCommit`
   （`_lib/plugin-version.mjs`）が `null` に倒し run を止めない。キー欠落は本キー導入前の entry を意味する。
+- `pr_body_clips`: `_lib/pr-artifacts.mjs` の `prBodyClipReport`。PR 本文で「…」に切った `pr_notes` / 設計判断 /
+  変更 bullet の件数と、`pr_sections` の markdown 合計が `PR_SECTIONS_MAX_CHARS` を超えた字数（implementer への要約差し戻し後もなお超えた分。切らずに載せる）。
+  どれかが非 0 の run だけ載り、同じ内容が終端サマリーの「PR 本文で切れた項目」節に出る。PR 本文の切れを
+  reviewer が指摘して `fix_failed` / HOLD になった run の原因推定で、builder 側の切れかを見分けるために読む。
 
 ## 失敗・abort entry
 

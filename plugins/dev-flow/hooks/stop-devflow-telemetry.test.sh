@@ -35,7 +35,7 @@ make_tmpdir() {
   mktemp -d "${TMPDIR:-/tmp}/stop-devflow-test.XXXXXX"
 }
 
-# dev-flow / pr-iterate が書く telemetry キー（dev-flow/references/telemetry.md のキー一覧と同じ 12 個）
+# dev-flow / pr-iterate が書く telemetry キー（dev-flow/references/telemetry.md のキー一覧のうち、発火した run だけ載る pr_body_clips を除く 12 個）
 KEPT_TELEMETRY='{
   "plugin_commit": "1ef2e0ab6254",
   "plugin_version": "0.3.0",

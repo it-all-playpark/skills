@@ -344,7 +344,7 @@ test('[journal-log] inline 整合: dev-flow.js の inline 区間外に journal h
 });
 
 // issue #561 AC-3: evaluator が confidence を返すケース/省略するケースの両方で run が abort しない。
-// confidence は telemetry に書かない（残す 12 キーに含まれない）。
+// confidence は telemetry に書かない（残す 13 キーに含まれない）。
 test('[journal-log] issue #561: evaluator が confidence:0.8 を返す run は abort せず、journal-log prompt に eval_confidence を書かない', async () => {
   const journalResult = { saved: true, logged: true };
   const { ctx, getJournalPrompts } = makeSandbox(ANALYZE_REQ, journalResult, { confidence: 0.8 });

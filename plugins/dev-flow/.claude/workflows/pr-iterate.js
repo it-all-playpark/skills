@@ -1631,7 +1631,7 @@ const telemetryHandoff = buildJournalHandoffPayload({
   args: `pr=${PR}`,
   repo: REPO,
   pr_number: Number(PR),
-  // telemetry キーは dev-flow/references/telemetry.md の 12 キーに限る（_lib/telemetry-keys.test.mjs が pin）。
+  // telemetry キーは dev-flow/references/telemetry.md の 13 キーに限る（_lib/telemetry-keys.test.mjs が pin）。
   // round ごとの詳細・CI 待ち・retry 回数等は返り値に載る。
   telemetry: {
     merge_tier: 'PR_ITERATE',
