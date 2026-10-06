@@ -65,10 +65,6 @@ dep-guardian-test-pr
 gmail-cleanup
 gmail-receipts
 qiita-publish
-repo-commit
-repo-export
-repo-issue
-repo-pr
 skill-creator-init
 sns-announce-check-length
 sns-announce-extract-metadata
@@ -124,10 +120,6 @@ skills_target_for() {
         gmail-receipts) echo "bash gmail-receipts/scripts/gmail-receipts.sh" ;;
         qiita-publish) echo "bash qiita-publish/scripts/publish.sh" ;;
         zenn-publish) echo "bash zenn-publish/scripts/publish.sh" ;;
-        repo-commit) echo "python3 repo-commit/scripts/export_commit.py" ;;
-        repo-export) echo "python3 repo-export/scripts/export_repo.py" ;;
-        repo-issue) echo "python3 repo-issue/scripts/export_issue.py" ;;
-        repo-pr) echo "python3 repo-pr/scripts/export_pr.py" ;;
         skill-creator-init) echo "python3 skill-creator/scripts/init_skill.py" ;;
         sns-announce-check-length) echo "bash sns-announce/scripts/check-length.sh" ;;
         sns-announce-load-config) echo "bash sns-announce/scripts/load-config.sh" ;;

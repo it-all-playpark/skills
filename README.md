@@ -369,15 +369,6 @@ config = load_skill_config("ga-analyzer")
 | `trends-analyzer` | Google Trendsキーワードトレンド分析 |
 | `seo-strategy` | GA4+GSC+Trends統合の包括的SEO戦略 |
 
-### リポジトリ情報エクスポート
-
-| スキル | 説明 |
-|--------|------|
-| `repo-export` | リポジトリ内容をMarkdownにエクスポート |
-| `repo-issue` | GitHub Issue情報エクスポート |
-| `repo-pr` | GitHub PR情報エクスポート |
-| `repo-commit` | コミット履歴エクスポート |
-
 ### ブログ運用
 
 | スキル | 説明 |
