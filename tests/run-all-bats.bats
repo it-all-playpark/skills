@@ -13,6 +13,9 @@ setup() {
     FIXTURE="$BATS_TEST_TMPDIR/repo"
     mkdir -p "$FIXTURE/tests"
     cp "$BATS_TEST_DIRNAME/run-all-bats.sh" "$FIXTURE/tests/"
+    # dev-flow の run-tests 経由で本ファイル自体が実行されると、実 worktree の変更一覧が
+    # 継承されて fixture repo の selection が狂う。各テストは必要なときだけ明示的に渡す。
+    unset DEVFLOW_CHANGED_FILES DEVFLOW_BASE
 }
 
 # Fixture .bats content is written via printf (not a heredoc with a literal
@@ -115,4 +118,169 @@ write_leak_fixture() {
         [ "$status" -eq 2 ]
         [[ "$output" == *"RUN_ALL_BATS_JOBS must be a positive integer"* ]]
     done
+}
+
+# --- DEVFLOW_CHANGED_FILES による絞り込み ---
+#
+# fixture repo:
+#   plugins/x/scripts/direct.bats  本文に direct.mjs を含む（ok）
+#   plugins/x/scripts/other.bats   どの変更ファイル名も含まない（ok / leak は各テストで選ぶ）
+#   plugins/x/bin/via-bin         via-bin.mjs を名前で呼ぶ shell 側ファイル
+#   plugins/x/hooks/guard.sh       guide-ref.md を名前で読む shell 側ファイル
+
+write_ref_fixture() {
+    printf '# uses %s\n%stest "ok" { true; }\n' "$2" "$AT" > "$1"
+}
+
+setup_selection_repo() {
+    mkdir -p "$FIXTURE/plugins/x/scripts" "$FIXTURE/plugins/x/bin" "$FIXTURE/plugins/x/hooks"
+    write_ref_fixture "$FIXTURE/plugins/x/scripts/direct.bats" "direct.mjs"
+    if [[ "${1:-ok}" == leak ]]; then
+        write_leak_fixture "$FIXTURE/plugins/x/scripts/other.bats"
+    else
+        write_ok_fixture "$FIXTURE/plugins/x/scripts/other.bats"
+    fi
+    printf '#!/usr/bin/env bash\nexec node "$(dirname "$0")/../scripts/via-bin.mjs" "$@"\n' \
+        > "$FIXTURE/plugins/x/bin/via-bin"
+    printf '#!/usr/bin/env bash\ncat "$(dirname "$0")/guide-ref.md"\n' > "$FIXTURE/plugins/x/hooks/guard.sh"
+    CHANGED="$BATS_TEST_TMPDIR/changed.txt"
+}
+
+write_changed() {
+    printf '%s\n' "$@" > "$CHANGED"
+}
+
+assert_full_run() {
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"[run-all-bats] Selection: all ("* ]]
+    [[ "$output" == *"Discovered 2 .bats file(s)"* ]]
+    [[ "$output" == *"Summary: 2 passed, 0 failed"* ]]
+}
+
+@test "selection: DEVFLOW_CHANGED_FILES 未設定なら全件" {
+    setup_selection_repo
+
+    run bash "$FIXTURE/tests/run-all-bats.sh"
+
+    assert_full_run
+    [[ "$output" == *"Selection: all (DEVFLOW_CHANGED_FILES is unset or empty)"* ]]
+}
+
+@test "selection: DEVFLOW_CHANGED_FILES が空文字なら全件" {
+    setup_selection_repo
+
+    DEVFLOW_CHANGED_FILES="" run bash "$FIXTURE/tests/run-all-bats.sh"
+
+    assert_full_run
+    [[ "$output" == *"Selection: all (DEVFLOW_CHANGED_FILES is unset or empty)"* ]]
+}
+
+@test "selection: 読めないファイルなら全件" {
+    setup_selection_repo
+
+    DEVFLOW_CHANGED_FILES="$BATS_TEST_TMPDIR/missing.txt" run bash "$FIXTURE/tests/run-all-bats.sh"
+
+    assert_full_run
+    [[ "$output" == *"Selection: all (DEVFLOW_CHANGED_FILES is not a readable file: "* ]]
+}
+
+@test "selection: 中身が 0 行（空・空行のみ）なら全件" {
+    setup_selection_repo
+
+    : > "$CHANGED"
+    DEVFLOW_CHANGED_FILES="$CHANGED" run bash "$FIXTURE/tests/run-all-bats.sh"
+    assert_full_run
+    [[ "$output" == *"Selection: all (DEVFLOW_CHANGED_FILES lists 0 files)"* ]]
+
+    printf '\n\n' > "$CHANGED"
+    DEVFLOW_CHANGED_FILES="$CHANGED" run bash "$FIXTURE/tests/run-all-bats.sh"
+    assert_full_run
+    [[ "$output" == *"Selection: all (DEVFLOW_CHANGED_FILES lists 0 files)"* ]]
+}
+
+@test "selection: .sh を含むと全件（どのファイルのどの規則かを出す）" {
+    setup_selection_repo leak
+    write_changed "plugins/x/scripts/unref.mjs" "plugins/x/scripts/run.sh"
+
+    DEVFLOW_CHANGED_FILES="$CHANGED" run bash "$FIXTURE/tests/run-all-bats.sh"
+
+    # other.bats は leak なので、全件実行されたことは exit 1 と 1 failed で分かる
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"Selection: all (plugins/x/scripts/run.sh: extension is not .mjs/.js/.md)"* ]]
+    [[ "$output" == *"Summary: 1 passed, 1 failed"* ]]
+}
+
+@test "selection: .mjs/.js/.md 以外の拡張子（.bats/.json/.jsonl/拡張子なし）は全件" {
+    setup_selection_repo
+
+    for p in plugins/x/scripts/direct.bats plugins/x/data.json plugins/x/log.jsonl plugins/x/bin/via-bin; do
+        write_changed "$p"
+        DEVFLOW_CHANGED_FILES="$CHANGED" run bash "$FIXTURE/tests/run-all-bats.sh"
+        assert_full_run
+        [[ "$output" == *"Selection: all ($p: extension is not .mjs/.js/.md)"* ]]
+    done
+}
+
+@test "selection: fixtures/ 配下の .json は全件" {
+    setup_selection_repo
+    write_changed "plugins/x/scripts/fixtures/case.json"
+
+    DEVFLOW_CHANGED_FILES="$CHANGED" run bash "$FIXTURE/tests/run-all-bats.sh"
+
+    assert_full_run
+    [[ "$output" == *"Selection: all (plugins/x/scripts/fixtures/case.json: under fixtures/)"* ]]
+}
+
+@test "selection: tests/ 配下は .mjs/.md でも全件" {
+    setup_selection_repo
+    write_changed "tests/helper.mjs"
+
+    DEVFLOW_CHANGED_FILES="$CHANGED" run bash "$FIXTURE/tests/run-all-bats.sh"
+
+    assert_full_run
+    [[ "$output" == *"Selection: all (tests/helper.mjs: under tests/)"* ]]
+}
+
+@test "selection: shell 側（bin/・hooks/・*.sh）から basename で参照される .mjs/.md は全件" {
+    setup_selection_repo
+    write_changed "plugins/x/scripts/via-bin.mjs"
+
+    DEVFLOW_CHANGED_FILES="$CHANGED" run bash "$FIXTURE/tests/run-all-bats.sh"
+
+    assert_full_run
+    [[ "$output" == *"Selection: all (plugins/x/scripts/via-bin.mjs: basename referenced by shell-side file plugins/x/bin/via-bin)"* ]]
+
+    write_changed "plugins/x/hooks/guide-ref.md"
+    DEVFLOW_CHANGED_FILES="$CHANGED" run bash "$FIXTURE/tests/run-all-bats.sh"
+
+    assert_full_run
+    [[ "$output" == *"Selection: all (plugins/x/hooks/guide-ref.md: basename referenced by shell-side file plugins/x/hooks/guard.sh)"* ]]
+}
+
+@test "selection: どこからも参照されない .mjs と .md だけなら bats を起動せず exit 0" {
+    setup_selection_repo leak
+    write_changed "plugins/x/scripts/unref.mjs" "docs/guide.md"
+
+    DEVFLOW_CHANGED_FILES="$CHANGED" run bash "$FIXTURE/tests/run-all-bats.sh"
+
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Selection: 0 of 2 .bats file(s)"* ]]
+    [ "$(echo "$output" | grep -c "Selection:")" -eq 1 ]
+    [[ "$output" != *"=== Running:"* ]]
+    [[ "$output" != *"Summary:"* ]]
+}
+
+@test "selection: bats が直接参照する .mjs はその bats だけを実行する" {
+    setup_selection_repo leak
+    write_changed "plugins/x/scripts/direct.mjs"
+
+    DEVFLOW_CHANGED_FILES="$CHANGED" RUN_ALL_BATS_JOBS=2 run bash "$FIXTURE/tests/run-all-bats.sh"
+
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Selection: 1 of 2 .bats file(s)"* ]]
+    [[ "$output" == *"Selected 1 .bats file(s):"* ]]
+    [[ "$output" == *"Running with 2 parallel job(s)."* ]]
+    [[ "$output" == *"=== Running: plugins/x/scripts/direct.bats ==="* ]]
+    [[ "$output" != *"other.bats"* ]]
+    [[ "$output" == *"Summary: 1 passed, 0 failed"* ]]
 }
