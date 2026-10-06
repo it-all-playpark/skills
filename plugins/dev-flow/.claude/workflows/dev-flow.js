@@ -3349,6 +3349,7 @@ const CI_STATUS = {
     },
     waited_seconds: { type: 'number' },
     poll_attempts: { type: 'number' },
+    head_sha: { type: 'string' },
     epoch: { type: 'number' },
   },
 };
@@ -3363,7 +3364,7 @@ function ciFetchSteps({ pr, repo, n }) {
 }
 
 function ciCheckPrompt({ pr, repo }) {
-  return `## Objective\nPR #${pr} の CI ステータスを取得し、JSON をそのまま返せ。\n\n`
+  return `## Objective\nPR #${pr} の head commit sha と CI ステータスを取得し、JSON を返せ。\n\n`
     + `## Tools\n`
     + `- 使用可: Bash のみ\n`
     + `- 禁止: Write, Edit, git commit, git push\n\n`
@@ -3371,12 +3372,14 @@ function ciCheckPrompt({ pr, repo }) {
     + `- 読み取り専用。git mutation（commit/push/reset 等）禁止\n`
     + `- 実行するスクリプト以外のファイルを変更しない\n\n`
     + `## Steps\n`
-    + ciFetchSteps({ pr, repo, n: 1 })
-    + `3. その stdout JSON（{status, failed_checks, waited_seconds, poll_attempts, ...}）をそのまま返せ。要約・加工するな。`
-    + `1 回の取得で判定を確定させ、待機や再取得は行うな。\n\n`
+    + `1. \`gh pr view ${pr}${repo ? ' --repo ' + repo : ''} --json headRefOid -q .headRefOid\` を gh を先頭トークンとする bare 単文で実行せよ`
+    + `（リダイレクト・パイプ・複合コマンドは使わない）。stdout の 40 桁 hex を一字一句そのまま head_sha とする（失敗・空なら head_sha は省略）。\n`
+    + ciFetchSteps({ pr, repo, n: 2 })
+    + `4. 手順 3 の stdout JSON（{status, failed_checks, waited_seconds, poll_attempts, ...}）に手順 1 の \`"head_sha"\` を加えて返せ。`
+    + `それ以外のキーは要約・加工するな。1 回の取得で判定を確定させ、待機や再取得は行うな。\n\n`
     + `## Output format\n`
     + `{ "status": "passed"|"failed"|"pending"|"no_checks"|"error", "failed_checks": [{name, bucket, state}, ...], `
-    + `"waited_seconds": number, "poll_attempts": number }\n`
+    + `"waited_seconds": number, "poll_attempts": number, "head_sha": string }\n`
     + `prose 禁止。JSON のみ返せ。\n\n`
     + `## Token cap\n`
     + `JSON のみ。1 行以内。`;
@@ -3412,6 +3415,20 @@ function ciWaitCheckPrompt({ pr, repo, seconds }) {
     + `prose 禁止。JSON のみ返せ。\n\n`
     + `## Token cap\n`
     + `JSON のみ。1 行以内。`;
+}
+
+const CI_HEAD_SHA_RE = /^[0-9a-f]{40}$/i;
+
+function isFullCommitSha(s) {
+  return typeof s === 'string' && CI_HEAD_SHA_RE.test(s.trim());
+}
+
+function ciHeadRejectReason({ ci, expectedSha }) {
+  if (!isFullCommitSha(expectedSha)) return 'review_head_unknown';
+  if (ci == null) return 'ci_null';
+  if (!isFullCommitSha(ci.head_sha)) return 'ci_head_missing';
+  if (ci.head_sha.trim().toLowerCase() !== expectedSha.trim().toLowerCase()) return 'head_mismatch';
+  return null;
 }
 // ==== END inline: _lib/ci-check.mjs ====
 // ==== BEGIN inline: _lib/review-ac.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====

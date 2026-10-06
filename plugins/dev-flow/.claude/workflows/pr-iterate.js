@@ -799,6 +799,7 @@ const CI_STATUS = {
     },
     waited_seconds: { type: 'number' },
     poll_attempts: { type: 'number' },
+    head_sha: { type: 'string' },
     epoch: { type: 'number' },
   },
 };
@@ -813,7 +814,7 @@ function ciFetchSteps({ pr, repo, n }) {
 }
 
 function ciCheckPrompt({ pr, repo }) {
-  return `## Objective\nPR #${pr} の CI ステータスを取得し、JSON をそのまま返せ。\n\n`
+  return `## Objective\nPR #${pr} の head commit sha と CI ステータスを取得し、JSON を返せ。\n\n`
     + `## Tools\n`
     + `- 使用可: Bash のみ\n`
     + `- 禁止: Write, Edit, git commit, git push\n\n`
@@ -821,12 +822,14 @@ function ciCheckPrompt({ pr, repo }) {
     + `- 読み取り専用。git mutation（commit/push/reset 等）禁止\n`
     + `- 実行するスクリプト以外のファイルを変更しない\n\n`
     + `## Steps\n`
-    + ciFetchSteps({ pr, repo, n: 1 })
-    + `3. その stdout JSON（{status, failed_checks, waited_seconds, poll_attempts, ...}）をそのまま返せ。要約・加工するな。`
-    + `1 回の取得で判定を確定させ、待機や再取得は行うな。\n\n`
+    + `1. \`gh pr view ${pr}${repo ? ' --repo ' + repo : ''} --json headRefOid -q .headRefOid\` を gh を先頭トークンとする bare 単文で実行せよ`
+    + `（リダイレクト・パイプ・複合コマンドは使わない）。stdout の 40 桁 hex を一字一句そのまま head_sha とする（失敗・空なら head_sha は省略）。\n`
+    + ciFetchSteps({ pr, repo, n: 2 })
+    + `4. 手順 3 の stdout JSON（{status, failed_checks, waited_seconds, poll_attempts, ...}）に手順 1 の \`"head_sha"\` を加えて返せ。`
+    + `それ以外のキーは要約・加工するな。1 回の取得で判定を確定させ、待機や再取得は行うな。\n\n`
     + `## Output format\n`
     + `{ "status": "passed"|"failed"|"pending"|"no_checks"|"error", "failed_checks": [{name, bucket, state}, ...], `
-    + `"waited_seconds": number, "poll_attempts": number }\n`
+    + `"waited_seconds": number, "poll_attempts": number, "head_sha": string }\n`
     + `prose 禁止。JSON のみ返せ。\n\n`
     + `## Token cap\n`
     + `JSON のみ。1 行以内。`;
@@ -862,6 +865,20 @@ function ciWaitCheckPrompt({ pr, repo, seconds }) {
     + `prose 禁止。JSON のみ返せ。\n\n`
     + `## Token cap\n`
     + `JSON のみ。1 行以内。`;
+}
+
+const CI_HEAD_SHA_RE = /^[0-9a-f]{40}$/i;
+
+function isFullCommitSha(s) {
+  return typeof s === 'string' && CI_HEAD_SHA_RE.test(s.trim());
+}
+
+function ciHeadRejectReason({ ci, expectedSha }) {
+  if (!isFullCommitSha(expectedSha)) return 'review_head_unknown';
+  if (ci == null) return 'ci_null';
+  if (!isFullCommitSha(ci.head_sha)) return 'ci_head_missing';
+  if (ci.head_sha.trim().toLowerCase() !== expectedSha.trim().toLowerCase()) return 'head_mismatch';
+  return null;
 }
 // ==== END inline: _lib/ci-check.mjs ====
 
@@ -1098,6 +1115,25 @@ function observeCi(ciEff) {
     ? (ciEff.failed_checks ?? []).map((c) => String(c?.name ?? 'unknown'))
     : []
 }
+// round の 1 回目の CI 判定。review#i と並列に取った ci-check#i を採用できていればそれを使い（spawn 0）、
+// 不採用（head 不一致・null・throw）なら review の後に直列で ci-check を起動する。label は並列分と区別して
+// ci-check#i-serial（並列 ci-check を起動しなかった round は ci-check#i）。返り値は生の応答（null 含む）で、
+// fail-open の合成と poll 計上は呼び出し側（CI gate / blocking round）が判定 1 回分として行う。
+async function firstCiCheck(iteration, adopted, parallelLaunched) {
+  if (adopted != null) return adopted
+  return failOpenAgent(
+    ciCheckPrompt({ pr: PR, repo: REPO }),
+    { agentType: 'dev-runner-haiku-ro', schema: CI_STATUS, label: `ci-check#${iteration}${parallelLaunched ? '-serial' : ''}`, phase: 'Iterate' },
+  )
+}
+// review 側の失敗で CI 判定へ進まずに終端する round でも、並列で採用できた ci-check の結果は捨てずに
+// 最終 CI 状態として観測する（判定 1 回分として計上）。不採用なら CI 判定が要らないので起動し直さない。
+function observeAdoptedCi(adopted) {
+  if (adopted == null) return
+  if (Number.isFinite(adopted.epoch)) lastCiEpoch = adopted.epoch
+  totalCiPollAttempts += 1
+  observeCi(adopted)
+}
 // ci-check の failed_checks を fix loop へ流す synthetic blocking finding に変換する（CI gate と blocking round で共用）。
 // topic `ci::<name>` は reviewSeen の stuck 検出キー — 同一 check が REVIEW_STUCK 回失敗し続ければ stuck 終端になる。
 // failed_checks items are {name, bucket, state} per check-ci.sh output (no conclusion field).
@@ -1310,13 +1346,37 @@ for (i = 1; i <= MAX; i++) {
           + `別観点の上乗せ（moving target）は禁止。既出問題を再提起する場合は既出と同じ topic 文字列を`
           + `必ず再利用せよ（orchestrator が topic で stuck を突合する）。`
         : '')
-  const review = await callReviewAgent(reviewPrompt, `review#${i}`)
+  // review#i と ci-check#i を parallel() で同時に起動する。ci-check は review の結果に依存しないので、
+  // review の待ち時間に隠す（1 round の spawn は review + ci-check の 2 本のまま）。両 thunk は throw
+  // しない（callReviewAgent / failOpenAgent が null に落とす）ので、片方の失敗でもう片方の結果を失わない。
+  // 並列 ci-check は応答の head_sha が review 開始時の head（shaNow）と一致するときだけ採る
+  // （ciHeadRejectReason）。不採用なら CI 判定が要る時点で firstCiCheck が review の後に直列で起動し直す。
+  // review 開始時の head が 40 桁 sha で分からない round は照合できないので並列 ci-check を起動せず、
+  // CI 判定は review の後に直列の ci-check#i 1 本で取る（起動しても必ず不採用になり spawn が 1 本増える）。
+  const ciParallelLaunched = isFullCommitSha(shaNow)
+  const [review, ciParallel] = ciParallelLaunched
+    ? await parallel([
+        () => callReviewAgent(reviewPrompt, `review#${i}`),
+        () => failOpenAgent(
+          ciCheckPrompt({ pr: PR, repo: REPO }),
+          { agentType: 'dev-runner-haiku-ro', schema: CI_STATUS, label: `ci-check#${i}`, phase: 'Iterate' },
+        ),
+      ])
+    : [await callReviewAgent(reviewPrompt, `review#${i}`), null]
+  const ciRejectReason = ciHeadRejectReason({ ci: ciParallel, expectedSha: shaNow })
+  if (ciRejectReason) {
+    log(ciParallelLaunched
+      ? `⚠️ iteration ${i}: 並列 ci-check#${i} の結果を採らない（${ciRejectReason}）— CI 判定が要る時点で直列に起動し直す`
+      : `⚠️ iteration ${i}: review 開始時の head sha が不明 — ci-check#${i} は review と並列にせず直列で起動する`)
+  }
+  const ciAdopted = ciRejectReason ? null : ciParallel
   // この round の review が見た head を次 round の delta 起点にする（review が失敗しても更新して構わない —
   // 失敗時は直後に break する）。
   shaPrev = shaNow
   if (review == null) {
     terminal = 'review_contract_error'
     log(`⚠️ iteration ${i}: review#${i} が schema-retry 後も結果を返さず（StructuredOutput 契約違反）。人間へエスカレーション`)
+    observeAdoptedCi(ciAdopted)
     break
   }
   lastReview = review
@@ -1340,6 +1400,7 @@ for (i = 1; i <= MAX; i++) {
       terminal = 'review_contract_error'
       log(`⚠️ iteration ${i}: review#${i}-contract-retry が schema-retry 後も結果を返さず（StructuredOutput 契約違反）。人間へエスカレーション`)
       history.push({ iteration: i, decision: review.decision, summary: review.summary, blocking: outcome.blocking, minor: outcome.minor, scope: roundScope, delta_lines: roundDeltaLines })
+      observeAdoptedCi(ciAdopted)
       break
     }
     effReview = rereview
@@ -1354,6 +1415,7 @@ for (i = 1; i <= MAX; i++) {
       log(`⚠️ iteration ${i}: review contract mismatch が再 review 後も再発（decision=approve、blocking ${outcome.blocking.length} 件）。人間へエスカレーション`)
 
       history.push({ iteration: i, decision: effReview.decision, summary: effReview.summary, blocking: outcome.blocking, minor: outcome.minor, scope: roundScope, delta_lines: roundDeltaLines })
+      observeAdoptedCi(ciAdopted)
 
       break
     }
@@ -1365,7 +1427,8 @@ for (i = 1; i <= MAX; i++) {
     // pr-reviewer may LGTM the code but CI must also be green before we declare lgtm.
     // no_checks is treated as passing (consistent with e4e2b92: repos without CI are fine).
     //
-    // 1 spawn = 1 判定・ループは script 側。1 回目の poll は ci-check（待機なし）、pending なら
+    // 1 spawn = 1 判定・ループは script 側。1 回目の poll は ci-check（待機なし。review#i と並列に取った
+    // ci-check#i を採用できていればそれを使い、不採用なら直列で起動し直す — firstCiCheck）、pending なら
     // 2 回目以降は ci-wait-check（`ci-wait` で待機 → gh fetch → check-ci を 1 spawn）で再判定する。
     // 待機は nominal 積算（ci-wait-check 成功回数 × CI_POLL_SECONDS）で、次の wait を足すと
     // CI_WAIT_CEILING_SECONDS を超える時点で打ち切り、最後の判定（pending）で ci_pending 終端へ流す
@@ -1380,13 +1443,17 @@ for (i = 1; i <= MAX; i++) {
     let ciEff = null
     let gateWaited = 0   // この gate の nominal 累積待機秒
     let gatePolls = 0    // この gate の判定 spawn（ci-check + 実待機が成立した ci-wait-check）回数
+    // 並列 ci-check は round 冒頭（fix push 直後）に取るので、head_sha が一致しても GitHub が新 head の
+    // check を未登録なだけで no_checks が返り得る。no_checks は passed 扱いで lgtm を確定させるため、
+    // LGTM gate では並列分の no_checks を採らず review の後の直列 ci-check で取り直す（CI 未検証の lgtm を防ぐ）。
+    const gateAdopted = ciAdopted?.status === 'no_checks' ? null : ciAdopted
+    if (ciAdopted != null && gateAdopted == null) {
+      log(`⚠️ iteration ${i}: 並列 ci-check#${i} の no_checks を CI gate では採らない（新 head の check 未登録の可能性）— 直列に起動し直す`)
+    }
     for (;;) {
       if (gatePolls === 0) {
         gatePolls = 1
-        ci = await failOpenAgent(
-          ciCheckPrompt({ pr: PR, repo: REPO }),
-          { agentType: 'dev-runner-haiku-ro', schema: CI_STATUS, label: `ci-check#${i}`, phase: 'Iterate' },
-        )
+        ci = await firstCiCheck(i, gateAdopted, ciParallelLaunched)
         if (ci == null) log(`⚠️ ci-check#${i} が結果を返さず — fail-open で status=error（ci_error 終端）扱い`)
       } else {
         const waitLabel = `ci-wait-check#${i}.${gatePolls + 1}`
@@ -1500,15 +1567,13 @@ for (i = 1; i <= MAX; i++) {
 
     // blocking round でも CI を 1 回だけ判定する。review が毎 round blocking を出す PR では
     // ci_gate に一度も到達せず、CI が赤のまま stuck / fix_failed で終端して誰にも見えなかった。
+    // 判定には review#i と並列に取った ci-check#i を使う（不採用なら直列で起動し直す — firstCiCheck）。
     // ここでは待機しない（pending は finding にせず観測のみ — review ⇄ fix の各 round に CI_WAIT_CEILING_SECONDS
     // を足さない）。failed のときだけ ci::<name> を review の blocking と同じ fix prompt に合流させ、
     // reviewSeen にも register して同一 check の反復失敗を REVIEW_STUCK に乗せる。
     // null / error は fail-open（finding を足さず fix へ進む。CI 状態は ci_last_status で人間に見せる）。
     // terminalPath は 'review' のまま（返り値 terminal_path の 'ci' は「CI-failed 分岐（ci_gate）に入った」の意味を保つ）。
-    const ciProbe = await failOpenAgent(
-      ciCheckPrompt({ pr: PR, repo: REPO }),
-      { agentType: 'dev-runner-haiku-ro', schema: CI_STATUS, label: `ci-check#${i}`, phase: 'Iterate' },
-    )
+    const ciProbe = await firstCiCheck(i, ciAdopted, ciParallelLaunched)
     if (ciProbe == null) log(`⚠️ ci-check#${i} が結果を返さず — blocking round では finding を足さず status=error として記録のみ（fail-open）`)
     const ciProbeEff = ciProbe ?? { status: 'error', failed_checks: [] }
     if (Number.isFinite(ciProbe?.epoch)) lastCiEpoch = ciProbe.epoch

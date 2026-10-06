@@ -420,6 +420,17 @@ const PR_B6 = {
     'ci-wait-check#1.2': { slept: true, status: 'passed', failed_checks: [] },
   },
 };
+// B7: review 開始時の head（pr-meta の head_sha）が分かる round で review#1 と並列に起動した ci-check#1 の
+// head_sha が不一致 → 結果を採らず review の後に ci-check#1-serial を直列で起動し直す（issue #806）。
+const PR_B7 = {
+  overrides: {
+    'pr-meta': {
+      url: 'https://github.com/acme/skills/pull/5', head_ref: 'feature/x', base_ref: 'main',
+      cwd: '/tmp/wt', epoch: 999, head_sha: 'a'.repeat(40),
+    },
+    'ci-check#1': { status: 'passed', failed_checks: [], head_sha: 'b'.repeat(40) },
+  },
+};
 
 async function runPrIterateBaseline(config) {
   const { ctx, calls } = makePrIterateSandbox({ args: '5', overrides: config.overrides });
@@ -455,6 +466,8 @@ const EXPECTED_PR_ITERATE = {
   'worktree-dirty-check': { config: PR_B5, policy: 'continue', reason: 'failOpenAgent経由。非lgtm終端のdirty検出はadvisory telemetryでunknownへ倒すfail-open' },
   // ── issue #663 / #805: CI gate の script 側 poll ループ（2 回目以降は待機 + 判定の 1 spawn）──
   'ci-wait-check#1.2': { config: PR_B6, policy: 'continue', reason: 'failOpenAgent経由。待機+再判定 proxy の throw/null は slept:true 不成立として積算せず ci_pending 終端へ流す（run は abort しない）' },
+  // ── issue #806: review と並列に取った ci-check を採れなかった round の直列再取得 ──
+  'ci-check#1-serial': { config: PR_B7, policy: 'continue', reason: 'failOpenAgent経由。throw/nullはstatus:errorに合成しci_errorへ流す（ci-check#1 と同じ fail-open）' },
 };
 
 for (const [label, spec] of Object.entries(EXPECTED_PR_ITERATE)) {
@@ -468,7 +481,7 @@ for (const [label, spec] of Object.entries(EXPECTED_PR_ITERATE)) {
 }
 
 test('pr-iterate.js: 全 baseline で観測される label は EXPECTED_PR_ITERATE に登録されている', async () => {
-  const configs = [PR_B1, PR_B2, PR_B3, PR_B4, PR_B5, PR_B6];
+  const configs = [PR_B1, PR_B2, PR_B3, PR_B4, PR_B5, PR_B6, PR_B7];
   const observed = new Set();
   for (const config of configs) {
     const { calls } = await runPrIterateBaseline(config);
