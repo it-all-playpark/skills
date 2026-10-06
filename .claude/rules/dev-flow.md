@@ -77,7 +77,7 @@ dev-flow 本体（workflow / agent 定義 / `_lib` canonical / generator）を�
 >
 > polling ループを subagent 内に置いてはならない（turn 会計が CI 所要時間に連動し、StructuredOutput
 > 未達で `ci_error` に化ける）。総待機上限は `CI_WAIT_CEILING_SECONDS`（`_lib/ci-check.mjs`）。
-> 1 spawn の必要 turn（ci-check: 2 + 1 + CI_TURN_MARGIN、ci-wait-check: 1 + 2 + 1 + CI_TURN_MARGIN）が
+> 1 spawn の必要 turn（ci-check: 1 + 2 + 1 + CI_TURN_MARGIN、ci-wait-check: 1 + 2 + 1 + CI_TURN_MARGIN）が
 > 当該 agent の `maxTurns` を超えないこと。`slept:true` 以外は積算せず `ci_pending` で終端する
 
 - exec-proxy と inline generator は harness-capability-bound な橋。再評価トリガ: harness が直接 exec / ESM import を解禁した時点で撤去（`/dev-flow-canary` の report で判定）

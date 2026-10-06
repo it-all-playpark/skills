@@ -453,6 +453,9 @@ export function makePrIterateSandbox({ overrides = {}, args = '5', extra = {} } 
   return makeRecordingSandbox(prIterateResponder(overrides), {
     workflow: async () => ({ status: 'lgtm' }),
     args,
+    // pr-iterate.js は各 round で review#i と ci-check#i を parallel() で同時に起動する（issue #806）。
+    // dev-flow.js 用の makeRecordingSandbox には置かない（fan-out を持たない側の偽陽性防止）。
+    parallel: async (fns) => Promise.all((fns || []).map((f) => f())),
     ...extra,
   });
 }

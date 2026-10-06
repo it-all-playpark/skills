@@ -13,7 +13,8 @@
 // 給電元として optional `epoch` を持つ）。統合すると pr-iterate の受理 schema が変わる。
 
 // 1 spawn = 1 判定。1 回目の poll は ci-check（待機なし）、2 回目以降は ci-wait-check（待機してから
-// 1 回判定）。必要 turn は ci-check = 2（gh fetch + check-ci）+ 1（StructuredOutput）+ CI_TURN_MARGIN = 6、
+// 1 回判定）。必要 turn は ci-check = 1（head sha fetch）+ 2（gh fetch + check-ci）+ 1（StructuredOutput）
+// + CI_TURN_MARGIN = 7、
 // ci-wait-check = 1（ci-wait）+ 2（gh fetch + check-ci）+ 1（StructuredOutput）+ CI_TURN_MARGIN = 7。
 // どちらも dev-runner-haiku-ro の maxTurns を超えないこと（_lib/ci-check.test.mjs が agent md を
 // 実読して pin）。CI 待ちのループは workflow script 側（pr-iterate.js）が持ち、CI 所要時間は
@@ -60,6 +61,9 @@ export const CI_STATUS = {
     // workflow は読まず script 側で積算する（issue #663）。
     waited_seconds: { type: 'number' },
     poll_attempts: { type: 'number' },
+    // ci-check が CI snapshot の直前に取った PR head の commit sha。pr-iterate は review#i と並列に
+    // 起動した ci-check#i の結果を、この値が review 開始時の head と一致するときだけ採る（ciHeadRejectReason）。
+    head_sha: { type: 'string' },
     // dev-flow の clock telemetry（issue #443）が iterate_end の給電元として読む optional epoch。
     // 旧版 check-ci.sh（epoch 非対応）や失敗時は省略され、返り値の end_epoch も省略される（fail-open）。
     epoch: { type: 'number' },
@@ -86,7 +90,7 @@ export function ciFetchSteps({ pr, repo, n }) {
  * @returns {string} dev-runner-haiku-ro へ渡す prompt
  */
 export function ciCheckPrompt({ pr, repo }) {
-  return `## Objective\nPR #${pr} の CI ステータスを取得し、JSON をそのまま返せ。\n\n`
+  return `## Objective\nPR #${pr} の head commit sha と CI ステータスを取得し、JSON を返せ。\n\n`
     + `## Tools\n`
     + `- 使用可: Bash のみ\n`
     + `- 禁止: Write, Edit, git commit, git push\n\n`
@@ -94,12 +98,14 @@ export function ciCheckPrompt({ pr, repo }) {
     + `- 読み取り専用。git mutation（commit/push/reset 等）禁止\n`
     + `- 実行するスクリプト以外のファイルを変更しない\n\n`
     + `## Steps\n`
-    + ciFetchSteps({ pr, repo, n: 1 })
-    + `3. その stdout JSON（{status, failed_checks, waited_seconds, poll_attempts, ...}）をそのまま返せ。要約・加工するな。`
-    + `1 回の取得で判定を確定させ、待機や再取得は行うな。\n\n`
+    + `1. \`gh pr view ${pr}${repo ? ' --repo ' + repo : ''} --json headRefOid -q .headRefOid\` を gh を先頭トークンとする bare 単文で実行せよ`
+    + `（リダイレクト・パイプ・複合コマンドは使わない）。stdout の 40 桁 hex を一字一句そのまま head_sha とする（失敗・空なら head_sha は省略）。\n`
+    + ciFetchSteps({ pr, repo, n: 2 })
+    + `4. 手順 3 の stdout JSON（{status, failed_checks, waited_seconds, poll_attempts, ...}）に手順 1 の \`"head_sha"\` を加えて返せ。`
+    + `それ以外のキーは要約・加工するな。1 回の取得で判定を確定させ、待機や再取得は行うな。\n\n`
     + `## Output format\n`
     + `{ "status": "passed"|"failed"|"pending"|"no_checks"|"error", "failed_checks": [{name, bucket, state}, ...], `
-    + `"waited_seconds": number, "poll_attempts": number }\n`
+    + `"waited_seconds": number, "poll_attempts": number, "head_sha": string }\n`
     + `prose 禁止。JSON のみ返せ。\n\n`
     + `## Token cap\n`
     + `JSON のみ。1 行以内。`;
@@ -146,4 +152,33 @@ export function ciWaitCheckPrompt({ pr, repo, seconds }) {
     + `prose 禁止。JSON のみ返せ。\n\n`
     + `## Token cap\n`
     + `JSON のみ。1 行以内。`;
+}
+
+// 並列 ci-check の採否判定。pr-iterate は review#i と ci-check#i を parallel() で同時に起動し、
+// ci-check の応答 head_sha が review 開始時の head（expectedSha）と一致するときだけ結果を採る。
+// 一致を要求するのは、fix の push 直後に起動した ci-check が GitHub 側の head 更新前の snapshot
+// （旧 commit の check）を読んで、旧 head の green で LGTM を確定させないため。ci-check は head sha →
+// checks の順に取るので、sha が一致すれば checks も同じ head のもの（round 中に他の push は無い）。
+// 返り値 null は採用可。それ以外は不採用理由で、呼び出し側は review の後に直列で ci-check を起動し直す。
+// 短縮 sha は一致と見なさない（照合しきれない値で採用側に倒さない）。
+const CI_HEAD_SHA_RE = /^[0-9a-f]{40}$/i;
+
+// 40 桁 hex の commit sha か。pr-iterate は review 開始時の head がこれを満たさない round では、
+// 結果を照合できない並列 ci-check を起動しない（起動すると必ず不採用になり、直列の再起動で spawn が増える）。
+export function isFullCommitSha(s) {
+  return typeof s === 'string' && CI_HEAD_SHA_RE.test(s.trim());
+}
+
+/**
+ * @param {object} opts
+ * @param {object|null} opts.ci - 並列 ci-check の応答（null は agent の null / throw）
+ * @param {string|null} opts.expectedSha - review 開始時の PR head commit sha
+ * @returns {null|'ci_null'|'review_head_unknown'|'ci_head_missing'|'head_mismatch'}
+ */
+export function ciHeadRejectReason({ ci, expectedSha }) {
+  if (!isFullCommitSha(expectedSha)) return 'review_head_unknown';
+  if (ci == null) return 'ci_null';
+  if (!isFullCommitSha(ci.head_sha)) return 'ci_head_missing';
+  if (ci.head_sha.trim().toLowerCase() !== expectedSha.trim().toLowerCase()) return 'head_mismatch';
+  return null;
 }
