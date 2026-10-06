@@ -30,6 +30,7 @@ from urllib.parse import quote
 DEFAULT_OWNERS = ["it-all-playpark", "playpark-llc"]
 TOPICS_DIR = "_topics"
 STATE_FILE = ".seed-harvest-state.json"
+CONFIG_FILE = ".seed-harvest-config.json"
 DEFAULT_LOOKBACK_DAYS = 30
 SEARCH_LIMIT = 1000
 # search API は 1 クエリにつき先頭 1000 件までしか返さない
@@ -48,9 +49,18 @@ DEPS_SCOPES = {"deps", "deps-dev"}
 DEPS_TITLE_RE = re.compile(r"^(?:update dependency|update module|bump\s)", re.IGNORECASE)
 BOT_AUTHORS = {"renovate", "renovate[bot]", "app/renovate", "dependabot", "dependabot[bot]", "app/dependabot"}
 PR_SQUASH_SUFFIX_RE = re.compile(r"\(#\d+\)\s*$")
+# release-please の `chore(main): release 0.10.1` / `chore(main): release skills 1.2.0`
+RELEASE_RE = re.compile(r"^release\s+(?:\S+\s+)?v?\d+\.\d+", re.IGNORECASE)
+# main ⇄ dev の同期 PR。中身は既にマージ済みの PR の再掲なのでネタにならない
+SYNC_RE = re.compile(r"を\s*(?:dev|main)\s*に同期|\bsync\s+(?:main|dev)\b", re.IGNORECASE)
+# 末尾の `(#123)` / `（#1540 を dev に）`。dev 向けと main 向けの同じ PR を 1 件にまとめるために外す
+PR_REF_SUFFIX_RE = re.compile(r"\s*[(（][^()（）]*#\d+[^()（）]*[)）]\s*$")
+REPO_PATTERN_RE = re.compile(r"^[^/\s]+/[^/\s]+$")
+CLIENT_NOTE = "> 顧客案件由来。実装の詳細（コード・repo 名・顧客名・固有の構成）は記事に載せない。"
 
 TERM_RE = re.compile(r"(?<![A-Za-z0-9_./-])([A-Za-z][A-Za-z0-9]*(?:[.+][A-Za-z0-9]+)*)(?![A-Za-z0-9_-])")
 # 主題語にしない語。conventional commit の語・英語の機能語・全 PR に出る一般語。
+# 道具名として意味を持つ語（Bash / Node / Next / Actions / Workflow / Vite / Jev 等）は入れない
 STOPWORDS = {
     w.lower()
     for w in (
@@ -59,7 +69,8 @@ STOPWORDS = {
         "the a an and or of to in on for with from by is are be not no via when if as at into "
         "pr prs ci cd api apis json yaml toml md url urls cli ui ux id ids ok ng todo readme "
         "ac hold lgtm llm ai mcp sdk http https html css js ts tsx jsx sql db env pdf csv "
-        "claude github git gh"
+        "claude github git gh "
+        "app code stop read write final closes path setup plan pre blocked preview rules boundary cloud mac"
     ).split()
 }
 
@@ -160,7 +171,38 @@ def exclusion_reason(title: str, author: str | None) -> str | None:
         return "blog_or_sns"
     if scope in DEPS_SCOPES or DEPS_TITLE_RE.match(rest) or DEPS_TITLE_RE.match(stripped):
         return "dependency_update"
+    if (ctype == "chore" and RELEASE_RE.match(rest)) or SYNC_RE.search(stripped):
+        return "release_or_sync"
     return None
+
+
+def repo_matches(pattern: str, repo: str) -> bool:
+    """`owner/name` or `owner/*` against `owner/name`. GitHub owner / repo names are case-insensitive."""
+    owner, _, name = pattern.lower().partition("/")
+    r_owner, _, r_name = repo.lower().partition("/")
+    return owner == r_owner and name in ("*", r_name)
+
+
+def dedup_title(title: str) -> str:
+    """Title with trailing `(#N)` / `（#N を dev に）` groups removed."""
+    prev = None
+    title = title.strip()
+    while prev != title:
+        prev = title
+        title = PR_REF_SUFFIX_RE.sub("", title)
+    return title
+
+
+def dedup_key(item: dict[str, Any]) -> tuple[str, str]:
+    return item["repo"].lower(), dedup_title(item["title"])
+
+
+def merged_at_key(item: dict[str, Any]) -> datetime:
+    try:
+        dt = datetime.fromisoformat((item.get("mergedAt") or "").replace("Z", "+00:00"))
+    except ValueError:
+        return datetime.max.replace(tzinfo=timezone.utc)
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
 def metric_lines(text: str) -> list[str]:
@@ -197,6 +239,59 @@ def first_point(body: str) -> str:
 
 
 # ---------------------------------------------------------------- harvest
+
+
+class ConfigError(ValueError):
+    pass
+
+
+def string_list(config: dict[str, Any], key: str, repo_pattern: bool = False) -> list[str]:
+    value = config.get(key, [])
+    if not isinstance(value, list) or not all(isinstance(v, str) and v for v in value):
+        raise ConfigError(f"{key} must be a list of non-empty strings")
+    if repo_pattern:
+        for v in value:
+            if not REPO_PATTERN_RE.match(v):
+                raise ConfigError(f"{key}: expected owner/name or owner/*, got {v!r}")
+    return value
+
+
+def load_config(seed: Path) -> dict[str, Any]:
+    """`<seed>/.seed-harvest-config.json`. A missing file means no config; a broken one is an error
+    (silently ignoring it would harvest the excluded PRs or drop the client mark)."""
+    path = seed / CONFIG_FILE
+    if not path.exists():
+        return {"owners": [], "client_repos": [], "exclude": []}
+    try:
+        config = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        raise ConfigError(f"{path}: {e}") from e
+    if not isinstance(config, dict):
+        raise ConfigError(f"{path}: top level must be an object")
+    try:
+        owners = string_list(config, "owners")
+        client_repos = string_list(config, "client_repos", repo_pattern=True)
+        rules = config.get("exclude", [])
+        if not isinstance(rules, list):
+            raise ConfigError("exclude must be a list")
+        exclude = []
+        for rule in rules:
+            if not isinstance(rule, dict) or not isinstance(rule.get("repo"), str) \
+                    or not isinstance(rule.get("title_regex"), str):
+                raise ConfigError("exclude[] needs string repo and title_regex")
+            if not REPO_PATTERN_RE.match(rule["repo"]):
+                raise ConfigError(f"exclude[].repo: expected owner/name or owner/*, got {rule['repo']!r}")
+            try:
+                exclude.append({"repo": rule["repo"], "title_regex": re.compile(rule["title_regex"])})
+            except re.error as e:
+                raise ConfigError(f"exclude[].title_regex {rule['title_regex']!r}: {e}") from e
+    except ConfigError as e:
+        raise ConfigError(f"{path}: {e}") from e
+    return {"owners": owners, "client_repos": client_repos, "exclude": exclude}
+
+
+def config_excluded(item: dict[str, Any], rules: list[dict[str, Any]]) -> bool:
+    return any(repo_matches(r["repo"], item["repo"]) and r["title_regex"].search(item["title"]) for r in rules)
 
 
 def resolve_since(args_since: str | None, state: dict[str, Any]) -> str:
@@ -373,7 +468,8 @@ def source_entry(item: dict[str, Any]) -> dict[str, Any]:
     return entry
 
 
-def merge_into_topic(topic: dict[str, Any], items: list[dict[str, Any]], stamp: str) -> None:
+def merge_into_topic(topic: dict[str, Any], items: list[dict[str, Any]], stamp: str,
+                     client_repos: list[str]) -> None:
     for item in items:
         bucket = "prs" if item["kind"] == "pr" else "commits"
         topic.setdefault(bucket, []).append(source_entry(item))
@@ -387,6 +483,10 @@ def merge_into_topic(topic: dict[str, Any], items: list[dict[str, Any]], stamp: 
             if t not in topic.setdefault("terms", []):
                 topic["terms"].append(t)
     topic["repos"] = sorted({e["repo"] for e in topic.get("prs", []) + topic.get("commits", [])})
+    # 一度 true になったら下げない: 顧客 repo の PR が 1 件でも入ったトピックは実装の詳細を載せられない
+    topic["client"] = bool(topic.get("client")) or any(
+        repo_matches(p, r) for p in client_repos for r in topic["repos"]
+    )
     topic["updatedAt"] = stamp
 
 
@@ -419,7 +519,12 @@ def cmd_harvest(args: argparse.Namespace) -> int:
     except ValueError:
         print(f"invalid --since (expected YYYY-MM-DD): {args.since}", file=sys.stderr)
         return 2
-    owners = args.owner or DEFAULT_OWNERS
+    try:
+        config = load_config(seed)
+    except ConfigError as e:
+        print(f"invalid config: {e}", file=sys.stderr)
+        return 2
+    owners = args.owner or config["owners"] or DEFAULT_OWNERS
     known_terms = {t.lower() for t in state.get("knownTerms") or []}
 
     try:
@@ -434,17 +539,36 @@ def cmd_harvest(args: argparse.Namespace) -> int:
 
     topics = load_topics(topics_dir)
     seen_urls = known_urls(topics)
-    stats = {"fetched": len(items), "excluded": 0, "not_candidate": 0, "already_harvested": 0}
+    harvested_keys = {
+        dedup_key(e) for t in topics.values() for e in (t.get("prs") or []) + (t.get("commits") or [])
+    }
+    stats = {"fetched": len(items), "excluded": 0, "duplicates": 0, "not_candidate": 0, "already_harvested": 0}
+    kept: list[dict[str, Any]] = []
+    for item in items:
+        if exclusion_reason(item["title"], item.get("author")) or config_excluded(item, config["exclude"]):
+            stats["excluded"] += 1
+            continue
+        kept.append(item)
+    # dev 向けと main 向けの同じ PR は先にマージされた方だけ残す
+    earliest: dict[tuple[str, str], dict[str, Any]] = {}
+    for item in kept:
+        key = dedup_key(item)
+        if key not in earliest or merged_at_key(item) < merged_at_key(earliest[key]):
+            earliest[key] = item
+
     candidates: list[dict[str, Any]] = []
     all_terms: set[str] = set()
-    for item in items:
-        if exclusion_reason(item["title"], item.get("author")):
-            stats["excluded"] += 1
+    for item in kept:
+        if earliest[dedup_key(item)] is not item:
+            stats["duplicates"] += 1
             continue
         item["terms"] = extract_terms(item["title"])
         all_terms.update(t.lower() for t in item["terms"])
         if item["url"] in seen_urls:
             stats["already_harvested"] += 1
+            continue
+        if dedup_key(item) in harvested_keys:
+            stats["duplicates"] += 1
             continue
         item["reasons"] = candidate_reasons(item, known_terms)
         if not item["reasons"]:
@@ -471,11 +595,12 @@ def cmd_harvest(args: argparse.Namespace) -> int:
                 "commits": [],
                 "points": [],
                 "metrics": [],
+                "client": False,
                 "demand": None,
                 "createdAt": stamp,
             }
             topics[slug] = topic
-        merge_into_topic(topic, group["items"], stamp)
+        merge_into_topic(topic, group["items"], stamp, config["client_repos"])
         written.append(topic["slug"])
 
     if not args.dry_run:
@@ -534,8 +659,9 @@ def fetch_source(entry: dict[str, Any]) -> dict[str, Any]:
 
 
 def render_slice(topic: dict[str, Any], sources: list[dict[str, Any]]) -> str:
-    lines = [f"# Topic: {topic['topic']}", "", f"Topic file: {TOPICS_DIR}/{topic['slug']}.json",
-             f"Repos: {', '.join(topic.get('repos') or [])}", ""]
+    lines = [CLIENT_NOTE, ""] if topic.get("client") else []
+    lines += [f"# Topic: {topic['topic']}", "", f"Topic file: {TOPICS_DIR}/{topic['slug']}.json",
+              f"Repos: {', '.join(topic.get('repos') or [])}", ""]
     for src in sources:
         lines += [f"## {src['heading']}", "", f"URL: <{src['url']}>", ""]
         if src["body"]["text"]:
@@ -789,7 +915,8 @@ def main() -> int:
 
     p = sub.add_parser("harvest", parents=[common], help="Collect merged PRs since the last run into seed/_topics/*.json")
     p.add_argument("--since", help="YYYY-MM-DD (default: last run date, or 30 days ago on the first run)")
-    p.add_argument("--owner", action="append", help=f"GitHub owner (repeatable, default: {' '.join(DEFAULT_OWNERS)})")
+    p.add_argument("--owner", action="append",
+                   help=f"GitHub owner (repeatable, default: owners in {CONFIG_FILE}, else {' '.join(DEFAULT_OWNERS)})")
     p.add_argument("--no-commits", action="store_true", help="Skip feat/fix direct-push commits")
     p.add_argument("--dry-run", action="store_true", help="Print the result without writing files")
     p.set_defaults(func=cmd_harvest)

@@ -159,6 +159,42 @@ pyeval() {
     [ "$output" = "['Jev']" ]
 }
 
+@test "extract_terms: generic words are stopwords, tool names are kept" {
+    run pyeval "print(m.extract_terms('feat: App Code Stop Read Write Final Closes Path Setup Plan Pre Docs Blocked Preview Rules Boundary Cloud Mac と Bash Node Next Actions Workflow Vite Jev'))"
+    [ "$output" = "['Bash', 'Node', 'Next', 'Actions', 'Workflow', 'Vite', 'Jev']" ]
+}
+
+@test "exclusion_reason: release-please and main/dev sync PRs are release_or_sync" {
+    run pyeval "print(m.exclusion_reason('chore(main): release 0.10.1', None))"
+    [ "$output" = "release_or_sync" ]
+    run pyeval "print(m.exclusion_reason('chore(main): release skills 1.2.0', None))"
+    [ "$output" = "release_or_sync" ]
+    run pyeval "print(m.exclusion_reason('chore: main を dev に同期（renovate 更新の取り込み）', None))"
+    [ "$output" = "release_or_sync" ]
+    run pyeval "print(m.exclusion_reason('chore: dev を main に同期', None))"
+    [ "$output" = "release_or_sync" ]
+    run pyeval "print(m.exclusion_reason('chore: sync main into dev', None))"
+    [ "$output" = "release_or_sync" ]
+    run pyeval "print(m.exclusion_reason('feat: release ノートを自動生成する', None))"
+    [ "$output" = "None" ]
+}
+
+@test "dedup_title: trailing (#N) and （#N を dev に） are removed" {
+    run pyeval "print(m.dedup_title('chore(config): 設定を up 形式に移す (#1540)'))"
+    [ "$output" = "chore(config): 設定を up 形式に移す" ]
+    run pyeval "print(m.dedup_title('chore(config): 設定を up 形式に移す（#1540 を dev に）'))"
+    [ "$output" = "chore(config): 設定を up 形式に移す" ]
+    run pyeval "print(m.dedup_title('fix(ui): 直す（#12 を dev に） (#13)'))"
+    [ "$output" = "fix(ui): 直す" ]
+}
+
+@test "repo_matches: owner/name and owner/*" {
+    run pyeval "print(m.repo_matches('playpark-llc/yeg', 'playpark-llc/yeg'), m.repo_matches('playpark-llc/yeg', 'playpark-llc/corporate-site'))"
+    [ "$output" = "True False" ]
+    run pyeval "print(m.repo_matches('Cistree-dev/*', 'Cistree-dev/app'), m.repo_matches('Cistree-dev/*', 'playpark-llc/app'))"
+    [ "$output" = "True False" ]
+}
+
 @test "aggregate: failed sensors are unknown, never 0" {
     run pyeval "import json; print(json.dumps(m.aggregate({'a': m.unknown('x'), 'b': m.unknown('y')})))"
     [ "$(echo "$output" | jq -r .status)" = "unknown" ]
@@ -221,6 +257,185 @@ pyeval() {
     [ "$status" -eq 0 ]
     [ ! -e "$SEED/_topics" ]
     [ ! -e "$SEED/.seed-harvest-state.json" ]
+}
+
+@test "harvest: release and sync PRs are excluded without a config" {
+    cat > "$FIXTURES/search_prs.json" << 'EOF'
+[
+  {"repository": {"nameWithOwner": "it-all-playpark/skills"}, "number": 800,
+   "title": "chore(main): release 0.10.1", "body": "- Jev 判定 一致率 92% → 97%",
+   "url": "https://github.com/it-all-playpark/skills/pull/800", "closedAt": "2026-09-22T00:00:00Z",
+   "author": {"login": "naramoto"}},
+  {"repository": {"nameWithOwner": "playpark-llc/corporate-site"}, "number": 1500,
+   "title": "chore: main を dev に同期（renovate 更新の取り込み）", "body": "ビルド時間 40秒 → 12秒",
+   "url": "https://github.com/playpark-llc/corporate-site/pull/1500", "closedAt": "2026-09-22T00:00:00Z",
+   "author": {"login": "naramoto"}}
+]
+EOF
+    run harvest --no-commits
+    [ "$status" -eq 0 ]
+    [ "$(echo "$output" | jq -r .fetched)" = "2" ]
+    [ "$(echo "$output" | jq -r .excluded)" = "2" ]
+    [ "$(echo "$output" | jq -c .topics)" = "[]" ]
+}
+
+@test "harvest: the same PR to dev and to main is kept once, the earlier merge wins" {
+    cat > "$FIXTURES/search_prs.json" << 'EOF'
+[
+  {"repository": {"nameWithOwner": "playpark-llc/corporate-site"}, "number": 1541,
+   "title": "feat(config): Deno の設定を移す (#1540)", "body": "ビルド時間 40秒 → 12秒",
+   "url": "https://github.com/playpark-llc/corporate-site/pull/1541", "closedAt": "2026-09-21T00:00:00Z",
+   "author": {"login": "naramoto"}},
+  {"repository": {"nameWithOwner": "playpark-llc/corporate-site"}, "number": 1540,
+   "title": "feat(config): Deno の設定を移す（#1539 を dev に）", "body": "ビルド時間 40秒 → 12秒",
+   "url": "https://github.com/playpark-llc/corporate-site/pull/1540", "closedAt": "2026-09-20T00:00:00Z",
+   "author": {"login": "naramoto"}},
+  {"repository": {"nameWithOwner": "it-all-playpark/skills"}, "number": 9,
+   "title": "feat(config): Deno の設定を移す (#8)", "body": "ビルド時間 40秒 → 12秒",
+   "url": "https://github.com/it-all-playpark/skills/pull/9", "closedAt": "2026-09-22T00:00:00Z",
+   "author": {"login": "naramoto"}}
+]
+EOF
+    run harvest --no-commits
+    [ "$status" -eq 0 ]
+    [ "$(echo "$output" | jq -r .duplicates)" = "1" ]
+    [ "$(echo "$output" | jq -r .candidates)" = "2" ]
+    [ "$(echo "$output" | jq -c .topics)" = '["deno"]' ]
+    [ "$(jq -c '[.prs[].number] | sort' "$SEED/_topics/deno.json")" = '[9,1540]' ]
+}
+
+@test "harvest: a later PR with the same title as an already harvested one is a duplicate" {
+    cat > "$FIXTURES/search_prs.json" << 'EOF'
+[
+  {"repository": {"nameWithOwner": "playpark-llc/corporate-site"}, "number": 1540,
+   "title": "feat(config): Deno の設定を移す", "body": "ビルド時間 40秒 → 12秒",
+   "url": "https://github.com/playpark-llc/corporate-site/pull/1540", "closedAt": "2026-09-20T00:00:00Z",
+   "author": {"login": "naramoto"}}
+]
+EOF
+    run harvest --no-commits
+    [ "$status" -eq 0 ]
+    cat > "$FIXTURES/search_prs.json" << 'EOF'
+[
+  {"repository": {"nameWithOwner": "playpark-llc/corporate-site"}, "number": 1541,
+   "title": "feat(config): Deno の設定を移す（#1540 を dev に）", "body": "ビルド時間 40秒 → 12秒",
+   "url": "https://github.com/playpark-llc/corporate-site/pull/1541", "closedAt": "2026-09-21T00:00:00Z",
+   "author": {"login": "naramoto"}}
+]
+EOF
+    run harvest --no-commits
+    [ "$status" -eq 0 ]
+    [ "$(echo "$output" | jq -r .duplicates)" = "1" ]
+    [ "$(echo "$output" | jq -c .topics)" = "[]" ]
+    [ "$(jq -c '[.prs[].number]' "$SEED/_topics/deno.json")" = '[1540]' ]
+}
+
+@test "harvest: a generic word such as Blocked does not become the topic" {
+    cat > "$FIXTURES/search_prs.json" << 'EOF'
+[
+  {"repository": {"nameWithOwner": "it-all-playpark/skills"}, "number": 77,
+   "title": "fix(dev-flow): Blocked 判定の Path を直す", "body": "ビルド時間 40秒 → 12秒",
+   "url": "https://github.com/it-all-playpark/skills/pull/77", "closedAt": "2026-09-20T00:00:00Z",
+   "author": {"login": "naramoto"}}
+]
+EOF
+    run harvest --no-commits
+    [ "$status" -eq 0 ]
+    [ "$(echo "$output" | jq -c .topics)" = '["fix-dev-flow-blocked-path"]' ]
+    [ "$(jq -c .terms "$SEED/_topics/fix-dev-flow-blocked-path.json")" = "[]" ]
+}
+
+# ---------------------------------------------------------------- config
+
+write_config() {
+    printf '%s\n' "$1" > "$SEED/.seed-harvest-config.json"
+}
+
+@test "harvest: no config leaves topics unmarked as client" {
+    run harvest --no-commits
+    [ "$status" -eq 0 ]
+    [ "$(echo "$output" | jq -c .owners)" = '["it-all-playpark","playpark-llc"]' ]
+    [ "$(jq -r .client "$SEED/_topics/jev.json")" = "false" ]
+}
+
+@test "harvest: config owners are the default, --owner overrides them" {
+    write_config '{"owners": ["it-all-playpark", "Cistree-dev"]}'
+    run harvest --no-commits
+    [ "$status" -eq 0 ]
+    [ "$(echo "$output" | jq -c .owners)" = '["it-all-playpark","Cistree-dev"]' ]
+    grep -q -- "--owner it-all-playpark --owner Cistree-dev " "$GH_CALLS_LOG"
+
+    : > "$GH_CALLS_LOG"
+    run harvest --no-commits --dry-run --owner playpark-llc
+    [ "$status" -eq 0 ]
+    [ "$(echo "$output" | jq -c .owners)" = '["playpark-llc"]' ]
+    grep -q -- "--owner playpark-llc " "$GH_CALLS_LOG"
+    run grep -q "Cistree-dev" "$GH_CALLS_LOG"
+    [ "$status" -ne 0 ]
+}
+
+@test "harvest: config exclude needs both repo and title_regex to match, owner/* matches" {
+    write_config '{"exclude": [
+      {"repo": "playpark-llc/corporate-site", "title_regex": "factory"},
+      {"repo": "it-all-playpark/*", "title_regex": "sandbox"},
+      {"repo": "playpark-llc/other", "title_regex": "Jev"}
+    ]}'
+    run harvest --no-commits
+    [ "$status" -eq 0 ]
+    [ "$(echo "$output" | jq -r .excluded)" = "6" ]
+    [ "$(echo "$output" | jq -r .candidates)" = "1" ]
+    [ "$(jq -c '[.prs[].number]' "$SEED/_topics/jev.json")" = '[728]' ]
+}
+
+@test "harvest: broken config JSON is exit 2 and fetches nothing" {
+    write_config '{"owners": ['
+    run harvest --no-commits
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"invalid config"* ]]
+    [ ! -e "$GH_CALLS_LOG" ]
+    [ ! -e "$SEED/.seed-harvest-state.json" ]
+}
+
+@test "harvest: invalid title_regex in config is exit 2" {
+    write_config '{"exclude": [{"repo": "playpark-llc/corporate-site", "title_regex": "blog(" }]}'
+    run harvest --no-commits
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"title_regex"* ]]
+    [ ! -e "$GH_CALLS_LOG" ]
+}
+
+@test "harvest: topics with a client repo are client:true, others false, and an append raises it" {
+    write_config '{"client_repos": ["playpark-llc/yeg", "Cistree-dev/*"]}'
+    cat > "$FIXTURES/search_prs.json" << 'EOF'
+[
+  {"repository": {"nameWithOwner": "it-all-playpark/skills"}, "number": 728,
+   "title": "feat(dev-flow): Jev 判定を prerun に入れる", "body": "一致率 92% → 97%",
+   "url": "https://github.com/it-all-playpark/skills/pull/728", "closedAt": "2026-09-22T00:00:00Z",
+   "author": {"login": "naramoto"}},
+  {"repository": {"nameWithOwner": "Cistree-dev/app"}, "number": 3,
+   "title": "feat: Deno でビルドする", "body": "ビルド時間 40秒 → 12秒",
+   "url": "https://github.com/Cistree-dev/app/pull/3", "closedAt": "2026-09-22T00:00:00Z",
+   "author": {"login": "naramoto"}}
+]
+EOF
+    run harvest --no-commits
+    [ "$status" -eq 0 ]
+    [ "$(jq -r .client "$SEED/_topics/jev.json")" = "false" ]
+    [ "$(jq -r .client "$SEED/_topics/deno.json")" = "true" ]
+
+    cat > "$FIXTURES/search_prs.json" << 'EOF'
+[
+  {"repository": {"nameWithOwner": "playpark-llc/yeg"}, "number": 41,
+   "title": "feat: Jev で分類する", "body": "一致率 97%",
+   "url": "https://github.com/playpark-llc/yeg/pull/41", "closedAt": "2026-09-23T00:00:00Z",
+   "author": {"login": "naramoto"}}
+]
+EOF
+    run harvest --no-commits
+    [ "$status" -eq 0 ]
+    [ "$(echo "$output" | jq -c .topics)" = '["jev"]' ]
+    [ "$(jq -c '[.prs[].number]' "$SEED/_topics/jev.json")" = '[728,41]' ]
+    [ "$(jq -r .client "$SEED/_topics/jev.json")" = "true" ]
 }
 
 # ---------------------------------------------------------------- direct commits
@@ -334,6 +549,27 @@ EOF
     run python3 "$SCRIPT" slice jev --seed "$SEED"
     [ "$status" -eq 0 ]
     [ "$(echo "$output" | jq -r .truncated)" = "false" ]
+}
+
+@test "slice: a client topic starts with the no-implementation-details note, others do not" {
+    run harvest --no-commits
+    [ "$status" -eq 0 ]
+    echo '{"title": "feat: Jev", "body": "本文", "comments": []}' > "$FIXTURES/pr_view.json"
+    printf 'diff --git a/x b/x\n+one\n' > "$FIXTURES/pr_diff.txt"
+
+    run python3 "$SCRIPT" slice jev --seed "$SEED"
+    [ "$status" -eq 0 ]
+    [ "$(head -n 1 "$SEED/_topics/slices/jev.md")" = "# Topic: Jev" ]
+    run grep -q "顧客案件由来" "$SEED/_topics/slices/jev.md"
+    [ "$status" -ne 0 ]
+
+    jq '.client = true' "$SEED/_topics/jev.json" > "$BATS_TEST_TMPDIR/jev.json"
+    mv "$BATS_TEST_TMPDIR/jev.json" "$SEED/_topics/jev.json"
+    run python3 "$SCRIPT" slice jev --seed "$SEED"
+    [ "$status" -eq 0 ]
+    first="$(head -n 1 "$SEED/_topics/slices/jev.md")"
+    [[ "$first" == *"顧客案件由来"* ]]
+    [[ "$first" == *"実装の詳細"*"記事に載せない"* ]]
 }
 
 @test "slice: --max-kb outside 1..99 is a usage error" {
