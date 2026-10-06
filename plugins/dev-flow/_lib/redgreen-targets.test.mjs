@@ -35,14 +35,14 @@ test('[redgreen-targets] redgreenPairKey はファイル列の順序と重複を
 
 test('[redgreen-targets] 7 AC が同一ペア → redgreen 引数は 1 ペア、7 AC すべてに同じ結果が入る', () => {
   const targets = Array.from({ length: 7 }, (_, i) => (i % 2 === 0
-    ? target(i, ['seed_harvest.bats'], ['seed_harvest.py'])
-    : target(i, ['seed_harvest.bats', 'seed_harvest.bats'], ['seed_harvest.py'])));
+    ? target(i, ['sample_case.bats'], ['sample_case.py'])
+    : target(i, ['sample_case.bats', 'sample_case.bats'], ['sample_case.py'])));
   const { pairs, pairIndex } = buildRedgreenPairs(targets);
-  assert.deepEqual(pairs, [{ test_files: ['seed_harvest.bats'], impl_files: ['seed_harvest.py'] }]);
+  assert.deepEqual(pairs, [{ test_files: ['sample_case.bats'], impl_files: ['sample_case.py'] }]);
   assert.deepEqual(pairIndex, [0, 0, 0, 0, 0, 0, 0]);
 
   const prompt = redgreenVerifyPrompt('/tmp/wt', pairs);
-  assert.deepEqual(parseRedgreenPairs(prompt), [{ test_csv: 'seed_harvest.bats', impl_csv: 'seed_harvest.py' }]);
+  assert.deepEqual(parseRedgreenPairs(prompt), [{ test_csv: 'sample_case.bats', impl_csv: 'sample_case.py' }]);
 
   const result = { index: 0, red: true, green: true, reason: 'ok' };
   const dist = distributeRedgreenResults(pairIndex, [result]);
@@ -131,7 +131,7 @@ async function runWith(acResults, redgreenResultsFor) {
   return { redgreenPrompts, logs };
 }
 
-const sameAc = (i, testFiles = ['seed_harvest.bats'], implFiles = ['seed_harvest.py']) => ({
+const sameAc = (i, testFiles = ['sample_case.bats'], implFiles = ['sample_case.py']) => ({
   ac_index: i, satisfied: true, verified_by: 'test', evidence: 'ok', test_files: testFiles, impl_files: implFiles,
 });
 
@@ -139,7 +139,7 @@ test('[redgreen-targets] dev-flow: 7 AC が同一ペア → redgreen spawn は 1
   const acResults = Array.from({ length: 7 }, (_, i) => sameAc(i));
   const { redgreenPrompts, logs } = await runWith(acResults, () => ({ index: 0, red: true, green: true, reason: 'ok' }));
   assert.equal(redgreenPrompts.length, 1, `redgreen spawn が 1 回でない: ${redgreenPrompts.length}`);
-  assert.deepEqual(parseRedgreenPairs(redgreenPrompts[0]), [{ test_csv: 'seed_harvest.bats', impl_csv: 'seed_harvest.py' }]);
+  assert.deepEqual(parseRedgreenPairs(redgreenPrompts[0]), [{ test_csv: 'sample_case.bats', impl_csv: 'sample_case.py' }]);
   for (let i = 1; i <= 7; i++) {
     assert.ok(logs.some((l) => l.includes(`AC-${i}: red→green 実証 → deterministic 昇格 + checked`)), `AC-${i} が昇格していない`);
   }
@@ -183,5 +183,5 @@ test('[redgreen-targets] dev-flow: 異なるペアは従来どおり別ペアで
 test('[redgreen-targets] dev-flow: redgreen の prompt は redgreenVerifyPrompt と同一 byte 列', async () => {
   const acResults = [sameAc(0), sameAc(1)];
   const { redgreenPrompts } = await runWith(acResults, () => ({ index: 0, red: true, green: true }));
-  assert.equal(redgreenPrompts[0], redgreenVerifyPrompt('/tmp/wt', [{ test_files: ['seed_harvest.bats'], impl_files: ['seed_harvest.py'] }]));
+  assert.equal(redgreenPrompts[0], redgreenVerifyPrompt('/tmp/wt', [{ test_files: ['sample_case.bats'], impl_files: ['sample_case.py'] }]));
 });
