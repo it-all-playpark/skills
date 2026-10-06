@@ -263,6 +263,27 @@ test('[pr-artifacts] pr_sections: 中身の </details> / <details> と行全体�
   assert.equal(prBodyClipReport(plan({ pr_sections: [{ heading: 'h', markdown }] })).sections_over_chars, 0);
 });
 
+test('[pr-artifacts] pr_sections: 閉じていないコードフェンスは閉じ、<!-- は無害化して、後続の </details> と Closes 行を飲み込ませない', () => {
+  const Z = String.fromCharCode(0x200b);
+  const bodyOf = (markdown) => buildPrBody({ issue: 1, req: req(), plan: plan({ pr_sections: [{ heading: 'h', markdown }] }), ledger: ledger(), testsurfHits: [], dangerHits: [] });
+  const blockOf = (body) => body.slice(body.indexOf('<details>'), body.lastIndexOf('</details>') + '</details>'.length);
+
+  const backtick = blockOf(bodyOf('前置き\n```js\nconst a = 1;'));
+  assert.ok(backtick.includes('const a = 1;\n```\n\n</details>'), `閉じフェンスが足される: ${backtick}`);
+  const tilde = blockOf(bodyOf('~~~~\nx\n~~~'));
+  assert.ok(tilde.includes('x\n~~~\n~~~~\n\n</details>'), `短い閉じは閉じとみなさず同じ長さで閉じる: ${tilde}`);
+  const mixed = blockOf(bodyOf('```\n~~~\nx'));
+  assert.ok(mixed.includes('x\n```\n\n</details>'), `別記号の行は閉じとみなさない: ${mixed}`);
+  const balanced = blockOf(bodyOf('```\nx\n```\n後ろ'));
+  assert.ok(balanced.includes('```\nx\n```\n後ろ\n\n</details>'), `閉じているフェンスは変えない: ${balanced}`);
+  assert.ok(blockOf(bodyOf('   ```\nx\n```')).includes('   ```\nx\n```\n\n</details>'), '3 空白までのインデントもフェンスとして数える');
+
+  const comment = bodyOf('前置き <!-- 閉じない');
+  assert.ok(!comment.includes('<!--'), comment);
+  assert.ok(comment.includes(`<!${Z}-- 閉じない`), comment);
+  assert.ok(comment.trimEnd().endsWith('Closes #1'));
+});
+
 test('[pr-artifacts] PR body: pr_sections を上限いっぱいに載せても可視部（<details> の外）は PR_BODY_MAX_CHARS 以内', () => {
   const big = 'x'.repeat(PR_SECTIONS_MAX_CHARS / 2 - 10);
   const sections = [{ heading: 'h1', markdown: big }, { heading: 'h2', markdown: big }];
@@ -336,6 +357,7 @@ test('[pr-artifacts] prBodyEvidenceInstr / planWithoutPrBodyMaterial: evaluator 
   const instr = prBodyEvidenceInstr(body);
   assert.ok(instr.includes(`<<<PR_BODY_PREVIEW_BEGIN>>>\n${body}<<<PR_BODY_PREVIEW_END>>>`), instr);
   assert.match(instr, /「PR 本文に書く」型の AC は、この本文テキスト/);
+  assert.match(instr, /チェックボックス（- \[ \] \/ - \[x\]）は未確定であり、AC の充足・未達の根拠にするな/);
   const p = plan({ pr_notes: [{ section: 'measurement', text: 'x' }], pr_sections: [{ heading: 'h', markdown: 'm' }], out_of_scope: ['o'] });
   const stripped = planWithoutPrBodyMaterial(p);
   for (const k of PR_BODY_PLAN_KEYS) assert.ok(!(k in stripped), `${k} が残っている`);

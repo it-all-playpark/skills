@@ -55,6 +55,8 @@ test('[pr-body-evidence] (a) eval#1 の prompt は buildPrBody のプレビュ�
   assert.ok(preview.includes(`\n\n${TABLE}\n\n</details>`), '対応表が改行を保ってプレビューに載る');
   assert.ok(preview.trimEnd().endsWith('Closes #1'));
   assert.match(ev.prompt, /「PR 本文に書く」型の AC は、この本文テキストに該当内容があるかで判定せよ/);
+  assert.ok(preview.includes('- [ ] '), '前提: プレビューの受入条件は未チェック');
+  assert.match(ev.prompt, /受入条件」のチェックボックス（- \[ \] \/ - \[x\]）は未確定であり、AC の充足・未達の根拠にするな/);
   for (const k of RAW_KEYS) assert.ok(!ev.prompt.includes(k), `eval#1 prompt に plan の生 JSON ${k} が残っている`);
   assert.ok(ev.prompt.includes('plan: {"summary":'), 'plan（本文材料を除いたもの）は引き続き渡す');
 });
@@ -75,6 +77,7 @@ test('[pr-body-evidence] (b) final-ac-reconcile の prompt は PR に載せた�
   assert.equal(fac.length, 1, `fixes_applied>0 で final-ac-reconcile が 1 回走る: ${calls.map((c) => c.label).join(', ')}`);
   assert.equal(previewOf(fac[0].prompt), prBodyOf(calls), 'PR に載せた本文と一字一句同じ');
   assert.match(fac[0].prompt, /「PR 本文に書く」型の AC は、この本文テキストに該当内容があるかで判定せよ/);
+  assert.match(fac[0].prompt, /チェックボックス（- \[ \] \/ - \[x\]）は未確定であり、AC の充足・未達の根拠にするな/);
   for (const k of RAW_KEYS) assert.ok(!fac[0].prompt.includes(k), `final-ac-reconcile prompt に plan の生 JSON ${k} が残っている`);
   assert.equal(result?.final_ac_reconcile, 'reverified');
 });
