@@ -3743,7 +3743,7 @@ const SEC_CLEAR = {
     },
   },
 }
-// redgreen-verify の出力契約: 全 AC ペアを 1 呼び出し（1 spawn）で判定し、results に引数順で返す。
+// redgreen-verify の出力契約: 一意な AC ペアを 1 呼び出し（1 spawn）で判定し、results に引数順で返す。
 // root を object にするのは agent() schema の制約（root object 必須）— haiku proxy に配列を包み直させない。
 const RG = {
   type: 'object', required: ['results'],
@@ -4877,6 +4877,44 @@ function runTestsPrompt(wt) {
     + `run-tests ${wt}`;
 }
 // ==== END inline: _lib/run-tests-prompt.mjs ====
+// ==== BEGIN inline: _lib/redgreen-targets.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
+
+function redgreenPairKey(testFiles, implFiles) {
+  const norm = (xs) => [...new Set(xs)].sort();
+  return JSON.stringify([norm(testFiles), norm(implFiles)]);
+}
+
+function buildRedgreenPairs(targets) {
+  const pairs = [];
+  const pairIndex = [];
+  const indexByKey = new Map();
+  for (const { r } of targets) {
+    const key = redgreenPairKey(r.test_files, r.impl_files);
+    let k = indexByKey.get(key);
+    if (k === undefined) {
+      k = pairs.length;
+      indexByKey.set(key, k);
+      pairs.push({ test_files: r.test_files, impl_files: r.impl_files });
+    }
+    pairIndex.push(k);
+  }
+  return { pairs, pairIndex };
+}
+
+function distributeRedgreenResults(pairIndex, results) {
+  const list = Array.isArray(results) ? results : [];
+  return pairIndex.map((k) => list.find((x) => x && x.index === k) ?? null);
+}
+
+function redgreenVerifyPrompt(wt, pairs) {
+  return `cd ${wt} で作業。次のコマンドを 1 回だけ実行して **stdout の JSON 1 行だけ** を verbatim で返せ(判定や脚色をしない)。`
+    + `Bash tool の \`timeout: 600000\` を指定して実行し、\`run_in_background\` は使わない（禁止）。`
+    + `コマンドを再発行しない（timeout・background 化した場合も含む）。`
+    + `timeout に達した・stdout に JSON 1 行が無い場合だけは、{"results":[]} を一字一句そのまま返せ:\n`
+    + `redgreen-verify ${wt} `
+    + pairs.map((p) => `'${p.test_files.join(',')}' '${p.impl_files.join(',')}'`).join(' ');
+}
+// ==== END inline: _lib/redgreen-targets.mjs ====
 
 // ---- helpers ----
 
@@ -6277,23 +6315,24 @@ async function execEvaluatePhase(state) {
         ledger = checkItem(ledger, acId, r.evidence ?? 'inspection')
       }
     }
-    // 1 spawn に全ペアを渡す。返却の results[k].index は引数順 = rgTargets の添字。
-    // spawn 失敗・results 欠落は当該ペア null（fail-safe: inspection 据え置き。deterministic 昇格しない）。
-    let rgResults = []
+    // 1 spawn に一意な (test_files, impl_files) ペアだけを渡し、結果を同じ組を共有する全 AC に配る
+    // （buildRedgreenPairs / distributeRedgreenResults）。返却の results[k].index は引数順 = ペアの添字。
+    // spawn 失敗・results 欠落は当該ペアを使う AC が null（fail-safe: inspection 据え置き。deterministic 昇格しない）。
+    let rgByTarget = []
     if (rgTargets.length) {
-      const rgBatch = await trackedAgent(
-        `cd ${WT} で作業。次を実行して **stdout の JSON 1 行だけ** を verbatim で返せ(判定や脚色をしない):\n`
-        + `redgreen-verify ${WT} `
-        + rgTargets.map(({ r }) => `'${r.test_files.join(',')}' '${r.impl_files.join(',')}'`).join(' '),
+      const { pairs, pairIndex } = buildRedgreenPairs(rgTargets)
+      if (pairs.length < rgTargets.length) log(`redgreen-verify: AC ${rgTargets.length} 件を一意な (test_files, impl_files) ${pairs.length} ペアに集約`)
+      const rgBatch = await trackedAgent(redgreenVerifyPrompt(WT, pairs),
         { agentType: 'dev-runner-haiku', schema: RG, label: 'redgreen', phase: 'Evaluate' })
-      rgResults = (rgBatch && Array.isArray(rgBatch.results)) ? rgBatch.results : []
-      if (rgResults.length !== rgTargets.length) {
-        log(`⚠️ redgreen-verify の results が ${rgResults.length} 件（期待 ${rgTargets.length} 件）— 欠落ペアは inspection 据え置き`)
+      const rgResults = (rgBatch && Array.isArray(rgBatch.results)) ? rgBatch.results : []
+      if (rgResults.length !== pairs.length) {
+        log(`⚠️ redgreen-verify の results が ${rgResults.length} 件（期待 ${pairs.length} 件）— 欠落ペアは inspection 据え置き`)
       }
+      rgByTarget = distributeRedgreenResults(pairIndex, rgResults)
     }
     for (let k = 0; k < rgTargets.length; k++) {
       const { r, acId } = rgTargets[k]
-      const rg = rgResults.find((x) => x && x.index === k) ?? null
+      const rg = rgByTarget[k] ?? null
       const denyRes = vdeltaDenies(rg ? rg.verdict : null)
       if (rg && rg.red === true && rg.green === true && !denyRes.deny) {
         ledger = setCheck(ledger, acId, { kind: 'deterministic' })
