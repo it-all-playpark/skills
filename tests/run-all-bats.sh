@@ -18,6 +18,20 @@
 #     default of the online CPU count; set it to 1 to run serially. Files are
 #     independent (each test uses mktemp / $BATS_TEST_TMPDIR), and serial
 #     execution made dev-flow Validate spend ~7 min per full-suite pass.
+#   - Change-based selection: dev-flow's run-tests passes
+#     `DEVFLOW_CHANGED_FILES` (absolute path of a file listing the changed
+#     paths, repo-relative, one per line). When set, only the .bats files whose
+#     body contains a changed file's basename are run. Any doubt falls back to
+#     the full suite, because a skipped bats is a silent false green:
+#       - the variable is unset / empty, the file is unreadable or has 0 lines
+#       - a changed path is under `tests/` or `fixtures/`
+#       - a changed path is not `.mjs` / `.js` / `.md` (shell, bats, json, ...)
+#       - a changed `.mjs` / `.js` / `.md` basename appears in a shell-side
+#         file (`*.sh`, `bin/**`, `hooks/**`; `*.bats` excluded), since those
+#         call scripts by name and their own bats would not mention it
+#     Matching is a plain basename string match (no import analysis). The
+#     decision is printed as one `[run-all-bats] Selection:` line on stdout.
+#     CI and manual runs don't set the variable, so they always run everything.
 #
 # Designed to be called from CI (GitHub Actions) after `brew install bats-core`
 # (macOS) or `apt install bats` (ubuntu).
@@ -71,7 +85,96 @@ if [[ ${#BATS_FILES[@]} -eq 0 ]]; then
     exit 0
 fi
 
-echo "[run-all-bats] Discovered ${#BATS_FILES[@]} .bats file(s):"
+# Change-based selection (see header). Prints exactly one Selection line; when
+# narrowing, sets NARROWED=true and fills SELECTED_BATS (possibly empty).
+select_by_changed_files() {
+    local list="${DEVFLOW_CHANGED_FILES:-}"
+    if [[ -z "$list" ]]; then
+        echo "[run-all-bats] Selection: all (DEVFLOW_CHANGED_FILES is unset or empty)"
+        return
+    fi
+    if [[ ! -f "$list" || ! -r "$list" ]]; then
+        echo "[run-all-bats] Selection: all (DEVFLOW_CHANGED_FILES is not a readable file: $list)"
+        return
+    fi
+
+    local changed=() line
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ -n "$line" ]] && changed+=("$line")
+    done < "$list"
+    if [[ ${#changed[@]} -eq 0 ]]; then
+        echo "[run-all-bats] Selection: all (DEVFLOW_CHANGED_FILES lists 0 files)"
+        return
+    fi
+
+    local shell_files=() p
+    while IFS= read -r p; do
+        shell_files+=("$REPO_ROOT/${p#./}")
+    done < <(
+        cd "$REPO_ROOT" && find . \
+            -type d \( -name ".git" -o -name "node_modules" -o -name ".serena" \
+                    -o -name ".system" -o -name ".agents" \
+                    -o -path "*/.claude/worktrees" \) -prune -o \
+            -type f ! -name "*.bats" \
+            \( -name "*.sh" -o -path "*/bin/*" -o -path "*/hooks/*" \) -print | sort
+    )
+
+    local base hit
+    for p in "${changed[@]}"; do
+        if [[ "/$p" == */tests/* ]]; then
+            echo "[run-all-bats] Selection: all ($p: under tests/)"
+            return
+        fi
+        if [[ "/$p" == */fixtures/* ]]; then
+            echo "[run-all-bats] Selection: all ($p: under fixtures/)"
+            return
+        fi
+        case "$p" in
+            *.mjs | *.js | *.md) ;;
+            *)
+                echo "[run-all-bats] Selection: all ($p: extension is not .mjs/.js/.md)"
+                return
+                ;;
+        esac
+        base="${p##*/}"
+        if [[ ${#shell_files[@]} -gt 0 ]]; then
+            hit="$(grep -lF -e "$base" -- "${shell_files[@]}" 2>/dev/null | head -n 1)"
+            if [[ -n "$hit" ]]; then
+                echo "[run-all-bats] Selection: all ($p: basename referenced by shell-side file ${hit#$REPO_ROOT/})"
+                return
+            fi
+        fi
+    done
+
+    local -A matched=()
+    for p in "${changed[@]}"; do
+        base="${p##*/}"
+        while IFS= read -r hit; do
+            [[ -n "$hit" ]] && matched["$hit"]=1
+        done < <(grep -lF -e "$base" -- "${BATS_FILES[@]}" 2>/dev/null)
+    done
+
+    NARROWED=true
+    local f
+    for f in "${BATS_FILES[@]}"; do
+        [[ -n "${matched[$f]:-}" ]] && SELECTED_BATS+=("$f")
+    done
+    echo "[run-all-bats] Selection: ${#SELECTED_BATS[@]} of ${#BATS_FILES[@]} .bats file(s) reference a changed basename (DEVFLOW_CHANGED_FILES, ${#changed[@]} file(s))"
+}
+
+NARROWED=false
+SELECTED_BATS=()
+select_by_changed_files
+
+LIST_LABEL="Discovered"
+if [[ "$NARROWED" == true ]]; then
+    # 0 selected: don't start bats at all.
+    [[ ${#SELECTED_BATS[@]} -eq 0 ]] && exit 0
+    BATS_FILES=("${SELECTED_BATS[@]}")
+    LIST_LABEL="Selected"
+fi
+
+echo "[run-all-bats] ${LIST_LABEL} ${#BATS_FILES[@]} .bats file(s):"
 for f in "${BATS_FILES[@]}"; do
     echo "  - ${f#$REPO_ROOT/}"
 done
