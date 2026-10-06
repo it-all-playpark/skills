@@ -71,7 +71,7 @@ make_issue_fixture() {
 
 @test "(1) base 未指定 + origin/dev あり -> dev を起点に新規作成" {
     cd "$ROOT"
-    run "$SCRIPT" --issue 1 --worktree "$WT"
+    run --separate-stderr "$SCRIPT" --issue 1 --worktree "$WT"
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.ok == true'
     echo "$output" | jq -e '.base == "dev"'
@@ -108,7 +108,7 @@ make_issue_fixture() {
     git -C "$ROOT2" config user.email "test@example.com"
 
     cd "$ROOT2"
-    run "$SCRIPT" --issue 1 --worktree "$BATS_TEST_TMPDIR/wt2/df-1"
+    run --separate-stderr "$SCRIPT" --issue 1 --worktree "$BATS_TEST_TMPDIR/wt2/df-1"
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.base == "main"'
     echo "$output" | jq -e '.base_source == "origin/HEAD"'
@@ -118,7 +118,7 @@ make_issue_fixture() {
 
 @test "(3) --base release (origin に無い) -> ok:false, worktree skipped" {
     cd "$ROOT"
-    run "$SCRIPT" --issue 1 --worktree "$WT" --base release
+    run --separate-stderr "$SCRIPT" --issue 1 --worktree "$WT" --base release
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.ok == false'
     echo "$output" | jq -e '.base_error | test("origin/release")'
@@ -132,7 +132,7 @@ make_issue_fixture() {
 
 @test "(4) --base main -> explicit" {
     cd "$ROOT"
-    run "$SCRIPT" --issue 1 --worktree "$WT" --base main
+    run --separate-stderr "$SCRIPT" --issue 1 --worktree "$WT" --base main
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.base == "main"'
     echo "$output" | jq -e '.base_source == "explicit"'
@@ -142,14 +142,14 @@ make_issue_fixture() {
 
 @test "(5) 同じ WT で2回目実行 -> reused, head同一, .devflow-tmpがcleanされる" {
     cd "$ROOT"
-    run "$SCRIPT" --issue 1 --worktree "$WT"
+    run --separate-stderr "$SCRIPT" --issue 1 --worktree "$WT"
     [ "$status" -eq 0 ]
     first_head="$(echo "$output" | jq -r '.head')"
 
     mkdir -p "$WT/.devflow-tmp"
     echo "stale" > "$WT/.devflow-tmp/stale.txt"
 
-    run "$SCRIPT" --issue 1 --worktree "$WT"
+    run --separate-stderr "$SCRIPT" --issue 1 --worktree "$WT"
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.ok == true'
     echo "$output" | jq -e '.worktree_status == "reused"'
@@ -163,7 +163,7 @@ make_issue_fixture() {
     cd "$ROOT"
     git worktree add -q --track -b feature/issue-1 "$WT" origin/main
 
-    run "$SCRIPT" --issue 1 --worktree "$WT"
+    run --separate-stderr "$SCRIPT" --issue 1 --worktree "$WT"
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.ok == false'
     echo "$output" | jq -e '.worktree_status == "reused"'
@@ -180,7 +180,7 @@ make_issue_fixture() {
     cd "$ROOT"
     git worktree add -q --track -b other-branch "$WT" origin/dev
 
-    run "$SCRIPT" --issue 1 --worktree "$WT"
+    run --separate-stderr "$SCRIPT" --issue 1 --worktree "$WT"
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.ok == false'
     echo "$output" | jq -e '.worktree_status == "reused"'
@@ -193,7 +193,7 @@ make_issue_fixture() {
 @test "(6c) epoch は script 開始時の時刻（出力直前ではない）" {
     cd "$ROOT"
     before="$(date +%s)"
-    run "$SCRIPT" --issue 1 --worktree "$WT"
+    run --separate-stderr "$SCRIPT" --issue 1 --worktree "$WT"
     after="$(date +%s)"
     [ "$status" -eq 0 ]
     echo "$output" | jq -e --argjson b "$before" --argjson a "$after" '.epoch >= $b and .epoch <= $a'
@@ -207,7 +207,7 @@ make_issue_fixture() {
 
 @test "(6d) epoch_end は epoch 以上かつ deps/stack 完了後の時刻" {
     cd "$ROOT"
-    run "$SCRIPT" --issue 1 --worktree "$WT"
+    run --separate-stderr "$SCRIPT" --issue 1 --worktree "$WT"
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '(.epoch_end | type) == "number" and (.epoch_end == (.epoch_end | floor))'
     echo "$output" | jq -e '.epoch_end >= .epoch'
@@ -224,13 +224,13 @@ make_issue_fixture() {
 
 @test "(7) push -u 後の upstream (origin/feature/issue-1) は一致扱い" {
     cd "$ROOT"
-    run "$SCRIPT" --issue 1 --worktree "$WT"
+    run --separate-stderr "$SCRIPT" --issue 1 --worktree "$WT"
     [ "$status" -eq 0 ]
 
     git -C "$ROOT" push -q origin "feature/issue-1"
     git -C "$WT" branch --set-upstream-to=origin/feature/issue-1 feature/issue-1
 
-    run "$SCRIPT" --issue 1 --worktree "$WT"
+    run --separate-stderr "$SCRIPT" --issue 1 --worktree "$WT"
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.ok == true'
 }
@@ -241,7 +241,7 @@ make_issue_fixture() {
     cd "$ROOT"
     git worktree add -q --no-track -b feature/issue-1 "$WT" origin/dev
 
-    run "$SCRIPT" --issue 1 --worktree "$WT"
+    run --separate-stderr "$SCRIPT" --issue 1 --worktree "$WT"
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.ok == false'
     echo "$output" | jq -e '.worktree_error | test("upstream")'
@@ -251,12 +251,12 @@ make_issue_fixture() {
 
 @test "(9) 実体を rm -rf した stale worktree -> prune後に既存branchをcheckoutしてcreated" {
     cd "$ROOT"
-    run "$SCRIPT" --issue 1 --worktree "$WT"
+    run --separate-stderr "$SCRIPT" --issue 1 --worktree "$WT"
     [ "$status" -eq 0 ]
 
     rm -rf "$WT"
 
-    run "$SCRIPT" --issue 1 --worktree "$WT"
+    run --separate-stderr "$SCRIPT" --issue 1 --worktree "$WT"
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.ok == true'
     echo "$output" | jq -e '.worktree_status == "created"'
@@ -274,7 +274,7 @@ advance_origin_dev() {
 
 @test "(9b) 独自コミット0件・未コミット変更なしで遅れた再利用worktree -> origin/devへfast-forward、headも進めた後の値" {
     cd "$ROOT"
-    run "$SCRIPT" --issue 1 --worktree "$WT"
+    run --separate-stderr "$SCRIPT" --issue 1 --worktree "$WT"
     [ "$status" -eq 0 ]
     old_head="$(echo "$output" | jq -r '.head')"
 
@@ -283,7 +283,7 @@ advance_origin_dev() {
     mkdir -p "$WT/.devflow-tmp"
     echo "stale" > "$WT/.devflow-tmp/stale.txt"
 
-    run "$SCRIPT" --issue 1 --worktree "$WT"
+    run --separate-stderr "$SCRIPT" --issue 1 --worktree "$WT"
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.ok == true'
     echo "$output" | jq -e '.worktree_status == "reused"'
@@ -295,7 +295,7 @@ advance_origin_dev() {
 
 @test "(9c) 独自コミットがある再利用worktree -> origin/devが進んでもHEADは変わらない" {
     cd "$ROOT"
-    run "$SCRIPT" --issue 1 --worktree "$WT"
+    run --separate-stderr "$SCRIPT" --issue 1 --worktree "$WT"
     [ "$status" -eq 0 ]
 
     git -C "$WT" config user.name "Test"
@@ -307,7 +307,7 @@ advance_origin_dev() {
 
     advance_origin_dev
 
-    run "$SCRIPT" --issue 1 --worktree "$WT"
+    run --separate-stderr "$SCRIPT" --issue 1 --worktree "$WT"
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.ok == true'
     [ "$(git -C "$WT" rev-parse HEAD)" = "$own_head" ]
@@ -316,7 +316,7 @@ advance_origin_dev() {
 
 @test "(9d) 未コミット変更がある再利用worktree -> origin/devが進んでもHEADは変わらない" {
     cd "$ROOT"
-    run "$SCRIPT" --issue 1 --worktree "$WT"
+    run --separate-stderr "$SCRIPT" --issue 1 --worktree "$WT"
     [ "$status" -eq 0 ]
     old_head="$(echo "$output" | jq -r '.head')"
 
@@ -324,7 +324,7 @@ advance_origin_dev() {
 
     advance_origin_dev
 
-    run "$SCRIPT" --issue 1 --worktree "$WT"
+    run --separate-stderr "$SCRIPT" --issue 1 --worktree "$WT"
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.ok == true'
     [ "$(git -C "$WT" rev-parse HEAD)" = "$old_head" ]
@@ -348,7 +348,7 @@ JSON
     git -C "$SEED" push -q origin dev
 
     cd "$ROOT"
-    run "$SCRIPT" --issue 1 --worktree "$WT"
+    run --separate-stderr "$SCRIPT" --issue 1 --worktree "$WT"
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.stack.frameworks | index("next") != null'
     echo "$output" | jq -e '.deps.ok == true'
@@ -375,7 +375,7 @@ STUB
     export DEVFLOW_DEPS_CACHE_DIR="$BATS_TEST_TMPDIR/deps-cache"
 
     cd "$ROOT"
-    run "$SCRIPT" --issue 1 --worktree "$WT"
+    run --separate-stderr "$SCRIPT" --issue 1 --worktree "$WT"
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.deps.ok == false'
     echo "$output" | jq -e '.deps.note | test("packages/backend")'
@@ -416,14 +416,14 @@ STUB
 @test "(12a) https origin -> repo キーが owner/name" {
     git -C "$ROOT" remote set-url origin https://github.com/acme/skills.git
     cd "$ROOT"
-    run "$SCRIPT" --issue 1 --worktree "$WT" --base main
+    run --separate-stderr "$SCRIPT" --issue 1 --worktree "$WT" --base main
     echo "$output" | jq -e '.repo == "acme/skills"'
     echo "$output" | jq -e '(.epoch | type) == "number"'
 }
 
 @test "(12b) file:// origin -> repo キーが無い" {
     cd "$ROOT"
-    run "$SCRIPT" --issue 1 --worktree "$WT" --base main
+    run --separate-stderr "$SCRIPT" --issue 1 --worktree "$WT" --base main
     echo "$output" | jq -e 'has("repo") == false'
     echo "$output" | jq -e '(.epoch | type) == "number"'
 }
@@ -432,12 +432,12 @@ STUB
 
 @test "(13) 既存worktreeがunwritable -> ok:false, worktree_status=unwritable, worktree_removed=false" {
     cd "$ROOT"
-    run "$SCRIPT" --issue 1 --worktree "$WT"
+    run --separate-stderr "$SCRIPT" --issue 1 --worktree "$WT"
     [ "$status" -eq 0 ]
 
     chmod a-w "$WT"
 
-    run "$SCRIPT" --issue 1 --worktree "$WT"
+    run --separate-stderr "$SCRIPT" --issue 1 --worktree "$WT"
     status_after_chmod="$status"
     output_after_chmod="$output"
 
@@ -458,7 +458,7 @@ STUB
     mkdir -p "$PARENT"
     chmod a-w "$PARENT"
 
-    run "$SCRIPT" --issue 1 --worktree "$PARENT/df-1"
+    run --separate-stderr "$SCRIPT" --issue 1 --worktree "$PARENT/df-1"
     chmod u+w "$PARENT"
 
     [ "$status" -eq 0 ]
@@ -488,7 +488,7 @@ STUB
 @test "(16a) analyze 段: issue 取得成功 -> analyze キーに contract 経路の結果が載る" {
     make_issue_fixture
     cd "$ROOT"
-    run "$SCRIPT" --issue 1 --worktree "$WT"
+    run --separate-stderr "$SCRIPT" --issue 1 --worktree "$WT"
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.ok == true'
     echo "$output" | jq -e '.analyze.ok == true and .analyze.analyze_path == "contract"'
@@ -500,7 +500,7 @@ STUB
 
 @test "(16b) analyze 段: issue 取得失敗 -> analyze.ok:false + reason、他段は影響を受けない" {
     cd "$ROOT"
-    run "$SCRIPT" --issue 1 --worktree "$WT"
+    run --separate-stderr "$SCRIPT" --issue 1 --worktree "$WT"
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.ok == true and .worktree_status == "created" and .deps.ok == true'
     echo "$output" | jq -e '.analyze.ok == false and (.analyze.reason | test("gh stub: no fixture")) and .analyze.analyze_path == "contract"'
@@ -510,7 +510,7 @@ STUB
 @test "(16c) analyze 段は base 未解決（ok:false）でも走る" {
     make_issue_fixture
     cd "$ROOT"
-    run "$SCRIPT" --issue 1 --worktree "$WT" --base release
+    run --separate-stderr "$SCRIPT" --issue 1 --worktree "$WT" --base release
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.ok == false and .analyze.ok == true'
 }
@@ -518,7 +518,7 @@ STUB
 @test "(16d) epoch_end は deps / analyze 両段の完了後に採る（静的 pin: 起動 & → wait → epoch_end の順）" {
     make_issue_fixture
     cd "$ROOT"
-    run "$SCRIPT" --issue 1 --worktree "$WT"
+    run --separate-stderr "$SCRIPT" --issue 1 --worktree "$WT"
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.epoch_end >= .epoch and .epoch_end >= (.epoch + .analyze.duration_seconds)'
     analyze_launch_line="$(grep -n 'prerun-analyze.sh' "$SCRIPT" | head -1 | cut -d: -f1)"
@@ -542,7 +542,7 @@ STUB
     plugin_root="$(cd "$(dirname "$SCRIPT")/../.." && pwd)"
     expected="$(git -C "$plugin_root" rev-parse HEAD)"
     cd "$ROOT"
-    run "$SCRIPT" --issue 1 --worktree "$WT"
+    run --separate-stderr "$SCRIPT" --issue 1 --worktree "$WT"
     [ "$status" -eq 0 ]
     echo "$output" | jq -e --arg c "${expected:0:12}" '.plugin_commit == $c'
 }
@@ -555,7 +555,7 @@ STUB
         ln -s "$plugin_root/$d" "$cache_root/$d"
     done
     cd "$ROOT"
-    run "$cache_root/dev-flow/scripts/prerun.sh" --issue 1 --worktree "$WT"
+    run --separate-stderr "$cache_root/dev-flow/scripts/prerun.sh" --issue 1 --worktree "$WT"
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.ok == true'
     echo "$output" | jq -e '.plugin_commit == "1ef2e0ab6254"'
@@ -569,7 +569,7 @@ STUB
         ln -s "$plugin_root/$d" "$cache_root/$d"
     done
     cd "$ROOT"
-    GIT_CEILING_DIRECTORIES="$BATS_TEST_TMPDIR" run "$cache_root/dev-flow/scripts/prerun.sh" --issue 1 --worktree "$WT"
+    GIT_CEILING_DIRECTORIES="$BATS_TEST_TMPDIR" run --separate-stderr "$cache_root/dev-flow/scripts/prerun.sh" --issue 1 --worktree "$WT"
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.ok == true and .worktree_status == "created"'
     echo "$output" | jq -e 'has("plugin_commit") and .plugin_commit == null'

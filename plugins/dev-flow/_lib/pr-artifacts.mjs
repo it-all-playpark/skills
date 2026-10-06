@@ -100,6 +100,10 @@ function cell(v) {
 }
 
 // PR body の上限定数（issue #661: planner 出力は無制限 verbatim ではなく決定論 clip で埋め込む）。
+// PR_BODY_DECISION_MAX / PR_BODY_NOTE_MAX / PR_BODY_OUT_OF_SCOPE_ITEM_MAX は IMPL schema（dev-flow.js）の
+// design_decisions / pr_notes / out_of_scope の maxLength と対: maxLength の和 + builder の区切りがこの値以下なので、
+// schema 検証を通った入力は切られない。ここでの clip は schema を外れた入力の backstop（issue #830）。
+// 片方を変えたら他方も直す — pr-artifacts.test.mjs が不変条件を pin する。
 export const PR_BODY_SUMMARY_MAX = 120;
 export const PR_BODY_CHANGE_BULLET_MAX = 140;
 export const PR_BODY_CHANGE_BULLETS_MAX = 6;

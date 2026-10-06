@@ -3507,18 +3507,22 @@ const IMPL = {
     // PR 本文の「設計判断」「検証」に載せる記録（adoptImplPrNotes → buildPrBody）。
     // 「計測して PR 本文に書く」型の AC はここ以外に PR 本文へ届く経路が無い。section の enum は
     // pr-artifacts の PR_NOTE_SECTIONS と同値（inline 区間が本定義より後ろにあり参照できないため literal）。
+    // maxLength は builder が付ける区切りを足しても PR_BODY_DECISION_MAX（`- 決定 — 理由` で 5 字）/
+    // PR_BODY_NOTE_MAX（`- 検証: ` で 6 字）/ PR_BODY_OUT_OF_SCOPE_ITEM_MAX（`- ` で 2 字）に収まる値。
+    // 上限内なら builder は 1 行も切らない — 超過は StructuredOutput の schema 検証で書き手に差し戻され、
+    // 何を残すかは中身を知る implementer が決める（builder の clip は backstop）。不変条件は pr-artifacts.test.mjs が pin。
     design_decisions: {
       type: 'array',
       items: {
         type: 'object', required: ['title', 'rationale'],
-        properties: { title: { type: 'string' }, rationale: { type: 'string' } },
+        properties: { title: { type: 'string', maxLength: 40 }, rationale: { type: 'string', maxLength: 75 } },
       },
     },
     pr_notes: {
       type: 'array',
       items: {
         type: 'object', required: ['section', 'text'],
-        properties: { section: { type: 'string', enum: ['verification', 'measurement'] }, text: { type: 'string' } },
+        properties: { section: { type: 'string', enum: ['verification', 'measurement'] }, text: { type: 'string', maxLength: 234 } },
       },
     },
     // 対応表など複数行の markdown（1 項目 1 つの `<details>` として改行を保ったまま clip せず PR 本文に載る）。
@@ -3533,7 +3537,7 @@ const IMPL = {
     },
     // issue 本文が挙げたが AC 外・worktree 外として実施しなかった作業（1 項目 1 文）。PR 本文と終端サマリーの
     // 「この PR に含めなかったもの」に転記する — concerns に書いただけでは人間の目に届かないため。
-    out_of_scope: { type: 'array', items: { type: 'string' } },
+    out_of_scope: { type: 'array', items: { type: 'string', maxLength: 198 } },
     epoch: { type: 'number' },
   },
 }
