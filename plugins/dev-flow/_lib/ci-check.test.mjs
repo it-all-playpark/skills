@@ -1,11 +1,13 @@
-// _lib/ci-check.mjs（ci-check / ci-wait の定数 / schema / prompt の canonical）の単体テスト。
+// _lib/ci-check.mjs（ci-check / ci-wait-check の定数 / schema / prompt の canonical）の単体テスト。
 //
 // 守っている不変条件:
-//   - ci-check 1 spawn（2 + 1 + margin = 6）と ci-wait 1 spawn（1 + 1 + margin = 5）が
-//     dev-runner-haiku-ro の maxTurns を超えない（agent md を実読して pin。issue #663）
-//   - CI_WAIT_CEILING_SECONDS=300, CI_POLL_SECONDS=45, CI_MAX_POLLS=7（script 側 ci-wait ループの定数）
-//   - prompt にループ・sleep 指示が無い（ci-check は 1 spawn = 1 判定。issue #663）
+//   - ci-check 1 spawn（2 + 1 + margin = 6）と ci-wait-check 1 spawn（待機 1 + gh 1 + 変換 1 +
+//     StructuredOutput 1 + margin = 7）が dev-runner-haiku-ro の maxTurns を超えない
+//     （agent md を実読して pin。issue #663 / #805）
+//   - CI_WAIT_CEILING_SECONDS=300, CI_POLL_SECONDS=45, CI_MAX_POLLS=7（script 側 poll ループの定数）
+//   - prompt にループ指示が無い（1 spawn = 1 判定。ci-check は待機もしない。issue #663）
 //   - CI_STATUS の status enum は closed（'error' が欠けると gh fetch 失敗を green と誤認しうる）
+//   - CI_WAIT_CHECK は slept を required に持つ（実待機不成立の判別に使う。issue #805）
 //   - prompt が決定論的で、repo 指定の有無で --repo フラグが正しく出し分けられる
 //
 // prompt 本文が dev-flow.js / pr-iterate.js の inline 区間と全文一致することは
@@ -15,7 +17,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { CI_POLL_SECONDS, CI_WAIT_CEILING_SECONDS, CI_MAX_POLLS, CI_TURN_MARGIN, CI_STATUS, CI_WAIT, ciCheckPrompt, ciWaitPrompt } from './ci-check.mjs';
+import { CI_POLL_SECONDS, CI_WAIT_CEILING_SECONDS, CI_MAX_POLLS, CI_TURN_MARGIN, CI_STATUS, CI_WAIT_CHECK, ciCheckPrompt, ciWaitCheckPrompt, ciFetchSteps } from './ci-check.mjs';
 import * as mod from './ci-check.mjs';
 
 // ============================================================
@@ -26,8 +28,9 @@ import * as mod from './ci-check.mjs';
 function ciCheckTurns(margin) {
   return 2 + 1 + margin;
 }
-function ciWaitTurns(margin) {
-  return 1 + 1 + margin;
+// 待機（ci-wait）1 + gh fetch 1 + 変換（check-ci）1 + StructuredOutput 1 + margin
+function ciWaitCheckTurns(margin) {
+  return 1 + 1 + 1 + 1 + margin;
 }
 function readMaxTurns() {
   const p = join(dirname(fileURLToPath(import.meta.url)), '..', 'agents', 'dev-runner-haiku-ro.md');
@@ -43,10 +46,21 @@ test('[ci-check] ci-check 1 spawn の必要 turn（gh fetch + check-ci + Structu
   assert.ok(ciCheckTurns(CI_TURN_MARGIN) <= maxTurns, `必要 turn ${ciCheckTurns(CI_TURN_MARGIN)} が maxTurns ${maxTurns} を超えている`);
 });
 
-test('[ci-check] ci-wait 1 spawn の必要 turn（sleep + StructuredOutput + margin = 5）が maxTurns を超えない', () => {
+test('[ci-check] ci-wait-check 1 spawn の必要 turn（待機 + gh fetch + check-ci + StructuredOutput + margin = 7）が dev-runner-haiku-ro の maxTurns を超えない', () => {
   const maxTurns = readMaxTurns();
-  assert.equal(ciWaitTurns(CI_TURN_MARGIN), 5);
-  assert.ok(ciWaitTurns(CI_TURN_MARGIN) <= maxTurns, `必要 turn ${ciWaitTurns(CI_TURN_MARGIN)} が maxTurns ${maxTurns} を超えている`);
+  assert.equal(ciWaitCheckTurns(CI_TURN_MARGIN), 7);
+  assert.ok(ciWaitCheckTurns(CI_TURN_MARGIN) <= maxTurns, `必要 turn ${ciWaitCheckTurns(CI_TURN_MARGIN)} が maxTurns ${maxTurns} を超えている`);
+});
+
+test('[ci-check] ci-wait-check prompt の Bash 手順は ci-wait / gh / check-ci の 3 単文だけ（turn 会計の前提）', () => {
+  const p = ciWaitCheckPrompt({ pr: 123, repo: 'owner/name', seconds: 45 });
+  const steps = p.slice(p.indexOf('## Steps'), p.indexOf('## Output format'));
+  const bashSteps = steps.match(/^\d+\. `[^`]+`/gm) ?? [];
+  assert.deepEqual(
+    bashSteps.map((s) => s.replace(/^\d+\. `/, '').split(' ')[0]),
+    ['ci-wait', 'gh', 'check-ci'],
+    `Bash 単文の手順が想定と異なる: ${JSON.stringify(bashSteps)}`,
+  );
 });
 
 test('[ci-check] CI_TURN_MARGIN は 3（実測: 文書化 worst case 8 に対し 10 tool call で StructuredOutput 未達）', () => {
@@ -86,9 +100,18 @@ test('[ci-check] CI_STATUS は clock telemetry 給電用の optional epoch を�
   assert.ok(!CI_STATUS.required.includes('epoch'), 'epoch は optional でなければならない');
 });
 
-test('[ci-check] CI_WAIT schema は slept を required に持つ', () => {
-  assert.deepEqual(CI_WAIT.required, ['slept']);
-  assert.equal(CI_WAIT.properties.slept.type, 'boolean');
+test('[ci-check] CI_WAIT_CHECK schema は slept（boolean）を required に持ち、status 以下は CI_STATUS と同じ', () => {
+  assert.ok(CI_WAIT_CHECK.required.includes('slept'), 'slept は required でなければならない');
+  assert.ok(CI_WAIT_CHECK.required.includes('status'), 'status は required でなければならない');
+  assert.equal(CI_WAIT_CHECK.properties.slept.type, 'boolean');
+  for (const [k, v] of Object.entries(CI_STATUS.properties)) {
+    assert.deepEqual(CI_WAIT_CHECK.properties[k], v, `CI_WAIT_CHECK.properties.${k} は CI_STATUS と一致するべき`);
+  }
+});
+
+test('[ci-check] 単独の ci-wait 契約（CI_WAIT / ciWaitPrompt）は export されない（待機は ci-wait-check に統合。issue #805）', () => {
+  assert.equal(mod.CI_WAIT, undefined);
+  assert.equal(mod.ciWaitPrompt, undefined);
 });
 
 // ============================================================
@@ -136,12 +159,50 @@ test('ciCheckPrompt: check-ci を plugin bin/ の bare 名（先頭トークン�
   assert.ok(!p.includes('bash check-ci'), 'bash 前置を付けない');
 });
 
-test('[ci-check] ciWaitPrompt は seconds を ci-wait の bare 単文として展開し、ci-check 識別語や bare sleep を含まない', () => {
-  const w = ciWaitPrompt({ seconds: 45 });
-  assert.ok(w.includes('`ci-wait 45`'), 'ci-wait 45 を bare 単文として含む');
+test('[ci-check] ciWaitCheckPrompt は ci-wait → gh pr checks → check-ci の順に 1 spawn で実行させ、bare sleep を含まない', () => {
+  const w = ciWaitCheckPrompt({ pr: 123, repo: 'owner/name', seconds: 45 });
+  const iWait = w.indexOf('`ci-wait 45`');
+  const iGh = w.indexOf('`gh pr checks 123 --repo owner/name --json name,state,bucket`');
+  const iCheck = w.indexOf('`check-ci --checks-data');
+  assert.ok(iWait >= 0, 'ci-wait 45 を bare 単文として含む');
+  assert.ok(iGh > iWait, 'gh pr checks は ci-wait の後');
+  assert.ok(iCheck > iGh, 'check-ci は gh pr checks の後');
   assert.ok(!/`sleep \d+`/.test(w), 'bare sleep 単文を含まない');
-  assert.ok(!w.includes('check-ci'), 'check-ci を含んではならない');
-  assert.ok(!w.includes('--checks-data'), '--checks-data を含んではならない');
-  assert.ok(!w.includes('gh pr checks'), 'gh pr checks を含んではならない');
-  assert.equal(w, ciWaitPrompt({ seconds: 45 }), '決定論的であること');
+  assert.ok(!w.includes('check-ci.sh'), '拡張子付き名を含まない');
+  assert.ok(w.includes('"slept": boolean'), 'Output format に slept を含む');
+  assert.equal(w, ciWaitCheckPrompt({ pr: '123', repo: 'owner/name', seconds: 45 }), '決定論的で pr の型に依存しない');
+});
+
+test('[ci-check] ciWaitCheckPrompt は slept:true でなければ取得へ進ませず、ループ・再取得を指示しない', () => {
+  const w = ciWaitCheckPrompt({ pr: 1, repo: null, seconds: 45 });
+  assert.ok(w.includes('`{ "slept": false, "status": "pending" }`'), '実待機不成立時の応答形を含む');
+  assert.ok(!w.includes('--repo'), 'repo null なら --repo を出さない');
+  assert.ok(!/\battempt\b/i.test(w), 'attempt という語を含んではならない');
+  assert.ok(!w.includes('繰り返'), '繰り返し指示を含んではならない');
+  assert.ok(!w.includes('--max-attempts'), '--max-attempts を含んではならない');
+});
+
+// ============================================================
+// docs
+// ============================================================
+
+test('[ci-check] exec-proxy.md と .claude/rules/dev-flow.md は「1 spawn = 1 判定・ループは script 側」で、sleep を別 exec-proxy と書かない（issue #805）', () => {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const docs = {
+    'exec-proxy.md': join(here, '..', 'dev-flow', 'references', 'exec-proxy.md'),
+    '.claude/rules/dev-flow.md': join(here, '..', '..', '..', '.claude', 'rules', 'dev-flow.md'),
+  };
+  for (const [name, p] of Object.entries(docs)) {
+    const flat = readFileSync(p, 'utf8').replace(/\n>\s?/g, '');
+    assert.ok(flat.includes('1 spawn = 1 判定・ループは'), `${name} に「1 spawn = 1 判定・ループは script 側」の記述が無い`);
+    assert.ok(flat.includes('ci-wait-check'), `${name} に ci-wait-check の記述が無い`);
+    assert.ok(!/sleep は[^。]*別 exec-proxy/.test(flat), `${name} に「sleep は別 exec-proxy」の旧記述が残っている`);
+  }
+});
+
+test('[ci-check] ci-check と ci-wait-check は gh fetch → check-ci の手順本文を ciFetchSteps で共有する', () => {
+  const c = ciCheckPrompt({ pr: 7, repo: 'o/n' });
+  const w = ciWaitCheckPrompt({ pr: 7, repo: 'o/n', seconds: 45 });
+  assert.ok(c.includes(ciFetchSteps({ pr: 7, repo: 'o/n', n: 1 })), 'ci-check は手順 1〜2 に共通本文を持つ');
+  assert.ok(w.includes(ciFetchSteps({ pr: 7, repo: 'o/n', n: 2 })), 'ci-wait-check は手順 2〜3 に共通本文を持つ');
 });

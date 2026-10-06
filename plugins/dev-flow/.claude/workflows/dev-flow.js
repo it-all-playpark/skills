@@ -3353,6 +3353,15 @@ const CI_STATUS = {
   },
 };
 
+function ciFetchSteps({ pr, repo, n }) {
+  return `${n}. \`gh pr checks ${pr}${repo ? ' --repo ' + repo : ''} --json name,state,bucket\` を gh を先頭トークンとする bare 単文で実行せよ`
+    + `（リダイレクト・パイプ・複合コマンドは使わない）。`
+    + `このコマンドの exit code を判定に使ってはならない（pending で 8、失敗ありで 1 を返す仕様であり、fetch 自体の成否とは無関係）。\n`
+    + `${n + 1}. \`check-ci --checks-data '<手順${n}の stdout を一字一句そのまま。要約・整形・省略禁止>' `
+    + `--fetch-error-data '<手順${n}の stderr を一字一句そのまま。stderr が空なら本オプション自体を省略>'\` `
+    + `を単文で実行し、stdout の JSON を読め。\n`;
+}
+
 function ciCheckPrompt({ pr, repo }) {
   return `## Objective\nPR #${pr} の CI ステータスを取得し、JSON をそのまま返せ。\n\n`
     + `## Tools\n`
@@ -3362,12 +3371,7 @@ function ciCheckPrompt({ pr, repo }) {
     + `- 読み取り専用。git mutation（commit/push/reset 等）禁止\n`
     + `- 実行するスクリプト以外のファイルを変更しない\n\n`
     + `## Steps\n`
-    + `1. \`gh pr checks ${pr}${repo ? ' --repo ' + repo : ''} --json name,state,bucket\` を gh を先頭トークンとする bare 単文で実行せよ`
-    + `（リダイレクト・パイプ・複合コマンドは使わない）。`
-    + `このコマンドの exit code を判定に使ってはならない（pending で 8、失敗ありで 1 を返す仕様であり、fetch 自体の成否とは無関係）。\n`
-    + `2. \`check-ci --checks-data '<手順1の stdout を一字一句そのまま。要約・整形・省略禁止>' `
-    + `--fetch-error-data '<手順1の stderr を一字一句そのまま。stderr が空なら本オプション自体を省略>'\` `
-    + `を単文で実行し、stdout の JSON を読め。\n`
+    + ciFetchSteps({ pr, repo, n: 1 })
     + `3. その stdout JSON（{status, failed_checks, waited_seconds, poll_attempts, ...}）をそのまま返せ。要約・加工するな。`
     + `1 回の取得で判定を確定させ、待機や再取得は行うな。\n\n`
     + `## Output format\n`
@@ -3378,27 +3382,33 @@ function ciCheckPrompt({ pr, repo }) {
     + `JSON のみ。1 行以内。`;
 }
 
-const CI_WAIT = {
+const CI_WAIT_CHECK = {
   type: 'object',
-  required: ['slept'],
+  required: ['slept', 'status'],
   properties: {
     slept: { type: 'boolean' },
-    seconds: { type: 'number' },
+    ...CI_STATUS.properties,
   },
 };
 
-function ciWaitPrompt({ seconds }) {
-  return `## Objective\nCI 完了待ちのため ${seconds} 秒待機し、結果 JSON を返せ。\n\n`
+function ciWaitCheckPrompt({ pr, repo, seconds }) {
+  return `## Objective\nCI 完了待ちのため ${seconds} 秒待機してから PR #${pr} の CI ステータスを 1 回取得し、JSON を返せ。\n\n`
     + `## Tools\n`
     + `- 使用可: Bash のみ\n`
-    + `- 禁止: Write, Edit, git commit, git push, gh\n\n`
+    + `- 禁止: Write, Edit, git commit, git push\n\n`
     + `## Boundary\n`
-    + `- 読み取り専用。ファイル・git を変更しない\n\n`
+    + `- 読み取り専用。git mutation（commit/push/reset 等）禁止\n`
+    + `- 実行するスクリプト以外のファイルを変更しない\n\n`
     + `## Steps\n`
-    + `1. \`ci-wait ${seconds}\` を ci-wait を先頭トークンとする bare 単文で実行せよ（リダイレクト・パイプ・複合コマンドは使わない）。\n`
-    + `2. stdout の JSON（{"slept": boolean, "seconds": number}）をそのまま返せ。要約・加工するな。\n\n`
+    + `1. \`ci-wait ${seconds}\` を ci-wait を先頭トークンとする bare 単文で実行せよ（リダイレクト・パイプ・複合コマンドは使わない）。`
+    + `stdout の JSON が \`"slept": true\` でなければ（stdout が空・exit 非0 を含む）手順 2〜4 を実行せず、`
+    + `\`{ "slept": false, "status": "pending" }\` を返して終了せよ。\n`
+    + ciFetchSteps({ pr, repo, n: 2 })
+    + `4. 手順 3 の stdout JSON（{status, failed_checks, waited_seconds, poll_attempts, ...}）に \`"slept": true\` を加えて返せ。`
+    + `それ以外のキーは要約・加工するな。ci-wait と取得は各 1 回だけ実行し、再待機や再取得は行うな。\n\n`
     + `## Output format\n`
-    + `{ "slept": boolean, "seconds": number }\n`
+    + `{ "slept": boolean, "status": "passed"|"failed"|"pending"|"no_checks"|"error", "failed_checks": [{name, bucket, state}, ...], `
+    + `"waited_seconds": number, "poll_attempts": number }\n`
     + `prose 禁止。JSON のみ返せ。\n\n`
     + `## Token cap\n`
     + `JSON のみ。1 行以内。`;
