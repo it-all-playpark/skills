@@ -58,8 +58,10 @@ export function setupStack() {
   wt = join(root, 'wt');
   stateDir = join(wt, '.devflow-tmp', 'ui-verify');
   execFileSync('mkdir', ['-p', wt]);
-  // 1000 刻みで最大 3 本割り当てるので 20000〜40999 の帯からランダムに選ぶ
-  basePort = 20000 + Math.floor(Math.random() * 18000);
+  // 1000 刻みで最大 3 本割り当てる（+ 使用中ならずらす分）。Linux の ephemeral 帯（32768〜）に掛かると、
+  // 並列に走る他 test の connect / ready 確認が割り当て済み port を送信元に取り、serve が EADDRINUSE で落ちる。
+  // 帯の上端 + 2000 + ずらし幅が 32768 未満に収まる 10000〜29999 から選ぶ。
+  basePort = 10000 + Math.floor(Math.random() * 20000);
   writeFileSync(join(root, 'srv.mjs'), [
     "import http from 'node:http';",
     'const port = Number(process.argv[2]);',
