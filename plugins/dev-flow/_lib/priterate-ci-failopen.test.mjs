@@ -104,11 +104,8 @@ function buildAgentStub({ ciStub, agentCalls }) {
     if (label.startsWith('post-')) {
       return { posted: true, method: 'gh', url: 'http://x' };
     }
-    if (label === 'journal-save') {
-      return { saved: true, path: '/tmp/wt/.devflow-tmp/payload-test.json' };
-    }
     if (label === 'journal-log') {
-      return { logged: true, summary: 'ok' };
+      return { saved: true, logged: true };
     }
     if (label === 'pr-meta') {
       return { url: 'https://github.com/acme/skills/pull/5', cwd: '/tmp/wt' };
@@ -172,7 +169,7 @@ test('[failopen-d] dispatch された ci-check / post-summary / journal 系 prom
   const ctx = makeSandbox(buildAgentStub({ ciStub: () => ({ status: 'passed', failed_checks: [] }), agentCalls }));
   const { error } = await runPrIterate(ctx);
   assertNoSandboxCrash(error);
-  for (const label of ['ci-check#1', 'post-summary', 'journal-save', 'journal-log']) {
+  for (const label of ['ci-check#1', 'post-summary', 'journal-log']) {
     const c = agentCalls.find((x) => x.label === label);
     assert.ok(c, `${label} が dispatch されていない`);
     const p = c.prompt.toLowerCase();

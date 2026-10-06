@@ -83,8 +83,8 @@ telemetry とは別に、handoff の top-level に失敗の型を載せる（jou
   `outcome:'failure'` + `error_category:'abort'` + `error_msg:'abort@<phase>/<label>: <message>'`（500 字まで）+
   `error_phase`（journal の `.error.phase`。dev-flow-health の失敗 signature に入る）を記録し、元の例外を rethrow
   する（fail-open: handoff 失敗は run 終了を妨げない。終端サマリ・Merge tier は実行しない — 判定前提が揃わないため）。
-  abort entry の組み立て口は `_lib/journal-handoff.mjs` の `buildAbortHandoffPayload` のみ。dev-flow の WT 未確定
-  abort（Setup の args.setup 検証段）は payload を `~/.claude/journal/abort-payload/` へ退避する。empty_diff 経路は
+  abort entry の組み立て口は `_lib/journal-handoff.mjs` の `buildAbortHandoffPayload` のみ。handoff は payload を
+  pending/ へ直接書くので、WT 未確定の abort（Setup の args.setup 検証段）も同じ経路で記録する。empty_diff 経路は
   writeFailureTelemetry が先に記録済みなので abort entry を二重記録しない。
 
 ## Stop hook の転送

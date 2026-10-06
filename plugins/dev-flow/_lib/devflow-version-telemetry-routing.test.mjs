@@ -1,5 +1,5 @@
 // F4: dev-flow.js / pr-iterate.js の成功 handoff・失敗 handoff（writeFailureTelemetry）の
-// journal-save prompt に eval_model_config / review_model_config / plugin_version の telemetry キーが
+// journal-log prompt に eval_model_config / review_model_config / plugin_version の telemetry キーが
 // 実際に埋め込まれること、旧 quality_model_config / quality_model_fallback_label が載らないことを
 // VM 挙動テストで検証する（issue #636: source anchor 走査から移行）。
 // PLUGIN_VERSION 宣言のマーカー存在・plugin.json 一致は _lib/plugin-version.sync.test.mjs が
@@ -25,31 +25,31 @@ const prIterateSrc = readFileSync(join(repoRoot, '.claude/workflows/pr-iterate.j
 // evaluator / pr-reviewer / dev-implementer は override を渡さないので frontmatter の 'opus'（値の一致は review-model-frontmatter.test.mjs が pin）。
 // eval_model_config / impl_model_config は evaluator / dev-implementer を spawn する dev-flow 側の entry にのみ載る。
 function assertJournalSaveHasKeys(calls, contextLabel, { evalModel }) {
-  const journalSaveCalls = calls.filter((c) => c.label?.startsWith('journal-save'));
-  assert.ok(journalSaveCalls.length > 0, `${contextLabel}: label 'journal-save*' の call が見つからない`);
-  const has = (needle) => journalSaveCalls.some((c) => c.prompt.includes(needle));
+  const journalHandoffCalls = calls.filter((c) => c.label?.startsWith('journal-log'));
+  assert.ok(journalHandoffCalls.length > 0, `${contextLabel}: label 'journal-log*' の call が見つからない`);
+  const has = (needle) => journalHandoffCalls.some((c) => c.prompt.includes(needle));
   if (evalModel) {
-    assert.ok(has('"eval_model_config":"opus"'), `${contextLabel}: journal-save prompt に "eval_model_config":"opus" を含む call が見つからない`);
-    assert.ok(has('"impl_model_config":"opus"'), `${contextLabel}: journal-save prompt に "impl_model_config":"opus" を含む call が見つからない`);
+    assert.ok(has('"eval_model_config":"opus"'), `${contextLabel}: journal-log prompt に "eval_model_config":"opus" を含む call が見つからない`);
+    assert.ok(has('"impl_model_config":"opus"'), `${contextLabel}: journal-log prompt に "impl_model_config":"opus" を含む call が見つからない`);
   } else {
-    assert.ok(!has('"eval_model_config"'), `${contextLabel}: journal-save prompt に eval_model_config が載っている（evaluator を spawn しない workflow）`);
-    assert.ok(!has('"impl_model_config"'), `${contextLabel}: journal-save prompt に impl_model_config が載っている（implementer を spawn しない workflow）`);
+    assert.ok(!has('"eval_model_config"'), `${contextLabel}: journal-log prompt に eval_model_config が載っている（evaluator を spawn しない workflow）`);
+    assert.ok(!has('"impl_model_config"'), `${contextLabel}: journal-log prompt に impl_model_config が載っている（implementer を spawn しない workflow）`);
   }
-  assert.ok(has('"review_model_config":"opus"'), `${contextLabel}: journal-save prompt に "review_model_config":"opus" を含む call が見つからない`);
-  assert.ok(has(`"plugin_version":"${PLUGIN_VERSION}"`), `${contextLabel}: journal-save prompt に "plugin_version":"${PLUGIN_VERSION}" を含む call が見つからない`);
+  assert.ok(has('"review_model_config":"opus"'), `${contextLabel}: journal-log prompt に "review_model_config":"opus" を含む call が見つからない`);
+  assert.ok(has(`"plugin_version":"${PLUGIN_VERSION}"`), `${contextLabel}: journal-log prompt に "plugin_version":"${PLUGIN_VERSION}" を含む call が見つからない`);
   for (const stale of ['"quality_model_config"', '"quality_model_fallback_label"']) {
-    assert.ok(!has(stale), `${contextLabel}: journal-save prompt に撤去済みキー ${stale} が載っている`);
+    assert.ok(!has(stale), `${contextLabel}: journal-log prompt に撤去済みキー ${stale} が載っている`);
   }
 }
 
-test('dev-flow.js 成功 run の journal-save prompt が eval_model_config / review_model_config / plugin_version を含む', async () => {
+test('dev-flow.js 成功 run の journal-log prompt が eval_model_config / review_model_config / plugin_version を含む', async () => {
   const { ctx, calls } = makeDevFlowSandbox();
   const { error } = await runWorkflowCapture(devFlowSrc, ctx, '.claude/workflows/dev-flow.js');
   assert.equal(error, null, `成功 run はエラーなく完走するべき: ${error?.message}`);
   assertJournalSaveHasKeys(calls, 'dev-flow success', { evalModel: true });
 });
 
-test('dev-flow.js empty-diff 失敗 run の journal-save prompt が eval_model_config / review_model_config / plugin_version を含む', async () => {
+test('dev-flow.js empty-diff 失敗 run の journal-log prompt が eval_model_config / review_model_config / plugin_version を含む', async () => {
   const { ctx, calls } = makeDevFlowSandbox({
     overrides: {
       'diff-gate': { hash: 'H', empty: true },
@@ -62,7 +62,7 @@ test('dev-flow.js empty-diff 失敗 run の journal-save prompt が eval_model_c
   assertJournalSaveHasKeys(calls, 'dev-flow empty-diff failure', { evalModel: true });
 });
 
-test('dev-flow.js abort run（eval#1 null）の journal-save prompt が eval_model_config / review_model_config / plugin_version を含む', async () => {
+test('dev-flow.js abort run（eval#1 null）の journal-log prompt が eval_model_config / review_model_config / plugin_version を含む', async () => {
   const { ctx, calls } = makeDevFlowSandbox({ overrides: { 'eval#1': null } });
   const { error } = await runWorkflowCapture(devFlowSrc, ctx, '.claude/workflows/dev-flow.js');
   assert.ok(error, 'eval#1 null は need() で abort するべき（model fallback による再試行は無い）');
@@ -71,7 +71,7 @@ test('dev-flow.js abort run（eval#1 null）の journal-save prompt が eval_mod
   assertJournalSaveHasKeys(calls, 'dev-flow abort', { evalModel: true });
 });
 
-test('pr-iterate.js 単体起動 run の journal-save prompt が review_model_config / plugin_version を含み eval_model_config を含まない', async () => {
+test('pr-iterate.js 単体起動 run の journal-log prompt が review_model_config / plugin_version を含み eval_model_config を含まない', async () => {
   const { ctx, calls } = makePrIterateSandbox();
   const { error } = await runWorkflowCapture(prIterateSrc, ctx, '.claude/workflows/pr-iterate.js');
   assert.equal(error, null, `pr-iterate 単体起動はエラーなく完走するべき: ${error?.message}`);
@@ -83,15 +83,15 @@ test('pr-iterate.js 単体起動 run の journal-save prompt が review_model_co
 // pr-iterate の journal entry の telemetry.plugin_commit に載せる。plugin_version は集計の連続性のため併記を続ける。
 const COMMIT = '1ef2e0ab6254';
 
-function journalSavePrompts(calls) {
-  return calls.filter((c) => c.label?.startsWith('journal-save')).map((c) => c.prompt);
+function journalHandoffPrompts(calls) {
+  return calls.filter((c) => c.label?.startsWith('journal-log')).map((c) => c.prompt);
 }
 
 function assertPluginCommit(calls, expected, contextLabel) {
-  const prompts = journalSavePrompts(calls);
-  assert.ok(prompts.length > 0, `${contextLabel}: label 'journal-save*' の call が見つからない`);
+  const prompts = journalHandoffPrompts(calls);
+  assert.ok(prompts.length > 0, `${contextLabel}: label 'journal-log*' の call が見つからない`);
   const needle = `"plugin_commit":${JSON.stringify(expected)}`;
-  assert.ok(prompts.some((p) => p.includes(needle)), `${contextLabel}: journal-save prompt に ${needle} が見つからない`);
+  assert.ok(prompts.some((p) => p.includes(needle)), `${contextLabel}: journal-log prompt に ${needle} が見つからない`);
   assert.ok(prompts.some((p) => p.includes(`"plugin_version":"${PLUGIN_VERSION}"`)), `${contextLabel}: plugin_version が消えている`);
 }
 
@@ -180,6 +180,6 @@ test('pr-iterate.js: nested 起動で受けた args.plugin_commit を journal en
 test('pr-iterate.js abort run の journal entry にも plugin_commit が載る', async () => {
   const { ctx, calls } = makePrIterateSandbox({ args: { pr: 5, plugin_commit: COMMIT }, overrides: { 'review#1': null } });
   await runWorkflowCapture(prIterateSrc, ctx, '.claude/workflows/pr-iterate.js');
-  const prompts = journalSavePrompts(calls);
-  assert.ok(prompts.some((p) => p.includes(`"plugin_commit":"${COMMIT}"`)), `pr-iterate の journal-save prompt に plugin_commit が無い: ${prompts.length} 件`);
+  const prompts = journalHandoffPrompts(calls);
+  assert.ok(prompts.some((p) => p.includes(`"plugin_commit":"${COMMIT}"`)), `pr-iterate の journal-log prompt に plugin_commit が無い: ${prompts.length} 件`);
 });

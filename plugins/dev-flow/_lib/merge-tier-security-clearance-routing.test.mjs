@@ -87,13 +87,10 @@ function makeSandbox(analyzeReq, dangerGrepPre, dangerGrepFinal, evaluatorRespon
       summaryPrompts.push(prompt);
       return { posted: true, method: 'gh pr comment', url: 'http://x' };
     }
-    // journal-save (stage1, issue #494): 実際の telemetry payload はここに載る
-    if (label === 'journal-save' && agentType === 'dev-flow:dev-runner-haiku') {
-      journalPrompts.push(prompt);
-      return { saved: true, path: '/tmp/wt/.devflow-tmp/payload-test.json' };
-    }
+    // journal-log: 実際の telemetry payload はここに載る（issue #807: pending/ へ直接書く 1 spawn）
     if (label === 'journal-log' && agentType === 'dev-flow:dev-runner-haiku') {
-      return { logged: true, summary: 'ok' };
+      journalPrompts.push(prompt);
+      return { saved: true, logged: true };
     }
     if (agentType === 'dev-flow:dev-implementer') {
       return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
@@ -239,7 +236,7 @@ test('[merge-tier-sec-clearance] シナリオ1: PR#16 再現 — cleared:true+ev
     `post-summary body に未確認 clearance テーブル行 '❌ 未確認 | config' が含まれてはならない。body:\n${summaryPrompts[0]}`,
   );
   // clearance 解消の返り値 routing 側の証拠: post-summary prompt の tier marker が REVIEW
-  // （HOLD ではない）+ journal-save prompt の telemetry JSON の merge_tier が返り値と一致
+  // （HOLD ではない）+ journal-log prompt の telemetry JSON の merge_tier が返り値と一致
   assert.ok(
     summaryPrompts[0].includes('<!-- dev-flow:REVIEW -->'),
     `post-summary prompt に '<!-- dev-flow:REVIEW -->' marker が含まれるべき。body:\n${summaryPrompts[0]}`,
@@ -250,7 +247,7 @@ test('[merge-tier-sec-clearance] シナリオ1: PR#16 再現 — cleared:true+ev
   );
   assert.ok(
     journalPrompts[0].includes(`"merge_tier":"${result?.merge_tier}"`),
-    `journal-save prompt の telemetry JSON の merge_tier は返り値 '${result?.merge_tier}' と一致するべき。prompt:\n${journalPrompts[0]}`,
+    `journal-log prompt の telemetry JSON の merge_tier は返り値 '${result?.merge_tier}' と一致するべき。prompt:\n${journalPrompts[0]}`,
   );
 });
 

@@ -1,7 +1,7 @@
 // pr-iterate.js の終端情報（terminal_path / fix_terminal_reason / history）が返り値に載り、
-// telemetry（journal-save payload）は merge_tier / iterate_status / review_model_config /
+// telemetry（journal-log payload）は merge_tier / iterate_status / review_model_config /
 // plugin_version / plugin_commit だけを書くことの検証テスト。issue #601 / #789。
-// telemetryHandoff（journal-save prompt に verbatim 転写される payload）は
+// telemetryHandoff（journal-log prompt に verbatim 転写される payload）は
 // <<<JOURNAL_HANDOFF_BODY_BEGIN>>> / <<<JOURNAL_HANDOFF_BODY_END>>> の間を JSON.parse して検証する。
 
 import { test } from 'vitest';
@@ -64,13 +64,9 @@ function makeSandbox({ reviewerStub, fixSequence = [], commitEnsureResult, ciRes
       return { posted: true, method: 'gh', url: 'http://x' };
     }
 
-    // journal-save (stage1)
-    if (label === 'journal-save') {
-      return { saved: true, path: '/tmp/wt/.devflow-tmp/payload-test.json' };
-    }
-    // journal-log (stage2)
+    // journal-log: payload を pending/ へ直接書く 1 spawn（issue #807）
     if (label === 'journal-log') {
-      return { logged: true, summary: 'ok' };
+      return { saved: true, logged: true };
     }
 
     // pr-meta
@@ -205,8 +201,8 @@ test('[terminal-telemetry] 即 lgtm: fix_terminal_reason null / terminal_path=re
   assert.equal(result.history[0].decision, 'approve');
   assert.deepEqual(JSON.parse(JSON.stringify(result.history[0].blocking)), []);
 
-  const journalCall = getAgentCalls().find((c) => c.label === 'journal-save');
-  assert.ok(journalCall != null, 'label===journal-save の agent 呼び出しが存在するべき');
+  const journalCall = getAgentCalls().find((c) => c.label === 'journal-log');
+  assert.ok(journalCall != null, 'label===journal-log の agent 呼び出しが存在するべき');
   const telemetry = extractJournalPayload(journalCall.prompt).telemetry;
   assert.deepEqual(
     Object.keys(telemetry).sort(),

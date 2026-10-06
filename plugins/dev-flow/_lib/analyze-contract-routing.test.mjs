@@ -122,7 +122,7 @@ test('[analyze-routing] (c) analyze.ok:false → needs_clarification（source=an
   assert.equal(result.source, 'analyze_prerun');
   assert.equal(calls.filter((c) => c.label === 'analyze-clarify#1').length, 0, 'ok:false では sonnet を spawn しない');
   assert.equal(calls.filter((c) => c.agentType === 'dev-flow:dev-runner').length, 0);
-  // journal handoff（journal-save / journal-log-failure）以外の spawn が無い
+  // journal handoff（journal-log-failure）以外の spawn が無い
   const nonJournal = calls.filter((c) => !c.label.startsWith('journal'));
   assert.deepEqual(nonJournal.map((c) => c.label), [], `ok:false 経路の spawn は journal handoff のみのはず: ${calls.map((c) => c.label).join(', ')}`);
   assert.ok(result.missing_context.some((m) => m.includes('HTTP 502')), `missing_context に prerun の reason が無い: ${JSON.stringify(result.missing_context)}`);

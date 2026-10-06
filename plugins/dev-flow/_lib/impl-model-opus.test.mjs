@@ -7,7 +7,7 @@
 //       empty-diff 差し戻し（reimpl-empty-diff）の dev-implementer call は opts に model キーを持たない
 //       （frontmatter 既定で起動）。model を渡すのは green-fix#i / green-fix#retry-i の 'sonnet' だけ
 //   (c) implementer の null は再試行されず 1 回で drop に計上される
-//   (d) micro / standard / complex の spawn 数・Evaluate 回数が fallback 撤去前と一致する
+//   (d) micro / standard / complex の spawn 数・Evaluate 回数が fallback 撤去前から journal handoff の 1 spawn 化分だけ減った値と一致する
 //   (e) telemetry: impl_model_config は成功 / failure / abort の 3 経路で 'opus'、impl_model_fallback_label は載らない
 //
 // frontmatter 値（model: opus / effort: high）と impl_model_config リテラルの一致は review-model-frontmatter.test.mjs (d)。
@@ -79,7 +79,9 @@ async function runFlow(overrides = {}, extra = {}) {
   const journalPrompts = [];
   const { ctx, calls, logs } = makeDevFlowSandbox({
     overrides: {
-      'journal-save': ({ prompt }) => { journalPrompts.push(prompt); return { saved: true, path: '/tmp/wt/.devflow-tmp/payload-test.json' }; },
+      'journal-log': ({ prompt }) => { journalPrompts.push(prompt); return { saved: true, logged: true }; },
+      'journal-log-failure': ({ prompt }) => { journalPrompts.push(prompt); return { saved: true, logged: true }; },
+      'journal-log-abort': ({ prompt }) => { journalPrompts.push(prompt); return { saved: true, logged: true }; },
       ...overrides,
     },
     extra,
@@ -151,7 +153,8 @@ test('[impl-model-opus] (c) impl:serial:issue-1 の null は再試行されず 1
 });
 
 // ============================================================
-// (d) shape 別 spawn 数・Evaluate 回数（fallback 撤去前の実測値）
+// (d) shape 別 spawn 数・Evaluate 回数（fallback 撤去前の実測値から、journal handoff の 1 spawn 化
+// （issue #807: journal-save + journal-log → journal-log）で dev-runner-haiku が 1 減った値）
 // ============================================================
 
 const SHAPES = {
@@ -162,28 +165,28 @@ const SHAPES = {
       'danger-grep': { risk: { ok: true, hits: [] }, files: [...MICRO_FILES], struct: null, diffhash: { hash: 'AAA', empty: false } },
       'ci-check-lite': { status: 'passed', failed_checks: [], waited_seconds: 0, poll_attempts: 0 },
     },
-    total: 13,
+    total: 12,
     evals: 0,
-    byType: { 'dev-flow:dev-runner-haiku-wo': 1, 'dev-flow:dev-implementer': 1, 'dev-flow:dev-runner-haiku': 5, 'dev-flow:dev-runner-haiku-ro': 5, 'dev-flow:pr-reviewer': 1 },
+    byType: { 'dev-flow:dev-runner-haiku-wo': 1, 'dev-flow:dev-implementer': 1, 'dev-flow:dev-runner-haiku': 4, 'dev-flow:dev-runner-haiku-ro': 5, 'dev-flow:pr-reviewer': 1 },
   },
   standard: {
     args: analyzeArgs(1, { acceptance_criteria: ['a', 'b', 'c', 'd'], issue_type: 'feat' }),
     overrides: {},
-    total: 14,
+    total: 13,
     evals: 1,
-    byType: { 'dev-flow:dev-runner-haiku-wo': 1, 'dev-flow:dev-implementer': 1, 'dev-flow:dev-runner-haiku': 5, 'dev-flow:dev-runner-haiku-ro': 6, 'dev-flow:evaluator': 1 },
+    byType: { 'dev-flow:dev-runner-haiku-wo': 1, 'dev-flow:dev-implementer': 1, 'dev-flow:dev-runner-haiku': 4, 'dev-flow:dev-runner-haiku-ro': 6, 'dev-flow:evaluator': 1 },
   },
   complex: {
     args: COMPLEX_ARGS,
     overrides: {},
-    total: 14,
+    total: 13,
     evals: 1,
-    byType: { 'dev-flow:dev-runner-haiku-wo': 1, 'dev-flow:dev-implementer': 1, 'dev-flow:dev-runner-haiku': 5, 'dev-flow:dev-runner-haiku-ro': 6, 'dev-flow:evaluator': 1 },
+    byType: { 'dev-flow:dev-runner-haiku-wo': 1, 'dev-flow:dev-implementer': 1, 'dev-flow:dev-runner-haiku': 4, 'dev-flow:dev-runner-haiku-ro': 6, 'dev-flow:evaluator': 1 },
   },
 };
 
 for (const [shape, exp] of Object.entries(SHAPES)) {
-  test(`[impl-model-opus] (d) ${shape}: spawn 数 ${exp.total}・Evaluate ${exp.evals} 回が fallback 撤去前と一致する`, async () => {
+  test(`[impl-model-opus] (d) ${shape}: spawn 数 ${exp.total}・Evaluate ${exp.evals} 回`, async () => {
     const { ctx, calls } = makeDevFlowSandbox({ overrides: exp.overrides, extra: { args: exp.args } });
     const { result, error } = await runWorkflowCapture(src, ctx);
     assert.equal(error, null, `run が throw した: ${error?.message}`);
@@ -203,7 +206,7 @@ for (const [shape, exp] of Object.entries(SHAPES)) {
 
 function lastTelemetry(journalPrompts) {
   const m = journalPrompts.at(-1)?.match(/<<<JOURNAL_HANDOFF_BODY_BEGIN>>>\n([\s\S]*?)\n<<<JOURNAL_HANDOFF_BODY_END>>>/);
-  assert.ok(m, 'journal-save prompt に JOURNAL_HANDOFF_BODY が無い');
+  assert.ok(m, 'journal-log prompt に JOURNAL_HANDOFF_BODY が無い');
   return JSON.parse(m[1]);
 }
 

@@ -270,15 +270,15 @@ test('[eval-concern-resolutions][#626] CONCERN-2 は triaged として解消済�
   );
 });
 
-test('[eval-concern-resolutions][#614] triaged は ledger 収束を変えない（result.merge_tier と journal-save prompt の "merge_tier" が一致し HOLD にならない）', async () => {
+test('[eval-concern-resolutions][#614] triaged は ledger 収束を変えない（result.merge_tier と journal-log prompt の "merge_tier" が一致し HOLD にならない）', async () => {
   await ensureSharedRun();
   assert.ok(sharedResult !== null, '#614 return object を返すべき');
   assert.notEqual(sharedResult?.merge_tier, 'HOLD', `#614 triaged concern は advisory のため merge_tier は HOLD にならないはずだが ${JSON.stringify(sharedResult?.merge_tier)}`);
-  const journalCall = sharedCalls.find((c) => c.label === 'journal-save');
-  assert.ok(journalCall !== undefined, '#614 journal-save の agent 呼び出しが存在すべき');
+  const journalCall = sharedCalls.find((c) => c.label === 'journal-log');
+  assert.ok(journalCall !== undefined, '#614 journal-log の agent 呼び出しが存在すべき');
   assert.ok(
     journalCall.prompt.includes(`"merge_tier":"${sharedResult.merge_tier}"`),
-    `#614 journal-save prompt の "merge_tier" が result.merge_tier(${sharedResult.merge_tier}) と一致しない:\n${journalCall.prompt.slice(0, 500)}`,
+    `#614 journal-log prompt の "merge_tier" が result.merge_tier(${sharedResult.merge_tier}) と一致しない:\n${journalCall.prompt.slice(0, 500)}`,
   );
 });
 

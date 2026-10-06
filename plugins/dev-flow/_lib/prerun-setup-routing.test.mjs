@@ -14,7 +14,7 @@
 //   (f) args.base（旧形式）→ phase 前に即 throw（agent call 0 件）
 //   (g) args.setup.deps.ok:false → implementer prompt に依存インストール警告が注入される
 //   (h) 既定（deps ok）→ implementer prompt に依存インストール警告が注入されない
-//   (i) args.setup.repo → journal-save prompt に "repo" キーが載る（既定は省略）
+//   (i) args.setup.repo → journal-log prompt に "repo" キーが載る（既定は省略）
 //   (j) args.setup.epoch → isolation-probe prompt の token に反映される
 
 import { test } from 'vitest';
@@ -62,18 +62,18 @@ async function assertAbort(args, msgSubstrs) {
   for (const s of msgSubstrs) {
     assert.ok(String(error.message).includes(s), `error.message に '${s}' が含まれない: ${error.message}`);
   }
-  const nonJournal = calls.filter((c) => c.label !== 'journal-save' && c.label !== 'journal-log-abort');
-  assert.equal(nonJournal.length, 0, `journal-save / journal-log-abort 以外の call が観測された: ${JSON.stringify(nonJournal.map((c) => c.label))}`);
+  const nonJournal = calls.filter((c) => c.label !== 'journal-log-abort');
+  assert.equal(nonJournal.length, 0, `journal-log-abort 以外の call が観測された: ${JSON.stringify(nonJournal.map((c) => c.label))}`);
 
-  const save = calls.find((c) => c.label === 'journal-save');
-  assert.ok(save, 'journal-save が呼ばれていない');
+  const save = calls.find((c) => c.label === 'journal-log-abort');
+  assert.ok(save, 'journal-log-abort が呼ばれていない');
   assert.ok(
-    save.prompt.includes('~/.claude/journal/abort-payload/payload-devflow-1-abort.json'),
-    `journal-save prompt に tilde savePath が含まれない: ${save.prompt.slice(0, 400)}`,
+    save.prompt.includes('~/.claude/journal/pending/devflow-1-effect-'),
+    `journal-log-abort prompt に pending パスが含まれない: ${save.prompt.slice(0, 400)}`,
   );
   assert.ok(
     save.prompt.includes('abort@Setup/prerun-setup:'),
-    `journal-save prompt に 'abort@Setup/prerun-setup:' が含まれない: ${save.prompt.slice(0, 400)}`,
+    `journal-log-abort prompt に 'abort@Setup/prerun-setup:' が含まれない: ${save.prompt.slice(0, 400)}`,
   );
   return { error };
 }
@@ -133,26 +133,26 @@ test('[prerun-setup-routing] (h) 既定（deps ok）→ implementer prompt に�
   }
 });
 
-// ── (i) repo の journal-save payload への反映 ──
+// ── (i) repo の journal handoff payload への反映 ──
 
-test('[prerun-setup-routing] (i) args.setup.repo → journal-save prompt に "repo" キーが載る', async () => {
+test('[prerun-setup-routing] (i) args.setup.repo → journal-log prompt に "repo" キーが載る', async () => {
   const { ctx, calls } = makeDevFlowSandbox({ extra: { args: devFlowArgs(1, { repo: 'acme/skills' }) } });
   const { error } = await runWorkflowCapture(src, ctx);
   assertNoCrash(error, 'i-with-repo');
   assert.equal(error, null, `run は完走するはずだが throw した: ${error?.message}`);
-  const save = calls.find((c) => c.label === 'journal-save');
-  assert.ok(save, 'journal-save が呼ばれていない');
-  assert.ok(save.prompt.includes('"repo":"acme/skills"'), `journal-save prompt に "repo":"acme/skills" が含まれない: ${save.prompt.slice(0, 400)}`);
+  const save = calls.find((c) => c.label === 'journal-log');
+  assert.ok(save, 'journal-log が呼ばれていない');
+  assert.ok(save.prompt.includes('"repo":"acme/skills"'), `journal-log prompt に "repo":"acme/skills" が含まれない: ${save.prompt.slice(0, 400)}`);
 });
 
-test('[prerun-setup-routing] (i) repo 無し（既定）→ journal-save prompt に "repo" キーを含まない', async () => {
+test('[prerun-setup-routing] (i) repo 無し（既定）→ journal-log prompt に "repo" キーを含まない', async () => {
   const { ctx, calls } = makeDevFlowSandbox();
   const { error } = await runWorkflowCapture(src, ctx);
   assertNoCrash(error, 'i-without-repo');
   assert.equal(error, null, `run は完走するはずだが throw した: ${error?.message}`);
-  const save = calls.find((c) => c.label === 'journal-save');
-  assert.ok(save, 'journal-save が呼ばれていない');
-  assert.ok(!save.prompt.includes('"repo"'), `journal-save prompt に "repo" キーが含まれてはいけない: ${save.prompt.slice(0, 400)}`);
+  const save = calls.find((c) => c.label === 'journal-log');
+  assert.ok(save, 'journal-log が呼ばれていない');
+  assert.ok(!save.prompt.includes('"repo"'), `journal-log prompt に "repo" キーが含まれてはいけない: ${save.prompt.slice(0, 400)}`);
 });
 
 // ── (j) epoch の isolation-probe token への反映 ──

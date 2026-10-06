@@ -47,8 +47,8 @@ test('[wiring] (a) pr-iterate fix_failed → HOLD / iterate_incomplete / telemet
     `(a) merge_tier_reasons に iterate status を含む理由が無い: ${JSON.stringify(result.merge_tier_reasons)}`,
   );
 
-  const journal = calls.find((c) => c.label === 'journal-save');
-  assert.ok(journal, '(a) journal-save が呼ばれていない');
+  const journal = calls.find((c) => c.label === 'journal-log');
+  assert.ok(journal, '(a) journal-log が呼ばれていない');
   assert.ok(journal.prompt.includes('"iterate_status":"fix_failed"'), `(a) telemetry に iterate_status が無い:\n${journal.prompt.slice(0, 600)}`);
 
   const post = calls.find((c) => c.label === 'post-summary');

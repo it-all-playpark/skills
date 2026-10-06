@@ -1,4 +1,4 @@
-// issue #640 / #676 / #690 / #789: 実効 shape が journal telemetry（journal-save prompt の handoff JSON）の
+// issue #640 / #676 / #690 / #789: 実効 shape が journal telemetry（journal-log prompt の handoff JSON）の
 // shape に載り、判定根拠（shape_reason）・realized file 数は返り値に載ることを VM sandbox で固定する。
 // shape は realized diff の file 数から classifyShape が決めた実効値。analyze 経路は args.setup.analyze
 // （prerun の analyze 段）から決まり、Workflow 側（Setup 末尾の analyze ゲート）は spawn しない。
@@ -23,12 +23,12 @@ const repoRoot = join(here, '..');
 const devFlowSrc = readFileSync(join(repoRoot, '.claude/workflows/dev-flow.js'), 'utf8');
 
 function extractTelemetry(calls) {
-  const journalSave = calls.find((c) => c.label === 'journal-save');
-  assert.ok(journalSave != null, `label === 'journal-save' の call が見つからない (全 labels: ${calls.map((c) => c.label).join(', ')})`);
+  const journalSave = calls.find((c) => c.label.startsWith('journal-log'));
+  assert.ok(journalSave != null, `label 'journal-log*' の call が見つからない (全 labels: ${calls.map((c) => c.label).join(', ')})`);
   const begin = '<<<JOURNAL_HANDOFF_BODY_BEGIN>>>';
   const beginIdx = journalSave.prompt.indexOf(begin);
   const endIdx = journalSave.prompt.indexOf('<<<JOURNAL_HANDOFF_BODY_END>>>');
-  assert.ok(beginIdx >= 0 && endIdx > beginIdx, 'journal-save prompt に JOURNAL_HANDOFF_BODY delimiter が見つからない');
+  assert.ok(beginIdx >= 0 && endIdx > beginIdx, 'journal-log prompt に JOURNAL_HANDOFF_BODY delimiter が見つからない');
   const payload = JSON.parse(journalSave.prompt.slice(beginIdx + begin.length, endIdx).trim());
   assert.ok(payload.telemetry && typeof payload.telemetry === 'object', 'payload.telemetry が無い');
   return payload.telemetry;

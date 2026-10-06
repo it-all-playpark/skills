@@ -1,7 +1,7 @@
 // 終端サマリーの「解消済み証跡」セクション（issue #603 / #707）を dev-flow.js の VM 実行で pin する。
 // 解消済みの ledger item が大量にある run（PR #595 相当: critical 21 件 resolved）でも、post-summary の本文は
 // <details> 1 つに折りたたまれ、evidence セルは 1 行 200 字 cap で切られ、raw の全文（改行入り）は流れ込まない。
-// post-summary は telemetry handoff（journal-save）より前に呼ばれ、telemetry には解消済み証跡を載せない。
+// post-summary は telemetry handoff（journal-log）より前に呼ばれ、telemetry には解消済み証跡を載せない。
 
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
@@ -35,7 +35,7 @@ const CRITICAL_RESOLUTIONS = Array.from({ length: 21 }, (_, i) => ({
 
 function parseHandoff(prompt) {
   const m = prompt.match(/<<<JOURNAL_HANDOFF_BODY_BEGIN>>>\n([\s\S]*?)\n<<<JOURNAL_HANDOFF_BODY_END>>>/);
-  assert.ok(m, `journal-save prompt に JOURNAL_HANDOFF_BODY delimiter が見つからない:\n${prompt}`);
+  assert.ok(m, `journal-log prompt に JOURNAL_HANDOFF_BODY delimiter が見つからない:\n${prompt}`);
   return JSON.parse(m[1]);
 }
 
@@ -60,16 +60,16 @@ async function runResolvedHeavy() {
   return { result, calls };
 }
 
-test('[resolved-evidence-routing] post-summary は journal-save より前に呼ばれ、telemetry に解消済み証跡を載せない', async () => {
+test('[resolved-evidence-routing] post-summary は journal-log より前に呼ばれ、telemetry に解消済み証跡を載せない', async () => {
   const { result, calls } = await runResolvedHeavy();
   const postIdx = calls.findIndex((c) => c.label === 'post-summary');
-  const saveIdx = calls.findIndex((c) => c.label === 'journal-save');
-  assert.ok(postIdx >= 0 && saveIdx >= 0, `post-summary / journal-save が呼ばれていない: ${calls.map((c) => c.label).join(', ')}`);
-  assert.ok(postIdx < saveIdx, `post-summary(idx=${postIdx}) は journal-save(idx=${saveIdx}) より前に呼ばれるべき`);
+  const saveIdx = calls.findIndex((c) => c.label === 'journal-log');
+  assert.ok(postIdx >= 0 && saveIdx >= 0, `post-summary / journal-log が呼ばれていない: ${calls.map((c) => c.label).join(', ')}`);
+  assert.ok(postIdx < saveIdx, `post-summary(idx=${postIdx}) は journal-log(idx=${saveIdx}) より前に呼ばれるべき`);
   const payload = parseHandoff(calls[saveIdx].prompt);
   assert.equal(payload.telemetry.merge_tier, result.merge_tier, 'telemetry.merge_tier が result.merge_tier と一致しない');
   assert.equal(Object.hasOwn(payload.telemetry, 'resolved_evidence'), false, 'telemetry に resolved_evidence が載っている');
-  assert.ok(!calls[saveIdx].prompt.includes('SENTINEL-EVIDENCE-'), 'journal-save payload に解消済み証跡の evidence が流れ込んでいる');
+  assert.ok(!calls[saveIdx].prompt.includes('SENTINEL-EVIDENCE-'), 'journal-log payload に解消済み証跡の evidence が流れ込んでいる');
 });
 
 test('[resolved-evidence-routing] critical 21 件 resolved の run でも post-summary の解消済み証跡は <details> 1 つに折りたたまれ、evidence は 1 行 200 字 cap', async () => {

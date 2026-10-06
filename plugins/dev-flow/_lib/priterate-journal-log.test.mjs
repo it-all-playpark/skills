@@ -13,15 +13,15 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
 const prIteratePath = join(repoRoot, '.claude/workflows/pr-iterate.js');
 
-function makeSandbox(journalResult, journalSaveResult) {
+function makeSandbox(journalResult) {
   let journalCallCount = 0;
-  let journalSaveCallCount = 0;
   let capturedPrompt = null;
-  let capturedLogPrompt = null;
+  const labels = [];
 
   const agentStub = async (prompt, opts) => {
     const label = opts?.label ?? '';
     const agentType = opts?.agentType ?? '';
+    labels.push(label);
 
     // pr-reviewer: 1 round で LGTM へ
     if (agentType === 'dev-flow:pr-reviewer') {
@@ -39,26 +39,15 @@ function makeSandbox(journalResult, journalSaveResult) {
     }
 
     // pr-meta: repo probe（F3。issue #309）
-    // cwd は実 run では常に worktree の絶対パス。journal-save の保存先はここから組み立てられる。
     if (label === 'pr-meta' && agentType === 'dev-flow:dev-runner-haiku-ro') {
       return { url: 'https://github.com/acme/skills/pull/5', cwd: '/tmp/wt' };
     }
 
-    // journal-save (stage1, issue #494): 実際の telemetry payload はここに載る。saved:true を
-    // 返して journal-log (stage2) へ進めさせる。journalSaveResult が Error なら throw する
-    // （stage1 の proxy 実行失敗・schema 不一致の再現。issue #499 F4）。
-    if (label === 'journal-save' && agentType === 'dev-flow:dev-runner-haiku') {
-      journalSaveCallCount += 1;
-      capturedPrompt = typeof prompt === 'string' ? prompt : null;
-      if (journalSaveResult instanceof Error) throw journalSaveResult;
-      return journalSaveResult ?? { saved: true, path: '/tmp/wt/.devflow-tmp/payload-test.json' };
-    }
-
-    // journal-log (stage2): label === 'journal-log' && agentType === 'dev-flow:dev-runner-haiku'
+    // journal-log: 実際の telemetry payload はここに載り、pending/ へ直接書く 1 spawn（issue #807）。
     // journalResult が Error なら throw する（schema 不一致・proxy 実行失敗の再現）。
     if (label === 'journal-log' && agentType === 'dev-flow:dev-runner-haiku') {
       journalCallCount += 1;
-      capturedLogPrompt = typeof prompt === 'string' ? prompt : null;
+      capturedPrompt = typeof prompt === 'string' ? prompt : null;
       if (journalResult instanceof Error) throw journalResult;
       return journalResult;
     }
@@ -101,9 +90,8 @@ function makeSandbox(journalResult, journalSaveResult) {
   return {
     ctx,
     getJournalCallCount: () => journalCallCount,
-    getJournalSaveCallCount: () => journalSaveCallCount,
     getCapturedPrompt: () => capturedPrompt,
-    getCapturedLogPrompt: () => capturedLogPrompt,
+    getLabels: () => labels,
   };
 }
 
@@ -131,9 +119,9 @@ async function runPrIterateCapture(src, ctx) {
 
 const src = readFileSync(prIteratePath, 'utf8');
 
-test('[journal-log] journalResult={logged:true} で完走 → journal-save→journal-log の 2 段呼び出しがそれぞれ 1 回、pending handoff コマンドが含まれ、result.status === lgtm', async () => {
-  const journalResult = { logged: true, summary: 'ok' };
-  const { ctx, getJournalCallCount, getJournalSaveCallCount, getCapturedPrompt, getCapturedLogPrompt } = makeSandbox(journalResult);
+test('[journal-log] journalResult={saved:true, logged:true} で完走 → journal-log が 1 spawn だけ呼ばれ、payload と pending パスを含み、result.status === lgtm', async () => {
+  const journalResult = { saved: true, logged: true };
+  const { ctx, getJournalCallCount, getCapturedPrompt, getLabels } = makeSandbox(journalResult);
 
   const { result, error } = await runPrIterateCapture(src, ctx);
 
@@ -142,18 +130,12 @@ test('[journal-log] journalResult={logged:true} で完走 → journal-save→jou
   }
 
   assert.equal(
-    getJournalSaveCallCount(),
-    1,
-    `journal-save dev-runner-haiku の呼び出しは 1 回であるべきだが ${getJournalSaveCallCount()} 回だった`,
-  );
-  assert.equal(
     getJournalCallCount(),
     1,
     `journal-log dev-runner-haiku の呼び出しは 1 回であるべきだが ${getJournalCallCount()} 回だった`,
   );
+  assert.ok(!getLabels().includes('journal-save'), `payload の一時ファイルを書く journal-save spawn は起動しない: ${getLabels().join(', ')}`);
 
-  // issue #494: 結論値リテラル（outcome 等）と journal/pending 呼び出し語彙が同一 prompt に
-  // 同居しないよう、handoff JSON の必須キーは journal-save (stage1) の prompt に載る。
   const capturedPrompt = getCapturedPrompt();
   const requiredKeys = [
     '"skill":"pr-iterate"',
@@ -167,27 +149,23 @@ test('[journal-log] journalResult={logged:true} で完走 → journal-save→jou
   for (const key of requiredKeys) {
     assert.ok(
       typeof capturedPrompt === 'string' && capturedPrompt.includes(key),
-      `journal-save prompt に '${key}' が含まれるべきだが含まれない。prompt=${capturedPrompt}`,
+      `journal-log prompt に '${key}' が含まれるべきだが含まれない。prompt=${capturedPrompt}`,
     );
   }
 
-  // journal-log (stage2) は pending handoff コマンド（ファイルパスのみ）を扱い、結論値
-  // リテラル（outcome 等）を含まない。
   // journal-handoff.mjs は最終ファイル名に stable effect-ID（payload 由来の 16hex）を含む。
-  // issue #526 で stage2 から shell を外したため、pending パスは shell 展開式ではなく
-  // Write tool が展開する `~` 形になっている。
-  const capturedLogPrompt = getCapturedLogPrompt();
+  // issue #526 で shell を外したため、pending パスは shell 展開式ではなく Write tool が展開する `~` 形。
   assert.ok(
-    typeof capturedLogPrompt === 'string' && capturedLogPrompt.includes('~/.claude/journal/pending/priterate-5-effect-'),
-    `journal-log prompt に pending パスが含まれるべきだが含まれない。prompt=${capturedLogPrompt}`,
+    typeof capturedPrompt === 'string' && capturedPrompt.includes('~/.claude/journal/pending/priterate-5-effect-'),
+    `journal-log prompt に pending パスが含まれるべきだが含まれない。prompt=${capturedPrompt}`,
   );
   assert.ok(
-    typeof capturedLogPrompt === 'string' && !capturedLogPrompt.includes('"outcome":"success"'),
-    `journal-log prompt に結論値リテラル '"outcome":"success"' が含まれるべきではないが含まれていた。prompt=${capturedLogPrompt}`,
+    typeof capturedPrompt === 'string' && !capturedPrompt.includes('.devflow-tmp'),
+    `journal-log prompt は payload の一時ファイルを経由してはならない。prompt=${capturedPrompt}`,
   );
   assert.ok(
-    typeof capturedLogPrompt === 'string' && !capturedLogPrompt.includes('journal log pr-iterate'),
-    `journal-log prompt は direct journal 実行ではなく pending handoff であるべき。prompt=${capturedLogPrompt}`,
+    typeof capturedPrompt === 'string' && !capturedPrompt.includes('journal log pr-iterate'),
+    `journal-log prompt は direct journal 実行ではなく pending handoff であるべき。prompt=${capturedPrompt}`,
   );
 
   assert.equal(
@@ -195,7 +173,7 @@ test('[journal-log] journalResult={logged:true} で完走 → journal-save→jou
     'lgtm',
     `result.status は 'lgtm' であるべきだが '${result?.status}' だった`,
   );
-  // journal-log が logged:true を返すため result.journal_log_status は 3 値 closed enum のうち 'logged'
+  // journal-log が {saved:true, logged:true} を返すため result.journal_log_status は 3 値 closed enum のうち 'logged'
   assert.equal(
     result?.journal_log_status,
     'logged',
@@ -203,8 +181,8 @@ test('[journal-log] journalResult={logged:true} で完走 → journal-save→jou
   );
 });
 
-test('[journal-log] journalResult={logged:false} → result が non-null で result.status === lgtm・journal_log_status === log_failed（記録失敗でも正常 return）', async () => {
-  const journalResult = { logged: false, summary: 'failed' };
+test('[journal-log] journalResult={saved:true, logged:false} → result が non-null で result.status === lgtm・journal_log_status === log_failed（記録失敗でも正常 return）', async () => {
+  const journalResult = { saved: true, logged: false };
   const { ctx } = makeSandbox(journalResult);
 
   const { result, error } = await runPrIterateCapture(src, ctx);
@@ -217,24 +195,22 @@ test('[journal-log] journalResult={logged:false} → result が non-null で res
     result !== null && result !== undefined,
     `journal 記録失敗（logged:false）でも workflow は return object を解決するべきだが null/undefined だった`,
   );
-
   assert.equal(
     result?.status,
     'lgtm',
     `journal 記録失敗でも result.status は 'lgtm' であるべきだが '${result?.status}' だった`,
   );
-  // journal-log が logged:false を返すため result.journal_log_status は 'log_failed'
+  // Write を試みて失敗した申告なので result.journal_log_status は 'log_failed'
   assert.equal(
     result?.journal_log_status,
     'log_failed',
-    `journal-log が logged:false を返す場合 result.journal_log_status は 'log_failed' のはずだが '${result?.journal_log_status}' だった`,
+    `journal-log が saved:true / logged:false を返す場合 result.journal_log_status は 'log_failed' のはずだが '${result?.journal_log_status}' だった`,
   );
 });
 
-test('[journal-log] journal-save が saved:false を返す場合 journal-log(stage2) は呼ばれず result.journal_log_status が save_failed になること', async () => {
-  const journalResult = { logged: true, summary: 'ok' };
-  const journalSaveResult = { saved: false };
-  const { ctx, getJournalCallCount, getJournalSaveCallCount } = makeSandbox(journalResult, journalSaveResult);
+test('[journal-log] journal-log が saved:false を返す場合 result.journal_log_status が save_failed になること', async () => {
+  const journalResult = { saved: false, logged: false };
+  const { ctx, getJournalCallCount } = makeSandbox(journalResult);
 
   const { result, error } = await runPrIterateCapture(src, ctx);
 
@@ -243,31 +219,26 @@ test('[journal-log] journal-save が saved:false を返す場合 journal-log(sta
   }
 
   assert.equal(
-    getJournalSaveCallCount(),
-    1,
-    `journal-save の呼び出しは 1 回であるべきだが ${getJournalSaveCallCount()} 回だった`,
-  );
-  assert.equal(
     getJournalCallCount(),
-    0,
-    `journal-save が saved:false を返す場合 journal-log(stage2) は呼ばれないはずだが ${getJournalCallCount()} 回呼ばれた`,
+    1,
+    `journal-log の呼び出しは 1 回であるべきだが ${getJournalCallCount()} 回だった`,
   );
   assert.equal(
     result?.journal_log_status,
     'save_failed',
-    `journal-save が saved:false を返す場合 result.journal_log_status は 'save_failed' のはずだが '${result?.journal_log_status}' だった`,
+    `journal-log が saved:false を返す場合 result.journal_log_status は 'save_failed' のはずだが '${result?.journal_log_status}' だった`,
   );
 });
 
-// stage 帰属テスト: stage1 成功 → stage2 が throw した場合、失敗したのは stage2 なので
-// log_failed でなければならない（save_failed に落ちると誤った診断を telemetry 利用側へ伝える）。
-test('[journal-log] stage1 成功後に journal-log(stage2) が throw した場合 result.journal_log_status は log_failed（save_failed に誤帰属しない）', async () => {
+// journal-log が throw した場合は Write 到達の申告が無いので journalLogStatus は初期値 'save_failed'
+// のまま run が継続する（fail-open）。
+test('[journal-log] journal-log が throw した場合 result.journal_log_status は save_failed のまま run 完走する（fail-open）', async () => {
   // issue #527/#533: trackedAgent のリトライは `opts.retryOnContractViolation === true` の
-  // opt-in call site 限定で、journal-save/journal-log の call site はいずれも opt-in していない
+  // opt-in call site 限定で、journal-log の call site は opt-in していない
   // ため 'without calling StructuredOutput' を含む throw でもリトライされない。ここでは
   // 意図を明確にするため exec-proxy 実行失敗を示す別メッセージ（call count=1 想定に影響しない）を使う。
   const journalResult = new Error('exec-proxy 実行失敗: EPERM');
-  const { ctx, getJournalCallCount, getJournalSaveCallCount } = makeSandbox(journalResult);
+  const { ctx, getJournalCallCount } = makeSandbox(journalResult);
 
   const { result, error } = await runPrIterateCapture(src, ctx);
 
@@ -275,56 +246,22 @@ test('[journal-log] stage1 成功後に journal-log(stage2) が throw した場�
     assert.fail(`pr-iterate.js が sandbox でクラッシュ: ${error.name}: ${error.message}`);
   }
 
-  assert.equal(getJournalSaveCallCount(), 1);
   assert.equal(getJournalCallCount(), 1);
-  // fail-open: stage2 の throw は workflow を落とさない
-  assert.ok(result != null, 'journal-log(stage2) の throw で workflow が落ちてはならない（fail-open）');
-  assert.equal(
-    result?.journal_log_status,
-    'log_failed',
-    `stage2 throw 時 result.journal_log_status は 'log_failed' のはずだが '${result?.journal_log_status}' だった`,
-  );
-});
-
-// issue #499 F4: stage1（journal-save）が throw した場合は journal-log(stage2) が呼ばれる前に
-// 外側 catch へ抜けるため、journalLogStatus は初期値 'save_failed' のまま run が継続する（fail-open）。
-// stage2 が何らかの理由で失敗した場合も journal_log_status は 'log_failed'、stage1 で落ちた
-// 場合は 'save_failed' として観測可能なまま run に影響しない（どの段で落ちたかが返り値に残る）。
-test('[journal-log] stage1 の journal-save(agent) が throw した場合 journal-log(stage2) は呼ばれず result.journal_log_status は save_failed のまま run 完走する（fail-open）', async () => {
-  // issue #527/#533: trackedAgent のリトライは `opts.retryOnContractViolation === true` の
-  // opt-in call site 限定で、journal-save/journal-log の call site はいずれも opt-in していない
-  // ため 'without calling StructuredOutput' を含む throw でもリトライされない。ここでは
-  // 意図を明確にするため exec-proxy 実行失敗を示す別メッセージ（call count=1 想定に影響しない）を使う。
-  const journalSaveResult = new Error('exec-proxy 実行失敗: EPERM');
-  const { ctx, getJournalCallCount, getJournalSaveCallCount } = makeSandbox({ logged: true, summary: 'ok' }, journalSaveResult);
-
-  const { result, error } = await runPrIterateCapture(src, ctx);
-
-  if (error && (error.name === 'ReferenceError' || error.name === 'SyntaxError')) {
-    assert.fail(`pr-iterate.js が sandbox でクラッシュ: ${error.name}: ${error.message}`);
-  }
-
-  assert.equal(getJournalSaveCallCount(), 1);
-  assert.equal(
-    getJournalCallCount(),
-    0,
-    `journal-save(stage1) が throw する場合 journal-log(stage2) は呼ばれないはずだが ${getJournalCallCount()} 回呼ばれた`,
-  );
-  assert.ok(result != null, 'journal-save(stage1) の throw で workflow が落ちてはならない（fail-open）');
+  assert.ok(result != null, 'journal-log の throw で workflow が落ちてはならない（fail-open）');
   assert.equal(
     result?.status,
     'lgtm',
-    `stage1 throw でも result.status は 'lgtm' であるべきだが '${result?.status}' だった`,
+    `journal-log throw でも result.status は 'lgtm' であるべきだが '${result?.status}' だった`,
   );
   assert.equal(
     result?.journal_log_status,
     'save_failed',
-    `stage1 throw 時 result.journal_log_status は 'save_failed' のはずだが '${result?.journal_log_status}' だった`,
+    `journal-log throw 時 result.journal_log_status は 'save_failed' のはずだが '${result?.journal_log_status}' だった`,
   );
 });
 
 // inline 区間整合: journal handoff の choreography は canonical（_lib/journal-handoff.mjs）の inline 区間にのみ
-// 存在し、call site 側に手写しが残っていないこと（否定 pin）。call site の label（journal-log）と 2 段
+// 存在し、call site 側に手写しが残っていないこと（否定 pin）。call site の label（journal-log）と
 // handoff の挙動は上の VM テストと exec-proxy-routing.test.mjs が観測する。
 test('[journal-log] inline 整合: pr-iterate.js の inline 区間外に journal handoff choreography の手写しが残っていない', () => {
   const anchor = src.indexOf('==== END inline: _lib/journal-handoff.mjs ====');

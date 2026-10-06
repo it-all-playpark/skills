@@ -136,15 +136,11 @@ function makeSandbox(analyzeReq, epochMode) {
     if (label === 'post-summary') {
       return withEpoch({ posted: true, method: 'gh pr comment', url: 'http://x' });
     }
-    // journal-save (stage1, issue #494): 実際の telemetry payload はここに載る。prompt を捕捉し
-    // saved:true を返して journal-log (stage2) へ進めさせる。
-    if (label === 'journal-save' && agentType === 'dev-flow:dev-runner-haiku') {
-      journalPrompts.push(prompt);
-      return { saved: true, path: '/tmp/wt/.devflow-tmp/payload-test.json' };
-    }
-    // journal-log (stage2): logged:true を返す
+    // journal-log: 実際の telemetry payload はここに載る（issue #807: pending/ へ直接書く 1 spawn）。
+    // prompt を捕捉し {saved:true, logged:true} を返す。
     if (label === 'journal-log' && agentType === 'dev-flow:dev-runner-haiku') {
-      return { logged: true, summary: 'ok' };
+      journalPrompts.push(prompt);
+      return { saved: true, logged: true };
     }
     // implementer（implement_end の給電元）。給電した epoch を記録し、phase_durations.implement の
     // 起点が setup_end（args.setup.epoch_end）であることを検証する（issue #695）。
@@ -212,7 +208,7 @@ function makeSandbox(analyzeReq, epochMode) {
   };
 }
 
-// journal-save prompt（handoff JSON を含む）から phase_durations object を取り出す（無ければ null）。
+// journal-log prompt（handoff JSON を含む）から phase_durations object を取り出す（無ければ null）。
 function extractPhaseDurations(prompt) {
   const m = /"phase_durations":(\{[^}]*\})/.exec(prompt);
   return m ? JSON.parse(m[1]) : null;

@@ -130,7 +130,7 @@ test('[structural-classify-routing] formatOnlySet excludes format-only files fro
   assert.equal(error, null);
   assert.equal(result.shape, 'micro');
   assert.equal(result.realized_file_count, 1);
-  const js = calls.find((c) => c.label === 'journal-save');
+  const js = calls.find((c) => c.label === 'journal-log');
   assert.ok(js.prompt.includes('"shape":"micro"'));
 });
 
@@ -141,6 +141,6 @@ test('[structural-classify-routing] formatOnlySet excludes format-only files fro
   assert.equal(error, null);
   assert.equal(result.shape, 'standard');
   assert.equal(result.realized_file_count, 4);
-  const js = calls.find((c) => c.label === 'journal-save');
+  const js = calls.find((c) => c.label === 'journal-log');
   assert.ok(js.prompt.includes('"shape":"standard"'));
 });

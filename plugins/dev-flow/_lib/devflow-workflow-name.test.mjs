@@ -8,7 +8,7 @@
 //   (a) meta.name === 'dev-flow-run'（`export const meta` はハーネスが読む pure literal で VM 返り値に
 //       現れないため、リテラル本体を vm で評価し declared name を観測する。issue #636）
 //   (b) 旧 meta 名 `name: 'dev-flow',`（完全一致文字列）が存在しないこと（否定 pin）
-//   (c) VM 挙動: success / empty-diff failure / abort の 3 run いずれも journal-save 系 prompt の
+//   (c) VM 挙動: success / empty-diff failure / abort の 3 run いずれも journal-log 系 prompt の
 //       telemetry JSON が `"skill":"dev-flow"` を含む（集計連続性 invariant を挙動で pin。
 //       abort run はさらに `"error_category":"abort"` も含む）
 //   (d) .claude/workflows/ 配下の全 *.js に workflow('dev-flow') 形式の nested 呼び出しが
@@ -54,23 +54,23 @@ test('[workflow-name] dev-flow.js: 旧 meta 名 name: \'dev-flow\', が残存し
 
 // (c) telemetry の skill:'dev-flow' 集計連続性 invariant を、3 call site（Merge tier success handoff /
 // writeFailureTelemetry / top-level abort handoff、issue #607）に対応する 3 run で挙動確認する。
-// journal-save 系 prompt に埋め込まれる telemetry JSON（JSON.stringify 出力、空白なし）を対象にする。
+// journal-log 系 prompt に埋め込まれる telemetry JSON（JSON.stringify 出力、空白なし）を対象にする。
 
-test('[workflow-name] VM: 成功 run の journal-save prompt JSON が "skill":"dev-flow" を含む', async () => {
+test('[workflow-name] VM: 成功 run の journal-log prompt JSON が "skill":"dev-flow" を含む', async () => {
   const { ctx, calls } = makeDevFlowSandbox();
   const { error } = await runWorkflowCapture(devFlowSrc, ctx);
   assertNoCrash(error, 'workflow-name-success');
   if (error) assert.fail(`成功 run が想定外に throw した: ${error.message}`);
 
-  const journalSave = calls.find((c) => c.label === 'journal-save');
-  assert.ok(journalSave != null, '成功 run に journal-save の call が見つからない');
+  const journalSave = calls.find((c) => c.label.startsWith('journal-log'));
+  assert.ok(journalSave != null, '成功 run に journal-log の call が見つからない');
   assert.ok(
     journalSave.prompt.includes('"skill":"dev-flow"'),
-    `成功 run の journal-save prompt に '"skill":"dev-flow"' が含まれない。\nprompt (先頭800文字): ${journalSave.prompt.slice(0, 800)}`,
+    `成功 run の journal-log prompt に '"skill":"dev-flow"' が含まれない。\nprompt (先頭800文字): ${journalSave.prompt.slice(0, 800)}`,
   );
 });
 
-test('[workflow-name] VM: empty-diff 失敗 run の journal-save 系 prompt JSON が "skill":"dev-flow" を含む', async () => {
+test('[workflow-name] VM: empty-diff 失敗 run の journal-log 系 prompt JSON が "skill":"dev-flow" を含む', async () => {
   const { ctx, calls } = makeDevFlowSandbox({
     overrides: {
       'diff-gate': { hash: 'H', empty: true },
@@ -80,18 +80,18 @@ test('[workflow-name] VM: empty-diff 失敗 run の journal-save 系 prompt JSON
   });
   const { error } = await runWorkflowCapture(devFlowSrc, ctx);
   // empty-diff gate は 1 回の差し戻し後も空 diff なら throw する（fail-fast、issue #215）。
-  // writeFailureTelemetry（journal-save 呼び出し）は throw の直前に実行済みなので calls に残る。
+  // writeFailureTelemetry（journal-log 呼び出し）は throw の直前に実行済みなので calls に残る。
   assert.ok(error !== null, 'empty-diff 失敗 run は throw するはずだが error が null だった');
 
-  const journalSave = calls.find((c) => c.label === 'journal-save');
-  assert.ok(journalSave != null, 'empty-diff 失敗 run に journal-save の call が見つからない');
+  const journalSave = calls.find((c) => c.label.startsWith('journal-log'));
+  assert.ok(journalSave != null, 'empty-diff 失敗 run に journal-log の call が見つからない');
   assert.ok(
     journalSave.prompt.includes('"skill":"dev-flow"'),
-    `empty-diff 失敗 run の journal-save prompt に '"skill":"dev-flow"' が含まれない。\nprompt (先頭800文字): ${journalSave.prompt.slice(0, 800)}`,
+    `empty-diff 失敗 run の journal-log prompt に '"skill":"dev-flow"' が含まれない。\nprompt (先頭800文字): ${journalSave.prompt.slice(0, 800)}`,
   );
 });
 
-test('[workflow-name] VM: abort run の journal-save 系 prompt JSON が "skill":"dev-flow" かつ "error_category":"abort" を含む', async () => {
+test('[workflow-name] VM: abort run の journal-log 系 prompt JSON が "skill":"dev-flow" かつ "error_category":"abort" を含む', async () => {
   // need() で包まれた evaluator（'eval#1'）の throw は top-level catch で abort handoff 後に rethrow される。
   const { ctx, calls } = makeDevFlowSandbox({
     overrides: { 'eval#1': () => { throw new Error('injected') } },
@@ -99,15 +99,15 @@ test('[workflow-name] VM: abort run の journal-save 系 prompt JSON が "skill"
   const { error } = await runWorkflowCapture(devFlowSrc, ctx);
   assert.ok(error !== null, 'eval#1 の throw は top-level catch で abort handoff 後に rethrow されるはずだが error が null だった');
 
-  const journalSave = calls.find((c) => c.label === 'journal-save');
-  assert.ok(journalSave != null, 'abort run に journal-save の call が見つからない');
+  const journalSave = calls.find((c) => c.label.startsWith('journal-log'));
+  assert.ok(journalSave != null, 'abort run に journal-log の call が見つからない');
   assert.ok(
     journalSave.prompt.includes('"skill":"dev-flow"'),
-    `abort run の journal-save prompt に '"skill":"dev-flow"' が含まれない。\nprompt (先頭800文字): ${journalSave.prompt.slice(0, 800)}`,
+    `abort run の journal-log prompt に '"skill":"dev-flow"' が含まれない。\nprompt (先頭800文字): ${journalSave.prompt.slice(0, 800)}`,
   );
   assert.ok(
     journalSave.prompt.includes('"error_category":"abort"'),
-    `abort run の journal-save prompt に '"error_category":"abort"' が含まれない。\nprompt (先頭800文字): ${journalSave.prompt.slice(0, 800)}`,
+    `abort run の journal-log prompt に '"error_category":"abort"' が含まれない。\nprompt (先頭800文字): ${journalSave.prompt.slice(0, 800)}`,
   );
 });
 

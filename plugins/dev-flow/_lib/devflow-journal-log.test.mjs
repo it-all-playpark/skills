@@ -31,13 +31,10 @@ const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
  * @param {object} journalResult - journal-log stub が返すレスポンス（ログ成功/失敗を切り替え）
  * @returns {{ ctx: vm.Context, getJournalCallCount: () => number, getJournalPrompts: () => string[] }}
  */
-function makeSandbox(analyzeReq, journalResult, journalSaveResult, evaluatorOverrides) {
-  // journal-log (stage2) 呼び出しカウンタ
+function makeSandbox(analyzeReq, journalResult, evaluatorOverrides) {
+  // journal-log 呼び出しカウンタ（issue #807: payload を pending/ へ直接書く 1 spawn）
   let journalCallCount = 0;
-  // journal-save (stage1) 呼び出しカウンタ・実際の telemetry payload はここに載る
-  let journalSaveCallCount = 0;
   const journalPrompts = [];
-  const journalLogPrompts = [];
 
   // agent() stub: opts.label / opts.agentType を見て phase 別に最小スキーマを返す
   const agentStub = async (prompt, opts) => {
@@ -100,18 +97,11 @@ function makeSandbox(analyzeReq, journalResult, journalSaveResult, evaluatorOver
     if (label === 'post-summary' && agentType === 'dev-flow:dev-runner-haiku') {
       return { posted: true, method: 'gh pr comment', url: 'http://x' };
     }
-    // journal-save (stage1, issue #494): 実際の telemetry payload はここに載る。saved:true を
-    // 返して journal-log (stage2) へ進めさせる。
-    if (label === 'journal-save' && agentType === 'dev-flow:dev-runner-haiku') {
-      journalSaveCallCount += 1;
-      journalPrompts.push(prompt);
-      return journalSaveResult ?? { saved: true, path: '/tmp/wt/.devflow-tmp/payload-test.json' };
-    }
-    // journal-log (stage2): 呼び出しカウンタをインクリメントし journalResult を返す。
-    // journalResult が Error なら throw する（schema 不一致・proxy 実行失敗の再現）。
+    // journal-log: 実際の telemetry payload はここに載る。呼び出しカウンタをインクリメントし
+    // journalResult を返す。journalResult が Error なら throw する（schema 不一致・proxy 実行失敗の再現）。
     if (label === 'journal-log' && agentType === 'dev-flow:dev-runner-haiku') {
       journalCallCount += 1;
-      journalLogPrompts.push(prompt);
+      journalPrompts.push(prompt);
       if (journalResult instanceof Error) throw journalResult;
       return journalResult;
     }
@@ -166,9 +156,7 @@ function makeSandbox(analyzeReq, journalResult, journalSaveResult, evaluatorOver
   return {
     ctx,
     getJournalCallCount: () => journalCallCount,
-    getJournalSaveCallCount: () => journalSaveCallCount,
     getJournalPrompts: () => journalPrompts,
-    getJournalLogPrompts: () => journalLogPrompts,
   };
 }
 
@@ -219,9 +207,9 @@ const ANALYZE_REQ = {
 
 const src = readFileSync(devFlowPath, 'utf8');
 
-test('[journal-log] AC#1 (issue #494): Merge tier phase 後に journal-save→journal-log の 2 段呼び出しがそれぞれ 1 回発生し、journal-save prompt に handoff JSON キー、journal-log prompt に pending パスが含まれること', async () => {
-  const journalResult = { logged: true, summary: 'ok' };
-  const { ctx, getJournalCallCount, getJournalSaveCallCount, getJournalPrompts, getJournalLogPrompts } = makeSandbox(ANALYZE_REQ, journalResult);
+test('[journal-log] AC#1 (issue #807): Merge tier phase 後に journal-log が 1 spawn だけ発生し、その prompt に handoff JSON キーと pending パスが含まれること', async () => {
+  const journalResult = { saved: true, logged: true };
+  const { ctx, getJournalCallCount, getJournalPrompts } = makeSandbox(ANALYZE_REQ, journalResult);
 
   const { result, error } = await runDevFlowCapture(src, ctx);
 
@@ -230,21 +218,13 @@ test('[journal-log] AC#1 (issue #494): Merge tier phase 後に journal-save→jo
     assert.fail(`dev-flow.js が sandbox でクラッシュ: ${error.name}: ${error.message}`);
   }
 
-  // journal-save 呼び出しカウント === 1
-  assert.equal(
-    getJournalSaveCallCount(),
-    1,
-    `journal-save dev-runner-haiku の呼び出しは 1 回であるべきだが ${getJournalSaveCallCount()} 回だった`,
-  );
-  // journal-log 呼び出しカウント === 1
+  // journal-log 呼び出しカウント === 1（payload の一時ファイルを書く journal-save spawn は無い）
   assert.equal(
     getJournalCallCount(),
     1,
     `journal-log dev-runner-haiku の呼び出しは 1 回であるべきだが ${getJournalCallCount()} 回だった`,
   );
 
-  // issue #494: 結論値リテラル（outcome 等）と journal/pending 呼び出し語彙が同一 prompt に
-  // 同居しないよう、handoff JSON の必須キーは journal-save (stage1) の prompt に載る。
   const savePrompt = getJournalPrompts()[0] ?? '';
   const requiredKeys = [
     '"merge_tier"',
@@ -260,21 +240,14 @@ test('[journal-log] AC#1 (issue #494): Merge tier phase 後に journal-save→jo
   for (const key of requiredKeys) {
     assert.ok(
       savePrompt.includes(key),
-      `journal-save prompt に '${key}' が含まれるべきだが含まれていなかった。prompt:\n${savePrompt}`,
+      `journal-log prompt に '${key}' が含まれるべきだが含まれていなかった。prompt:\n${savePrompt}`,
     );
   }
-  // journal/pending 呼び出し語彙・結論値は journal-log (stage2) の prompt には現れない
-  // （payload literal を含まないファイルパス渡し）。pending パスのみ journal-log 側に現れる。
-  const logPrompt = getJournalLogPrompts()[0] ?? '';
   assert.ok(
-    logPrompt.includes('.claude/journal/pending/'),
-    `journal-log prompt に '.claude/journal/pending/' が含まれるべきだが含まれていなかった。prompt:\n${logPrompt}`,
+    savePrompt.includes('.claude/journal/pending/devflow-1-effect-'),
+    `journal-log prompt に pending パスが含まれるべきだが含まれていなかった。prompt:\n${savePrompt}`,
   );
-  assert.ok(
-    !logPrompt.includes('"outcome":"success"'),
-    `journal-log prompt に結論値リテラル '"outcome":"success"' が含まれるべきではないが含まれていた。prompt:\n${logPrompt}`,
-  );
-  // journal-log が logged:true を返すため result.journal_log_status は 3 値 closed enum のうち 'logged'
+  // journal-log が {saved:true, logged:true} を返すため result.journal_log_status は 3 値 closed enum のうち 'logged'
   assert.equal(
     result?.journal_log_status,
     'logged',
@@ -282,9 +255,9 @@ test('[journal-log] AC#1 (issue #494): Merge tier phase 後に journal-save→jo
   );
 });
 
-test('[journal-log] AC#3: journal-log stub が logged:false を返しても result.merge_tier が正常 return され journal_log_status が log_failed になること', async () => {
-  // ログ失敗をシミュレート: logged:false（「記録失敗でも workflow return 成功」仕様の回帰検出）
-  const journalResult = { logged: false, summary: 'failed' };
+test('[journal-log] AC#3: journal-log stub が saved:true / logged:false を返しても result.merge_tier が正常 return され journal_log_status が log_failed になること', async () => {
+  // ログ失敗をシミュレート: Write を試みたが失敗（「記録失敗でも workflow return 成功」仕様の回帰検出）
+  const journalResult = { saved: true, logged: false };
   const { ctx } = makeSandbox(ANALYZE_REQ, journalResult);
 
   const { result, error } = await runDevFlowCapture(src, ctx);
@@ -313,10 +286,9 @@ test('[journal-log] AC#3: journal-log stub が logged:false を返しても resu
   );
 });
 
-test('[journal-log] AC#4: journal-save が saved:false を返す場合 journal-log(stage2) は呼ばれず result.journal_log_status が save_failed になること', async () => {
-  const journalResult = { logged: true, summary: 'ok' };
-  const journalSaveResult = { saved: false };
-  const { ctx, getJournalCallCount, getJournalSaveCallCount } = makeSandbox(ANALYZE_REQ, journalResult, journalSaveResult);
+test('[journal-log] AC#4: journal-log が saved:false を返す場合 result.journal_log_status が save_failed になること', async () => {
+  const journalResult = { saved: false, logged: false };
+  const { ctx, getJournalCallCount } = makeSandbox(ANALYZE_REQ, journalResult);
 
   const { result, error } = await runDevFlowCapture(src, ctx);
 
@@ -325,32 +297,26 @@ test('[journal-log] AC#4: journal-save が saved:false を返す場合 journal-l
   }
 
   assert.equal(
-    getJournalSaveCallCount(),
-    1,
-    `journal-save の呼び出しは 1 回であるべきだが ${getJournalSaveCallCount()} 回だった`,
-  );
-  assert.equal(
     getJournalCallCount(),
-    0,
-    `journal-save が saved:false を返す場合 journal-log(stage2) は呼ばれないはずだが ${getJournalCallCount()} 回呼ばれた`,
+    1,
+    `journal-log の呼び出しは 1 回であるべきだが ${getJournalCallCount()} 回だった`,
   );
   assert.equal(
     result?.journal_log_status,
     'save_failed',
-    `journal-save が saved:false を返す場合 result.journal_log_status は 'save_failed' のはずだが '${result?.journal_log_status}' だった`,
+    `journal-log が saved:false を返す場合 result.journal_log_status は 'save_failed' のはずだが '${result?.journal_log_status}' だった`,
   );
 });
 
-// stage 帰属テスト: stage1 成功 → stage2 が throw（StructuredOutput 未返却・schema 不一致等）した
-// 場合、失敗したのは stage2 なので log_failed でなければならない。save_failed に落ちると
-// 「payload の保存に失敗した」という誤った診断を telemetry 利用側へ伝えることになる。
-test('[journal-log] stage1 成功後に journal-log(stage2) が throw した場合 result.journal_log_status は log_failed（save_failed に誤帰属しない）', async () => {
+// 帰属テスト: journal-log が throw（StructuredOutput 未返却・schema 不一致等）した場合は Write 到達の
+// 申告が無いので save_failed に倒れ、run は落ちない（fail-open）。
+test('[journal-log] journal-log が throw した場合 run は完走し result.journal_log_status は save_failed（Write 到達の申告なし）', async () => {
   // issue #527/#533: trackedAgent のリトライは `opts.retryOnContractViolation === true` の
-  // opt-in call site 限定で、journal-save/journal-log の call site はいずれも opt-in していない
+  // opt-in call site 限定で、journal-log の call site は opt-in していない
   // ため 'without calling StructuredOutput' を含む throw でもリトライされない。ここでは
   // 意図を明確にするため exec-proxy 実行失敗を示す別メッセージ（call count=1 想定に影響しない）を使う。
   const journalResult = new Error('exec-proxy 実行失敗: EPERM');
-  const { ctx, getJournalCallCount, getJournalSaveCallCount } = makeSandbox(ANALYZE_REQ, journalResult);
+  const { ctx, getJournalCallCount } = makeSandbox(ANALYZE_REQ, journalResult);
 
   const { result, error } = await runDevFlowCapture(src, ctx);
 
@@ -358,20 +324,19 @@ test('[journal-log] stage1 成功後に journal-log(stage2) が throw した場�
     assert.fail(`dev-flow.js が sandbox でクラッシュ: ${error.name}: ${error.message}`);
   }
 
-  assert.equal(getJournalSaveCallCount(), 1);
   assert.equal(getJournalCallCount(), 1);
-  // fail-open: stage2 の throw は workflow を落とさない
-  assert.ok(result != null, 'journal-log(stage2) の throw で workflow が落ちてはならない（fail-open）');
+  // fail-open: journal-log の throw は workflow を落とさない
+  assert.ok(result != null, 'journal-log の throw で workflow が落ちてはならない（fail-open）');
   assert.equal(
     result?.journal_log_status,
-    'log_failed',
-    `stage2 throw 時 result.journal_log_status は 'log_failed' のはずだが '${result?.journal_log_status}' だった`,
+    'save_failed',
+    `journal-log throw 時 result.journal_log_status は 'save_failed' のはずだが '${result?.journal_log_status}' だった`,
   );
 });
 
 // inline 区間整合: journal handoff の choreography は canonical（_lib/journal-handoff.mjs）の inline 区間にのみ
 // 存在し、call site 側に手写しが残っていないこと（否定 pin）。call site の label（journal-log /
-// journal-log-failure）と 2 段 handoff の挙動は上の VM テストと exec-proxy-routing.test.mjs が観測する。
+// journal-log-failure）と handoff の挙動は上の VM テストと exec-proxy-routing.test.mjs が観測する。
 test('[journal-log] inline 整合: dev-flow.js の inline 区間外に journal handoff choreography の手写しが残っていない', () => {
   const anchor = src.indexOf('==== END inline: _lib/journal-handoff.mjs ====');
   assert.ok(anchor >= 0, 'journal-handoff inline END marker が見つからない');
@@ -380,9 +345,9 @@ test('[journal-log] inline 整合: dev-flow.js の inline 区間外に journal h
 
 // issue #561 AC-3: evaluator が confidence を返すケース/省略するケースの両方で run が abort しない。
 // confidence は telemetry に書かない（残す 12 キーに含まれない）。
-test('[journal-log] issue #561: evaluator が confidence:0.8 を返す run は abort せず、journal-save prompt に eval_confidence を書かない', async () => {
-  const journalResult = { logged: true, summary: 'ok' };
-  const { ctx, getJournalPrompts } = makeSandbox(ANALYZE_REQ, journalResult, undefined, { confidence: 0.8 });
+test('[journal-log] issue #561: evaluator が confidence:0.8 を返す run は abort せず、journal-log prompt に eval_confidence を書かない', async () => {
+  const journalResult = { saved: true, logged: true };
+  const { ctx, getJournalPrompts } = makeSandbox(ANALYZE_REQ, journalResult, { confidence: 0.8 });
 
   const { result, error } = await runDevFlowCapture(src, ctx);
 
@@ -392,15 +357,15 @@ test('[journal-log] issue #561: evaluator が confidence:0.8 を返す run は a
   assert.ok(result != null, 'evaluator confidence あり run は abort してはならない');
 
   const savePrompt = getJournalPrompts()[0] ?? '';
-  assert.ok(savePrompt.includes('"merge_tier"'), `journal-save prompt に handoff payload が無い。prompt:\n${savePrompt}`);
+  assert.ok(savePrompt.includes('"merge_tier"'), `journal-log prompt に handoff payload が無い。prompt:\n${savePrompt}`);
   assert.ok(
     !savePrompt.includes('"eval_confidence"'),
-    `journal-save prompt に削除済み telemetry キー '"eval_confidence"' が含まれていた。prompt:\n${savePrompt}`,
+    `journal-log prompt に削除済み telemetry キー '"eval_confidence"' が含まれていた。prompt:\n${savePrompt}`,
   );
 });
 
 test('[journal-log] issue #561: evaluator が confidence を省略する run は abort しない', async () => {
-  const journalResult = { logged: true, summary: 'ok' };
+  const journalResult = { saved: true, logged: true };
   const { ctx, getJournalPrompts } = makeSandbox(ANALYZE_REQ, journalResult);
 
   const { result, error } = await runDevFlowCapture(src, ctx);
@@ -409,5 +374,5 @@ test('[journal-log] issue #561: evaluator が confidence を省略する run は
     assert.fail(`dev-flow.js が sandbox でクラッシュ: ${error.name}: ${error.message}`);
   }
   assert.ok(result != null, 'evaluator confidence 省略 run は abort してはならない（optional 契約）');
-  assert.equal(getJournalPrompts().length, 1, 'confidence 省略 run でも journal-save は 1 回呼ばれる');
+  assert.equal(getJournalPrompts().length, 1, 'confidence 省略 run でも journal-log は 1 回呼ばれる');
 });

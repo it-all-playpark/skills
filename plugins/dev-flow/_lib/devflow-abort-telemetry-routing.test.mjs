@@ -4,7 +4,7 @@
 // buildAbortHandoffPayload の単一形（outcome:'failure' + error_category:'abort'）の journal entry
 // を 1 件残し、fail-open（handoff 自体の失敗が元の例外の rethrow を妨げない）であることを
 // VM sandbox で検証する。makeSandbox / runDevFlowInSandbox は devflow-failure-telemetry-routing
-// test.mjs の パターンを踏襲し、throwAt / journalSaveThrows / journal-log-abort stub を追加する。
+// test.mjs の パターンを踏襲し、throwAt / journalLogAbortThrows / journal-log-abort stub を追加する。
 
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
@@ -23,7 +23,7 @@ const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
 const REALIZED_FILES = ['src/a.ts', 'src/b.ts', 'src/c.ts'];
 
 function makeSandbox({
-  analyzeReq, implementerFn, diffGateConfig, throwAt, journalSaveThrows, journalLogAbortResult,
+  analyzeReq, implementerFn, diffGateConfig, throwAt, journalLogAbortThrows, journalLogAbortResult,
   workflowThrows, args,
 } = {}) {
   const calls = [];
@@ -53,14 +53,11 @@ function makeSandbox({
     }
     if (label.startsWith('pr')) return { pr_url: 'http://x', pr_number: 1, committed: true };
     if (label === 'post-summary') return { posted: true, method: 'gh pr comment', url: 'http://x' };
-    if (label === 'journal-save' && agentType === 'dev-flow:dev-runner-haiku') {
-      if (journalSaveThrows) throw new Error('journal-save boom');
-      return { saved: true, path: '/tmp/wt/.devflow-tmp/payload-test.json' };
-    }
-    if (label === 'journal-log' && agentType === 'dev-flow:dev-runner-haiku') return { logged: true, summary: 'ok' };
-    if (label === 'journal-log-failure') return { logged: true, summary: 'ok' };
+    if (label === 'journal-log' && agentType === 'dev-flow:dev-runner-haiku') return { saved: true, logged: true };
+    if (label === 'journal-log-failure') return { saved: true, logged: true };
     if (label === 'journal-log-abort') {
-      return journalLogAbortResult !== undefined ? journalLogAbortResult : { logged: true, summary: 'ok' };
+      if (journalLogAbortThrows) throw new Error('journal-log-abort boom');
+      return journalLogAbortResult !== undefined ? journalLogAbortResult : { saved: true, logged: true };
     }
     if (label === 'diff-gate') return { hash: gateEmpty ? 'EMPTY' : 'H', empty: gateEmpty };
     if (label === 'diff-gate-retry') return { hash: retryEmpty ? 'EMPTY' : 'H', empty: retryEmpty };
@@ -150,8 +147,10 @@ test('[abort-telemetry] (1) Validate で diff-gate proxy が throw → abort ent
   assert.ok(String(error?.message ?? '').includes('proxy boom'),
     `(1) error.message に 'proxy boom' を含むべきだが: ${error?.message}`);
 
-  const saveCalls = calls.filter((c) => c.label === 'journal-save' && c.agentType === 'dev-flow:dev-runner-haiku');
-  assert.equal(saveCalls.length, 1, `(1) journal-save は 1 回のはずだが ${saveCalls.length} 回だった`);
+  // abort handoff は payload を pending/ へ直接書く journal-log-abort の 1 spawn（issue #807）。
+  assert.equal(calls.filter((c) => c.label === 'journal-save').length, 0, '(1) journal-save spawn は起動しない');
+  const saveCalls = calls.filter((c) => c.label === 'journal-log-abort' && c.agentType === 'dev-flow:dev-runner-haiku');
+  assert.equal(saveCalls.length, 1, `(1) journal-log-abort は 1 回のはずだが ${saveCalls.length} 回だった`);
 
   const savePrompt = saveCalls[0]?.prompt ?? '';
   for (const key of [
@@ -160,27 +159,21 @@ test('[abort-telemetry] (1) Validate で diff-gate proxy が throw → abort ent
     '"plugin_version"', '"eval_model_config":"opus"',
   ]) {
     assert.ok(savePrompt.includes(key),
-      `(1) journal-save prompt に '${key}' が含まれるべきだが含まれていなかった。prompt:\n${savePrompt.slice(0, 800)}`);
+      `(1) journal-log-abort prompt に '${key}' が含まれるべきだが含まれていなかった。prompt:\n${savePrompt.slice(0, 800)}`);
   }
   // phase/label は error_phase と error_msg に載る。telemetry には複製しない（残す 12 キー以外を書かない）。
   for (const key of ['"abort_phase"', '"abort_label"', '"eval_iter"', '"gate_policy"', '"subagent_invocations"']) {
     assert.ok(!savePrompt.includes(key),
-      `(1) journal-save prompt に削除済み telemetry キー '${key}' が含まれていた。prompt:\n${savePrompt.slice(0, 800)}`);
+      `(1) journal-log-abort prompt に削除済み telemetry キー '${key}' が含まれていた。prompt:\n${savePrompt.slice(0, 800)}`);
   }
   // 実効 shape は Security floor（realized diff 取得後）で確定する（issue #676）。Validate の abort は確定前なので
   // shape キーを載せない。
   assert.ok(!savePrompt.includes('"shape"'),
-    `(1) 実効 shape 確定前の abort では journal-save prompt に '"shape"' キーを含むべきではないが含まれていた。prompt:\n${savePrompt.slice(0, 800)}`);
-  assert.ok(savePrompt.includes('/tmp/wt/.devflow-tmp/payload-devflow-1-abort.json'),
-    `(1) journal-save prompt に savePath が含まれるべきだが含まれていなかった。prompt:\n${savePrompt.slice(0, 800)}`);
-
-  const logCalls = calls.filter((c) => c.label === 'journal-log-abort' && c.agentType === 'dev-flow:dev-runner-haiku');
-  assert.equal(logCalls.length, 1, `(1) journal-log-abort は 1 回のはずだが ${logCalls.length} 回だった`);
-  const logPrompt = logCalls[0]?.prompt ?? '';
-  assert.ok(logPrompt.includes('/tmp/wt/.devflow-tmp/payload-devflow-1-abort.json'),
-    `(1) journal-log-abort prompt に savePath が含まれるべきだが含まれていなかった。prompt:\n${logPrompt.slice(0, 800)}`);
-  assert.ok(!logPrompt.includes('"error_category"'),
-    `(1) journal-log-abort prompt に結論値リテラル '"error_category"' が含まれるべきではないが含まれていた。prompt:\n${logPrompt.slice(0, 800)}`);
+    `(1) 実効 shape 確定前の abort では journal-log-abort prompt に '"shape"' キーを含むべきではないが含まれていた。prompt:\n${savePrompt.slice(0, 800)}`);
+  assert.ok(savePrompt.includes('~/.claude/journal/pending/devflow-1-effect-'),
+    `(1) journal-log-abort prompt に pending パスが含まれるべきだが含まれていなかった。prompt:\n${savePrompt.slice(0, 800)}`);
+  assert.ok(!savePrompt.includes('.devflow-tmp'),
+    `(1) journal-log-abort prompt は payload の一時ファイルを経由してはならない。prompt:\n${savePrompt.slice(0, 800)}`);
 
   const failureCalls = calls.filter((c) => c.label === 'journal-log-failure');
   assert.equal(failureCalls.length, 0, `(1) journal-log-failure は 0 回のはずだが ${failureCalls.length} 回だった`);
@@ -200,8 +193,8 @@ test('[abort-telemetry] (2) Evaluate で evaluator が throw → abort entry 1 �
   assert.ok(String(error?.message ?? '').includes('evaluator boom'),
     `(2) error.message に 'evaluator boom' を含むべきだが: ${error?.message}`);
 
-  const saveCalls = calls.filter((c) => c.label === 'journal-save' && c.agentType === 'dev-flow:dev-runner-haiku');
-  assert.equal(saveCalls.length, 1, `(2) journal-save は 1 回のはずだが ${saveCalls.length} 回だった`);
+  const saveCalls = calls.filter((c) => c.label === 'journal-log-abort' && c.agentType === 'dev-flow:dev-runner-haiku');
+  assert.equal(saveCalls.length, 1, `(2) journal-log-abort は 1 回のはずだが ${saveCalls.length} 回だった`);
 
   const savePrompt = saveCalls[0]?.prompt ?? '';
   for (const key of [
@@ -209,14 +202,14 @@ test('[abort-telemetry] (2) Evaluate で evaluator が throw → abort entry 1 �
     '"shape":"standard"',
   ]) {
     assert.ok(savePrompt.includes(key),
-      `(2) journal-save prompt に '${key}' が含まれるべきだが含まれていなかった。prompt:\n${savePrompt.slice(0, 800)}`);
+      `(2) journal-log-abort prompt に '${key}' が含まれるべきだが含まれていなかった。prompt:\n${savePrompt.slice(0, 800)}`);
   }
 });
 
 // ============================================================
 // (3) Setup（WT 未確定）で worktree agent が throw
 // ============================================================
-test('[abort-telemetry] (3) Setup で args.setup.ok が false → WT 未確定のため tilde savePath へ退避し shape キー欠落', async () => {
+test('[abort-telemetry] (3) Setup で args.setup.ok が false → WT 未確定でも pending/ へ直接書き shape キー欠落', async () => {
   const { ctx, calls } = makeSandbox({
     analyzeReq: STANDARD_ANALYZE_REQ,
     args: devFlowArgs(1, { ok: false, base_error: 'prerun boom' }),
@@ -225,28 +218,31 @@ test('[abort-telemetry] (3) Setup で args.setup.ok が false → WT 未確定�
 
   assert.ok(error !== null, '(3) args.setup.ok:false で workflow が abort すべきだが error が null だった');
 
-  const saveCalls = calls.filter((c) => c.label === 'journal-save' && c.agentType === 'dev-flow:dev-runner-haiku');
-  assert.equal(saveCalls.length, 1, `(3) journal-save は 1 回のはずだが ${saveCalls.length} 回だった`);
+  const saveCalls = calls.filter((c) => c.label === 'journal-log-abort' && c.agentType === 'dev-flow:dev-runner-haiku');
+  assert.equal(saveCalls.length, 1, `(3) journal-log-abort は 1 回のはずだが ${saveCalls.length} 回だった`);
 
+  // 書き込み先は worktree に依存しない pending/ パスなので、WT 未確定でも退避先を別に用意しない。
   const savePrompt = saveCalls[0]?.prompt ?? '';
-  assert.ok(savePrompt.includes('~/.claude/journal/abort-payload/payload-devflow-1-abort.json'),
-    `(3) journal-save prompt に tilde savePath が含まれるべきだが含まれていなかった。prompt:\n${savePrompt.slice(0, 800)}`);
+  assert.ok(savePrompt.includes('~/.claude/journal/pending/devflow-1-effect-'),
+    `(3) journal-log-abort prompt に pending パスが含まれるべきだが含まれていなかった。prompt:\n${savePrompt.slice(0, 800)}`);
+  assert.ok(!savePrompt.includes('abort-payload'),
+    `(3) journal-log-abort prompt は payload の退避ファイルを経由してはならない。prompt:\n${savePrompt.slice(0, 800)}`);
   assert.ok(savePrompt.includes('abort@Setup/prerun-setup: dev-flow: args.setup.ok が true でない'),
-    `(3) journal-save prompt に error_msg が含まれるべきだが含まれていなかった。prompt:\n${savePrompt.slice(0, 800)}`);
+    `(3) journal-log-abort prompt に error_msg が含まれるべきだが含まれていなかった。prompt:\n${savePrompt.slice(0, 800)}`);
   assert.ok(!savePrompt.includes('"shape"'),
-    `(3) shape 未確定のため journal-save prompt に '"shape"' キーを含むべきではないが含まれていた。prompt:\n${savePrompt.slice(0, 800)}`);
+    `(3) shape 未確定のため journal-log-abort prompt に '"shape"' キーを含むべきではないが含まれていた。prompt:\n${savePrompt.slice(0, 800)}`);
   assert.ok(savePrompt.includes('"plugin_version"'),
-    `(3) journal-save prompt に '"plugin_version"' が含まれるべきだが含まれていなかった。prompt:\n${savePrompt.slice(0, 800)}`);
+    `(3) journal-log-abort prompt に '"plugin_version"' が含まれるべきだが含まれていなかった。prompt:\n${savePrompt.slice(0, 800)}`);
 });
 
 // ============================================================
-// (4) fail-open: journal-save 自体が throw しても元の例外は変わらない
+// (4) fail-open: journal-log-abort 自体が throw しても元の例外は変わらない
 // ============================================================
-test('[abort-telemetry] (4) fail-open: journal-save stub が throw しても元の例外(proxy boom)を rethrow し journal-log-abort は 0 回', async () => {
+test('[abort-telemetry] (4) fail-open: journal-log-abort stub が throw しても元の例外(proxy boom)を rethrow する', async () => {
   const { ctx, calls } = makeSandbox({
     analyzeReq: COMPLEX_ANALYZE_REQ,
     throwAt: { label: 'diff-gate', error: new Error('proxy boom') },
-    journalSaveThrows: true,
+    journalLogAbortThrows: true,
   });
   const { error } = await runDevFlowInSandbox(src, ctx);
 
@@ -255,7 +251,7 @@ test('[abort-telemetry] (4) fail-open: journal-save stub が throw しても元�
     `(4) handoff 自体の失敗で元の例外が置き換わってはならないが: ${error?.message}`);
 
   const logCalls = calls.filter((c) => c.label === 'journal-log-abort');
-  assert.equal(logCalls.length, 0, `(4) journal-save が失敗した場合 journal-log-abort は 0 回のはずだが ${logCalls.length} 回だった`);
+  assert.equal(logCalls.length, 1, `(4) journal-log-abort は 1 回のはずだが ${logCalls.length} 回だった`);
 });
 
 // ============================================================
@@ -271,9 +267,6 @@ test('[abort-telemetry] (5) empty_diff throw は writeFailureTelemetry が記録
   assert.ok(error !== null, '(5) empty-diff gate で throw すべきだが error が null だった');
   assert.ok(String(error?.message ?? '').includes('empty-diff gate'),
     `(5) error.message に 'empty-diff gate' を含むべきだが: ${error?.message}`);
-
-  const saveCalls = calls.filter((c) => c.label === 'journal-save' && c.agentType === 'dev-flow:dev-runner-haiku');
-  assert.equal(saveCalls.length, 1, `(5) journal-save は 1 回のみのはずだが ${saveCalls.length} 回だった`);
 
   const logAbortCalls = calls.filter((c) => c.label === 'journal-log-abort');
   assert.equal(logAbortCalls.length, 0, `(5) journal-log-abort は 0 回のはずだが ${logAbortCalls.length} 回だった`);
@@ -317,15 +310,15 @@ test('[abort-telemetry] (7) nested workflow(pr-iterate) が throw → abort entr
   assert.ok(String(error?.message ?? '').includes('pr-iterate boom'),
     `(7) error.message に 'pr-iterate boom' を含むべきだが: ${error?.message}`);
 
-  const saveCalls = calls.filter((c) => c.label === 'journal-save' && c.agentType === 'dev-flow:dev-runner-haiku');
-  assert.equal(saveCalls.length, 1, `(7) journal-save は 1 回のはずだが ${saveCalls.length} 回だった`);
+  const saveCalls = calls.filter((c) => c.label === 'journal-log-abort' && c.agentType === 'dev-flow:dev-runner-haiku');
+  assert.equal(saveCalls.length, 1, `(7) journal-log-abort は 1 回のはずだが ${saveCalls.length} 回だった`);
 
   const savePrompt = saveCalls[0]?.prompt ?? '';
   for (const key of [
     '"error_msg":"abort@PR/pr-iterate: pr-iterate boom"', '"error_phase":"PR"',
   ]) {
     assert.ok(savePrompt.includes(key),
-      `(7) journal-save prompt に '${key}' が含まれるべきだが含まれていなかった（直前 trackedAgent の label が残っている可能性）。prompt:\n${savePrompt.slice(0, 800)}`);
+      `(7) journal-log-abort prompt に '${key}' が含まれるべきだが含まれていなかった（直前 trackedAgent の label が残っている可能性）。prompt:\n${savePrompt.slice(0, 800)}`);
   }
 });
 

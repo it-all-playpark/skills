@@ -1,6 +1,3 @@
-// issue #636 P2 pin 整理 (inventory 用):
-// (削除) L211/L216 '既に存在する場合' — 同 test の Read tool includes / Read→Write 順序 pin は残置
-// (削除) L617 'throw せず' — 同 test の {logged:false}/{logged:true} JSON 値 pin は残置
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
@@ -10,18 +7,17 @@ import os from 'node:os';
 
 import {
   ABORT_ERROR_CATEGORY,
+  JOURNAL_HANDOFF_RESULT,
   JOURNAL_LOG_STATUSES,
   buildAbortErrorMsg,
   buildAbortHandoffPayload,
   buildJournalHandoffPayload,
-  buildJournalLogInstr,
   buildJournalPendingPath,
-  buildJournalSaveInstr,
+  buildJournalPendingWriteInstr,
   classifyJournalLogStatus,
   journalEffectId,
   repoFromGithubUrl,
   runJournalHandoff,
-  validateJournalSavedPath,
 } from './journal-handoff.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -46,7 +42,7 @@ const EDGE_CASE_PAYLOAD = JSON.stringify({
   },
 });
 
-// AC-1/AC-2: exercise the stage2 naming + verbatim-copy contract against a scratch journal dir
+// exercise the pending/ naming + verbatim-write contract against a scratch journal dir
 // (not just the literal instruction string).
 function withScratchJournalDir(fn) {
   const dir = mkdtempSync(join(os.tmpdir(), 'journal-handoff-'));
@@ -57,27 +53,25 @@ function withScratchJournalDir(fn) {
   }
 }
 
-function writeTempPayloadFile(content) {
-  const dir = mkdtempSync(join(os.tmpdir(), 'journal-handoff-payload-'));
-  const file = join(dir, 'payload.json');
-  writeFileSync(file, content, 'utf8');
-  return { dir, file };
-}
-
 const PENDING_PREFIX = '~/.claude/journal/pending/';
+const BODY_RE = /<<<JOURNAL_HANDOFF_BODY_BEGIN>>>\n([\s\S]*?)\n<<<JOURNAL_HANDOFF_BODY_END>>>/;
 
-// Simulates the agent step described by buildJournalLogInstr: Read the payload file, then Write
-// its content verbatim to the JS-determined pending path. stage2 carries no shell any more, so
-// what is under test is the naming contract (stable effect ID derived from the payload) plus the
-// verbatim copy. The `~` prefix — expanded by the Write tool in production — is rebased onto a
-// scratch dir so the test never touches the real journal.
-function simulateStage2({ prefix, id, payloadFile, journalDir }) {
-  const payload = readFileSync(payloadFile, 'utf8');
-  const pendingPath = buildJournalPendingPath({ prefix, id, effectId: journalEffectId(payload) });
+// Simulates the agent step described by buildJournalPendingWriteInstr: take the delimited body
+// and the backtick-quoted pending path out of the instruction itself, then Write the body
+// verbatim there. Driving the simulation from the instruction string (not from the JS inputs)
+// pins that the single spawn carries everything the write needs — there is no intermediate
+// payload file to read. The `~` prefix — expanded by the Write tool in production — is rebased
+// onto a scratch dir so the test never touches the real journal.
+function simulateHandoffWrite({ instr, journalDir }) {
+  const body = instr.match(BODY_RE);
+  assert.ok(body, 'instruction に JOURNAL_HANDOFF_BODY delimiter が無い');
+  const pathMatch = instr.match(/`(~\/\.claude\/journal\/pending\/[^`]+)`/);
+  assert.ok(pathMatch, `instruction に pending パスが無い: ${instr}`);
+  const pendingPath = pathMatch[1];
   assert.ok(pendingPath.startsWith(PENDING_PREFIX), `pending パスの接頭辞が変わっている: ${pendingPath}`);
   const rebased = join(journalDir, 'pending', pendingPath.slice(PENDING_PREFIX.length));
   mkdirSync(dirname(rebased), { recursive: true });
-  writeFileSync(rebased, payload, 'utf8');
+  writeFileSync(rebased, body[1], 'utf8');
   return rebased;
 }
 
@@ -172,312 +166,87 @@ test('repoFromGithubUrl returns null for non-GitHub or malformed input', () => {
   assert.equal(repoFromGithubUrl('https://example.com/a/b'), null);
 });
 
-// ---- buildJournalSaveInstr (stage1) ----
+// ---- buildJournalPendingWriteInstr ----
 
-const SAVE_PATH = '/wt/.devflow-tmp/payload-devflow-494.json';
-const SHELL_DIR = '${TMPDIR:-/tmp}/no-worktree';
-
-test('buildJournalSaveInstr (savePath) embeds the payload verbatim between JOURNAL_HANDOFF_BODY delimiters, including Japanese/backtick/nested-escaped-JSON edge cases', () => {
-  const instr = buildJournalSaveInstr({ payload: EDGE_CASE_PAYLOAD, savePath: SAVE_PATH });
-  const match = instr.match(/<<<JOURNAL_HANDOFF_BODY_BEGIN>>>\n([\s\S]*?)\n<<<JOURNAL_HANDOFF_BODY_END>>>/);
+test('buildJournalPendingWriteInstr embeds the payload verbatim between JOURNAL_HANDOFF_BODY delimiters, including Japanese/backtick/nested-escaped-JSON edge cases', () => {
+  const instr = buildJournalPendingWriteInstr({ prefix: 'devflow', id: 807, payload: EDGE_CASE_PAYLOAD });
+  const match = instr.match(BODY_RE);
   assert.ok(match, 'expected instr to contain the delimited payload block');
   assert.equal(match[1], EDGE_CASE_PAYLOAD);
 });
 
-test('buildJournalSaveInstr (saveDir) embeds the payload verbatim between JOURNAL_HANDOFF_BODY delimiters', () => {
-  const instr = buildJournalSaveInstr({ payload: EDGE_CASE_PAYLOAD, saveDir: SHELL_DIR, fileName: 'payload-no-worktree.json' });
-  const match = instr.match(/<<<JOURNAL_HANDOFF_BODY_BEGIN>>>\n([\s\S]*?)\n<<<JOURNAL_HANDOFF_BODY_END>>>/);
-  assert.ok(match, 'expected instr to contain the delimited payload block');
-  assert.equal(match[1], EDGE_CASE_PAYLOAD);
+test('buildJournalPendingWriteInstr targets the JS-determined pending path derived from the payload', () => {
+  const payload = '{"skill":"dev-flow","outcome":"success"}';
+  const instr = buildJournalPendingWriteInstr({ prefix: 'devflow', id: 807, payload });
+  assert.ok(instr.includes(`\`${buildJournalPendingPath({ prefix: 'devflow', id: 807, effectId: journalEffectId(payload) })}\``));
 });
 
-test('buildJournalSaveInstr instructs Write tool usage and forbids passing the payload through shell', () => {
-  for (const instr of [
-    buildJournalSaveInstr({ payload: '{"ok":true}', savePath: SAVE_PATH }),
-    buildJournalSaveInstr({ payload: '{"ok":true}', saveDir: SHELL_DIR, fileName: 'payload-no-worktree.json' }),
-  ]) {
-    assert.ok(instr.includes('Write tool'));
-    assert.ok(instr.includes('echo'));
-    assert.ok(instr.includes('printf'));
-    assert.ok(instr.includes('heredoc'));
-  }
+test('buildJournalPendingWriteInstr instructs Write tool usage and forbids passing the payload through shell', () => {
+  const instr = buildJournalPendingWriteInstr({ prefix: 'devflow', id: 807, payload: '{"ok":true}' });
+  assert.ok(instr.includes('Write tool'));
+  assert.ok(instr.includes('echo'));
+  assert.ok(instr.includes('printf'));
+  assert.ok(instr.includes('heredoc'));
+  assert.ok(instr.includes('**Bash は使うな**'));
 });
 
 // issue #498 review: Write tool refuses to overwrite an existing file it hasn't Read in the
-// same session. savePath / saveDir fileName are fixed across runs (worktree reuse, TMPDIR
-// persistence), so a stale payload from a prior run makes stage1 deterministically
-// save_failed unless the instruction tells the agent to Read-then-Write (same idempotency
-// pattern as isolationProbePrompt, issue #482).
-test('buildJournalSaveInstr instructs a Read-before-overwrite idempotency step for both modes', () => {
-  const savePathInstr = buildJournalSaveInstr({ payload: '{"ok":true}', savePath: SAVE_PATH });
-  assert.ok(savePathInstr.includes('Read tool'));
-  assert.ok(/Read tool[\s\S]*Write tool/.test(savePathInstr), 'Read の指示は Write の指示より前に現れるべき');
-
-  const saveDirInstr = buildJournalSaveInstr({ payload: '{"ok":true}', saveDir: SHELL_DIR, fileName: 'payload-no-worktree.json' });
-  assert.ok(saveDirInstr.includes('Read tool'));
-  assert.ok(/Read tool[\s\S]*Write tool/.test(saveDirInstr), 'Read の指示は Write の指示より前に現れるべき');
+// same session. The pending file name is stable for an identical payload (effect ID), so a rerun
+// with the same payload deterministically fails to write unless the instruction tells the agent
+// to Read-then-Write (same idempotency pattern as isolationProbePrompt, issue #482).
+test('buildJournalPendingWriteInstr instructs a Read-before-overwrite idempotency step', () => {
+  const instr = buildJournalPendingWriteInstr({ prefix: 'devflow', id: 807, payload: '{"ok":true}' });
+  assert.ok(instr.includes('Read tool'));
+  assert.ok(/Read tool[\s\S]*Write tool/.test(instr), 'Read の指示は Write の指示より前に現れるべき');
 });
 
-// payloadPath は stage2 の Read tool パスへ splice されるため、呼び出し側の検証規律に依存せず
-// buildJournalLogInstr 自身でも同じ決定論検証を通す（将来の呼び出し側が検証を忘れても
-// 未検証 splice が復活しない）。
-test('buildJournalLogInstr throws when payloadPath violates the payload path contract', () => {
-  for (const bad of [
-    'relative/payload-x.json',
-    '/wt/.devflow-tmp/telemetry.json',
-    '/wt/.devflow-tmp/payload-x.json; rm -rf /',
-    '/wt/../.devflow-tmp/payload-x.json',
-    '',
-    null,
-    undefined,
-  ]) {
-    assert.throws(
-      () => buildJournalLogInstr({ prefix: 'devflow', id: 494, payloadPath: bad }),
-      /invalid payloadPath/,
-      `payloadPath=${JSON.stringify(bad ?? null)} は reject されるべき`,
-    );
-  }
-});
-
-test('buildJournalLogInstr accepts a contract-conforming payloadPath and splices it into the stage2 instruction', () => {
-  const instr = buildJournalLogInstr({ prefix: 'devflow', id: 494, payloadPath: SAVE_PATH, payload: '{"skill":"dev-flow"}' });
-  assert.ok(instr.includes(SAVE_PATH));
-  assert.ok(!instr.includes('<PAYLOAD_FILE>'));
-});
-
-test('buildJournalSaveInstr throws when payload is null', () => {
-  assert.throws(
-    () => buildJournalSaveInstr({ payload: null, savePath: SAVE_PATH }),
-    /payload is required/,
-  );
-});
-
-// savePath モード（dev-flow / pr-iterate）: 保存先が JS 側で確定しているので shell を一切使わない。
-// Bash 依存を残すと、repo 配下を Bash から書けない環境（skills repo の自己改変ガードは worktree 配下も
-// 含めて deny する）で保存コマンドが EPERM になり、agent が別ディレクトリへ退避して保存先検証に落ちる。
-test('buildJournalSaveInstr (savePath) pins the absolute path and uses no shell', () => {
-  const instr = buildJournalSaveInstr({ payload: '{"ok":true}', savePath: SAVE_PATH });
-  assert.ok(instr.includes(SAVE_PATH));
-  assert.ok(instr.includes('Write tool'));
-  assert.ok(!instr.includes('mktemp'), 'savePath モードでは一時ファイル生成コマンドを使ってはならない');
-  assert.ok(!instr.includes('mkdir -p'), 'savePath モードでは mkdir -p を使ってはならない');
-  assert.ok(!instr.includes('<PAYLOAD_FILE>'), 'savePath モードではパスが確定しているため placeholder は残らない');
-});
-
-// savePath は stage2 の bash コマンドへそのまま splice されるので、申告値と同じ決定論検証を
-// 構築時点でも通す。
-test('buildJournalSaveInstr throws when savePath violates the payload path contract', () => {
-  for (const bad of [
-    'relative/payload-x.json',
-    '/wt/.devflow-tmp/telemetry.json',
-    '/wt/.devflow-tmp/payload-x.txt',
-    '/wt/../.devflow-tmp/payload-x.json',
-    '/wt/.devflow-tmp/payload-x.json; rm -rf /',
-    '',
-  ]) {
-    assert.throws(
-      () => buildJournalSaveInstr({ payload: '{}', savePath: bad }),
-      /invalid savePath/,
-      `savePath=${JSON.stringify(bad)} は reject されるべき`,
-    );
-  }
-});
-
-// issue #607: WT-unconfirmed abort path retargets savePath to a tilde path under
-// ~/.claude/journal/ — buildJournalSaveInstr must accept it (via validateJournalSavedPath) and
-// splice it verbatim, not throw.
-test('buildJournalSaveInstr (savePath) accepts a tilde savePath under ~/.claude/journal/', () => {
-  const savePath = '~/.claude/journal/abort-payload/payload-devflow-1-abort.json';
-  const instr = buildJournalSaveInstr({ payload: '{"ok":true}', savePath });
-  assert.ok(instr.includes(savePath));
-});
-
-test('buildJournalSaveInstr (savePath) still throws for a tilde savePath outside ~/.claude/journal/', () => {
-  assert.throws(
-    () => buildJournalSaveInstr({ payload: '{}', savePath: '~/x/payload-1.json' }),
-    /invalid savePath/,
-  );
-});
-
-test('buildJournalSaveInstr throws when both savePath and saveDir are given', () => {
-  assert.throws(
-    () => buildJournalSaveInstr({ payload: '{}', savePath: SAVE_PATH, saveDir: SHELL_DIR, fileName: 'payload-no-worktree.json' }),
-    /同時に指定できません/,
-  );
-});
-
-test('buildJournalSaveInstr throws when neither savePath nor saveDir is given', () => {
-  assert.throws(
-    () => buildJournalSaveInstr({ payload: '{}' }),
-    /savePath か saveDir/,
-  );
-});
-
-// saveDir モード（worktree を持たない呼び出し元）: 保存先が shell 展開に依存するので絶対パスは shell に組み立てさせるが、
-// ファイル名は固定。mktemp テンプレート payload-XXXXXX.json は X 列が suffix の前にあるため BSD
-// mktemp では展開されずリテラル名のファイルを exit 0 で作り、一意性が silent に失われる。
-test('buildJournalSaveInstr (saveDir) resolves the path via shell with a fixed file name and never uses mktemp', () => {
-  const instr = buildJournalSaveInstr({ payload: '{"ok":true}', saveDir: SHELL_DIR, fileName: 'payload-no-worktree.json' });
-  assert.ok(instr.includes('mkdir -p "${TMPDIR:-/tmp}/no-worktree"'));
-  assert.ok(instr.includes('"${TMPDIR:-/tmp}/no-worktree/payload-no-worktree.json"'));
-  assert.ok(!instr.includes('mktemp'), 'mktemp は BSD でテンプレートを展開しないため使ってはならない');
-  assert.ok(!instr.includes('XXXXXX'), 'mktemp テンプレートは残っていてはならない');
-});
-
-test('buildJournalSaveInstr (saveDir) throws when fileName violates the payload-*.json contract', () => {
-  for (const bad of ['telemetry.json', 'payload-x.txt', '../payload-x.json', '', undefined]) {
-    assert.throws(
-      () => buildJournalSaveInstr({ payload: '{}', saveDir: SHELL_DIR, fileName: bad }),
-      /invalid fileName/,
-      `fileName=${JSON.stringify(bad ?? null)} は reject されるべき`,
-    );
-  }
-});
-
-
-// ---- validateJournalSavedPath ----
-
-test('validateJournalSavedPath accepts an absolute payload path under the required dir suffix', () => {
-  assert.equal(
-    validateJournalSavedPath('/wt/.devflow-tmp/payload-abc123.json', { requiredDirSuffix: '/.devflow-tmp' }),
-    true,
-  );
-});
-
-test('validateJournalSavedPath accepts an absolute payload path with no requiredDirSuffix constraint', () => {
-  assert.equal(validateJournalSavedPath('/tmp/x/payload-a1.json', {}), true);
-  assert.equal(validateJournalSavedPath('/tmp/x/payload-a1.json'), true);
-});
-
-test('validateJournalSavedPath rejects a relative path', () => {
-  assert.equal(validateJournalSavedPath('wt/.devflow-tmp/payload-abc123.json', {}), false);
-});
-
-test('validateJournalSavedPath rejects a path containing ..', () => {
-  assert.equal(validateJournalSavedPath('/wt/.devflow-tmp/../payload-abc123.json', {}), false);
-});
-
-test('validateJournalSavedPath rejects shell metacharacters', () => {
-  assert.equal(validateJournalSavedPath('/tmp/payload-a b.json', {}), false);
-  assert.equal(validateJournalSavedPath('/tmp/payload-a;rm.json', {}), false);
-  assert.equal(validateJournalSavedPath('/tmp/payload-a$(x).json', {}), false);
-  assert.equal(validateJournalSavedPath('/tmp/payload-a`x`.json', {}), false);
-  assert.equal(validateJournalSavedPath('/tmp/payload-a"x".json', {}), false);
-});
-
-test('validateJournalSavedPath rejects a dir suffix mismatch', () => {
-  assert.equal(
-    validateJournalSavedPath('/wt/other-dir/payload-abc123.json', { requiredDirSuffix: '/.devflow-tmp' }),
-    false,
-  );
-});
-
-test('validateJournalSavedPath rejects a path not ending in .json', () => {
-  assert.equal(validateJournalSavedPath('/tmp/payload-abc123.txt', {}), false);
-});
-
-test('validateJournalSavedPath rejects a basename not matching the payload- pattern', () => {
-  assert.equal(validateJournalSavedPath('/tmp/other-abc123.json', {}), false);
-  assert.equal(validateJournalSavedPath('/tmp/payload.json', {}), false);
-});
-
-test('validateJournalSavedPath rejects non-string input', () => {
-  assert.equal(validateJournalSavedPath(null, {}), false);
-  assert.equal(validateJournalSavedPath(undefined, {}), false);
-  assert.equal(validateJournalSavedPath(42, {}), false);
-});
-
-// issue #607: dev-flow's WT-unconfirmed abort path (Setup's args.setup validation via prerun-setup) has no
-// worktree savePath yet, so the abort catch retargets savePath to
-// `~/.claude/journal/abort-payload/...`. validateJournalSavedPath must accept that tilde-rooted
-// path (rebasing it onto the same absolute-path/charset/'..'/basename checks as `/`-rooted paths)
-// while continuing to reject anything outside the fixed `~/.claude/journal/` prefix — the same
-// function also guards the saveDir-mode agent-reported path, so widening tilde
-// acceptance to `~/` in general would widen that injection guard too.
-test('validateJournalSavedPath accepts a tilde path rooted at ~/.claude/journal/', () => {
-  assert.equal(
-    validateJournalSavedPath('~/.claude/journal/abort-payload/payload-devflow-607-abort.json'),
-    true,
-  );
-});
-
-test('validateJournalSavedPath rejects tilde paths outside the ~/.claude/journal/ prefix', () => {
-  assert.equal(validateJournalSavedPath('~/x/.devflow-tmp/payload-1.json'), false);
-  assert.equal(validateJournalSavedPath('~/.claude/journalx/payload-1.json'), false);
-  assert.equal(validateJournalSavedPath('~/.claude/journal/../evil/payload-1.json'), false);
-});
-
-test('validateJournalSavedPath applies requiredDirSuffix to tilde paths the same as absolute paths', () => {
-  const path = '~/.claude/journal/abort-payload/payload-devflow-607-abort.json';
-  assert.equal(validateJournalSavedPath(path, { requiredDirSuffix: '/abort-payload' }), true);
-  assert.equal(validateJournalSavedPath(path, { requiredDirSuffix: '/.devflow-tmp' }), false);
-});
-
-// ---- buildJournalLogInstr (stage2) ----
-
-test('buildJournalLogInstr embeds the source payload path and the JS-determined pending path, and keeps the fail-open contract', () => {
-  const payloadPath = '/wt/.devflow-tmp/payload-abc123.json';
-  const payload = '{"skill":"dev-flow","outcome":"success"}';
-  const instr = buildJournalLogInstr({ prefix: 'devflow', id: 433, payloadPath, payload });
-  assert.ok(!instr.includes('<PAYLOAD_FILE>'));
-  assert.ok(instr.includes(payloadPath));
-  assert.ok(instr.includes(buildJournalPendingPath({ prefix: 'devflow', id: 433, effectId: journalEffectId(payload) })));
-  assert.ok(instr.includes('logged:false'));
-});
-
-// issue #526 regression pin: stage2 の指示に shell 構文が 1 つでも戻ると、EnterWorktree 済み
+// issue #526 regression pin: 指示に shell 構文が 1 つでも戻ると、EnterWorktree 済み
 // セッションの worktree 分離ガードに `too complex to verify that it stays inside the worktree`
 // で拒否され、dev-flow / pr-iterate のテレメトリが再び全損する（2026-08-20〜28 の実害）。
-// 「Write tool のみで書く」という stage2 の性質を、生成文字列の側から機械的に固定する。
-test('buildJournalLogInstr (issue #526) emits no shell constructs — stage2 writes through the Write tool only', () => {
-  const instr = buildJournalLogInstr({
-    prefix: 'devflow',
-    id: 526,
-    payloadPath: '/wt/.devflow-tmp/payload-abc123.json',
-    payload: EDGE_CASE_PAYLOAD,
-  });
+// 「Write tool のみで書く」という性質を、生成文字列の側から機械的に固定する。payload 本文は
+// shell へ渡らない data なので、delimiter 区間を除いた指示文だけを検査する。
+test('buildJournalPendingWriteInstr (issue #526) emits no shell constructs outside the payload body — writes through the Write tool only', () => {
+  const instr = buildJournalPendingWriteInstr({ prefix: 'devflow', id: 526, payload: EDGE_CASE_PAYLOAD });
+  const outsideBody = instr.replace(BODY_RE, '');
   for (const shellToken of ['$(', '&&', '||', '>/dev/null', '${', '|', 'mktemp', 'shasum', 'mkdir ', 'mv ', 'cp ', 'jq ']) {
     assert.ok(
-      !instr.includes(shellToken),
-      `stage2 の指示に shell 構文 '${shellToken}' が含まれている: ${instr}`,
+      !outsideBody.includes(shellToken),
+      `指示に shell 構文 '${shellToken}' が含まれている: ${outsideBody}`,
     );
   }
-  assert.ok(instr.includes('Write tool'));
-  assert.ok(instr.includes('Read tool'));
 });
 
-// stage2 は payload 本文を prompt に載せない（結論値がこの prompt へ構造的に現れない）。
-// payload を引数に取るのは書き込み先ファイル名の effect ID 算出のためだけである。
-test('buildJournalLogInstr never embeds the payload body in the stage2 prompt', () => {
-  const instr = buildJournalLogInstr({
-    prefix: 'devflow',
-    id: 433,
-    payloadPath: '/wt/.devflow-tmp/payload-abc123.json',
-    payload: EDGE_CASE_PAYLOAD,
-  });
-  assert.ok(!instr.includes(EDGE_CASE_PAYLOAD));
-  assert.ok(!instr.includes('"outcome":"success"'));
-  assert.ok(!instr.includes('日本語テスト名の検証'));
+// fail-open 契約: どの手順で失敗しても throw せず {saved, logged} を返す。呼び出し側はこれを
+// classifyJournalLogStatus で save_failed / log_failed として観測できる。
+test('buildJournalPendingWriteInstr keeps the fail-open contract — never throw, report {saved, logged}', () => {
+  const instr = buildJournalPendingWriteInstr({ prefix: 'devflow', id: 526, payload: '{"ok":true}' });
+  assert.ok(instr.includes('saved:true'));
+  assert.ok(instr.includes('saved:false'));
+  assert.ok(instr.includes('logged:true'));
+  assert.ok(instr.includes('logged:false'));
+  assert.ok(instr.includes('{saved, logged}'));
 });
 
-// issue #607: the WT-unconfirmed abort path's payloadPath is a tilde path under
-// ~/.claude/journal/ — buildJournalLogInstr must accept it and splice it verbatim into the Read
-// instruction (same as any other validateJournalSavedPath-accepted path).
-test('buildJournalLogInstr splices a tilde payloadPath under ~/.claude/journal/ into the Read instruction', () => {
-  const payloadPath = '~/.claude/journal/abort-payload/payload-devflow-1-abort.json';
-  const instr = buildJournalLogInstr({ prefix: 'devflow', id: 1, payloadPath, payload: '{"ok":true}' });
-  assert.ok(instr.includes(payloadPath));
-});
-
-test('buildJournalLogInstr throws when payload is missing or not a string', () => {
-  const payloadPath = '/wt/.devflow-tmp/payload-abc123.json';
+test('buildJournalPendingWriteInstr throws when payload is missing or not a string', () => {
   for (const bad of [undefined, null, '', 42, {}]) {
     assert.throws(
-      () => buildJournalLogInstr({ prefix: 'devflow', id: 433, payloadPath, payload: bad }),
+      () => buildJournalPendingWriteInstr({ prefix: 'devflow', id: 807, payload: bad }),
       /payload is required/,
       `payload=${JSON.stringify(bad ?? null)} は reject されるべき`,
     );
   }
+});
+
+test('buildJournalPendingWriteInstr rejects unsafe prefix / id before splicing them into the Write path', () => {
+  assert.throws(() => buildJournalPendingWriteInstr({ prefix: 'bad/prefix', id: 807, payload: '{}' }), /invalid prefix/);
+  assert.throws(() => buildJournalPendingWriteInstr({ prefix: 'devflow', id: '807;rm', payload: '{}' }), /invalid id/);
+});
+
+test('JOURNAL_HANDOFF_RESULT requires both saved and logged booleans', () => {
+  assert.equal(JOURNAL_HANDOFF_RESULT.type, 'object');
+  assert.deepEqual(JOURNAL_HANDOFF_RESULT.required, ['saved', 'logged']);
+  assert.deepEqual(JOURNAL_HANDOFF_RESULT.properties.saved, { type: 'boolean' });
+  assert.deepEqual(JOURNAL_HANDOFF_RESULT.properties.logged, { type: 'boolean' });
 });
 
 // ---- classifyJournalLogStatus ----
@@ -532,99 +301,59 @@ test('journalEffectId is deterministic, 16 lowercase hex, and separates payloads
   assert.notEqual(journalEffectId('あ'), journalEffectId('B'));
 });
 
-test('AC-1/AC-2: the stage2 copy against a real payload file produces exactly one valid-JSON effect file matching the payload', () => {
+test('the handoff write against the real instruction produces exactly one valid-JSON effect file matching the payload', () => {
   withScratchJournalDir((journalDir) => {
-    const { dir, file } = writeTempPayloadFile(EDGE_CASE_PAYLOAD);
-    try {
-      simulateStage2({ prefix: 'devflow', id: 433, payloadFile: file, journalDir });
+    simulateHandoffWrite({ instr: buildJournalPendingWriteInstr({ prefix: 'devflow', id: 433, payload: EDGE_CASE_PAYLOAD }), journalDir });
 
-      const files = listPending(journalDir);
-      assert.equal(files.length, 1);
-      assert.match(files[0], /^devflow-433-effect-[0-9a-f]{16}\.json$/);
-      const content = readFileSync(join(journalDir, 'pending', files[0]), 'utf8');
-      assert.equal(content, EDGE_CASE_PAYLOAD);
-      assert.doesNotThrow(() => JSON.parse(content));
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+    const files = listPending(journalDir);
+    assert.equal(files.length, 1);
+    assert.match(files[0], /^devflow-433-effect-[0-9a-f]{16}\.json$/);
+    const content = readFileSync(join(journalDir, 'pending', files[0]), 'utf8');
+    assert.equal(content, EDGE_CASE_PAYLOAD);
+    assert.doesNotThrow(() => JSON.parse(content));
   });
 });
 
-test('AC-1/AC-2: re-running stage2 with an identical payload file does not create a duplicate entry (idempotent overwrite)', () => {
+test('re-running the handoff write with an identical payload does not create a duplicate entry (idempotent overwrite)', () => {
   withScratchJournalDir((journalDir) => {
     const payload = '{"skill":"dev-flow","outcome":"success","issue":412}';
-    const { dir, file } = writeTempPayloadFile(payload);
-    try {
-      simulateStage2({ prefix: 'devflow', id: 412, payloadFile: file, journalDir });
-      const firstListing = listPending(journalDir);
-      simulateStage2({ prefix: 'devflow', id: 412, payloadFile: file, journalDir });
-      const secondListing = listPending(journalDir);
+    const instr = buildJournalPendingWriteInstr({ prefix: 'devflow', id: 412, payload });
+    simulateHandoffWrite({ instr, journalDir });
+    const firstListing = listPending(journalDir);
+    simulateHandoffWrite({ instr, journalDir });
+    const secondListing = listPending(journalDir);
 
-      assert.equal(firstListing.length, 1);
-      assert.deepEqual(secondListing, firstListing);
-      const content = readFileSync(join(journalDir, 'pending', secondListing[0]), 'utf8');
-      assert.equal(content, payload);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+    assert.equal(firstListing.length, 1);
+    assert.deepEqual(secondListing, firstListing);
+    const content = readFileSync(join(journalDir, 'pending', secondListing[0]), 'utf8');
+    assert.equal(content, payload);
   });
 });
 
-test('AC-1/AC-2: a different payload for the same prefix/id produces a distinct effect file (no collision)', () => {
+test('a different payload for the same prefix/id produces a distinct effect file (no collision)', () => {
   withScratchJournalDir((journalDir) => {
-    const a = writeTempPayloadFile('{"skill":"dev-flow","outcome":"success"}');
-    const b = writeTempPayloadFile('{"skill":"dev-flow","outcome":"failure"}');
-    try {
-      simulateStage2({ prefix: 'devflow', id: 412, payloadFile: a.file, journalDir });
-      simulateStage2({ prefix: 'devflow', id: 412, payloadFile: b.file, journalDir });
+    simulateHandoffWrite({ instr: buildJournalPendingWriteInstr({ prefix: 'devflow', id: 412, payload: '{"skill":"dev-flow","outcome":"success"}' }), journalDir });
+    simulateHandoffWrite({ instr: buildJournalPendingWriteInstr({ prefix: 'devflow', id: 412, payload: '{"skill":"dev-flow","outcome":"failure"}' }), journalDir });
 
-      const files = listPending(journalDir).sort();
-      assert.equal(files.length, 2);
-      assert.notEqual(files[0], files[1]);
-    } finally {
-      rmSync(a.dir, { recursive: true, force: true });
-      rmSync(b.dir, { recursive: true, force: true });
-    }
+    const files = listPending(journalDir).sort();
+    assert.equal(files.length, 2);
+    assert.notEqual(files[0], files[1]);
   });
 });
 
-test('AC-1/AC-2: stage2 writes a single plain *.json entry (no dot-prefixed or non-json leftovers)', () => {
+test('the handoff write leaves a single plain *.json entry (no dot-prefixed or non-json leftovers)', () => {
   withScratchJournalDir((journalDir) => {
-    const { dir, file } = writeTempPayloadFile('{"skill":"pr-iterate","outcome":"success"}');
-    try {
-      simulateStage2({ prefix: 'priterate', id: 99, payloadFile: file, journalDir });
+    simulateHandoffWrite({ instr: buildJournalPendingWriteInstr({ prefix: 'priterate', id: 99, payload: '{"skill":"pr-iterate","outcome":"success"}' }), journalDir });
 
-      const files = listPending(journalDir);
-      assert.ok(files.every((f) => !f.startsWith('.')));
-      assert.ok(files.every((f) => f.endsWith('.json')));
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+    const files = listPending(journalDir);
+    assert.ok(files.every((f) => !f.startsWith('.')));
+    assert.ok(files.every((f) => f.endsWith('.json')));
   });
 });
 
-// issue #526: `jq -e` による pending/ 書き込み前の JSON 検証は shell と一緒に無くなった。
-// 壊れた payload は pending/ に届いたうえで Stop hook（stop-devflow-telemetry.sh）が
-// malformed/ へ隔離し、replay runbook で回収する経路に移った。ここで固定するのは
-// 「stage2 が失敗しても throw せず logged:false を返す」という fail-open 契約のみで、
-// 呼び出し側はこれを log_failed として観測できる（classifyJournalLogStatus のテスト参照）。
-test('AC3 (issue #526): the stage2 instruction keeps the fail-open contract — never throw, report logged:false', () => {
-  const instr = buildJournalLogInstr({
-    prefix: 'devflow',
-    id: 526,
-    payloadPath: '/wt/.devflow-tmp/payload-abc123.json',
-    payload: '{"skill":"dev-flow","outcome":"success"}',
-  });
-  assert.ok(instr.includes('{logged:false}'));
-  assert.ok(instr.includes('{logged:true}'));
-});
+// ---- runJournalHandoff (deps-injected single-spawn choreography, issue #807) ----
 
-// ---- runJournalHandoff (F2/AC5/AC7: deps-injected 2-stage choreography) ----
-
-const HANDOFF_SAVE_PATH = '/wt/.devflow-tmp/payload-devflow-556.json';
 const HANDOFF_PAYLOAD = '{"skill":"dev-flow","outcome":"success"}';
-const HANDOFF_SAVE_SCHEMA = { type: 'object', properties: { saved: { type: 'boolean' } } };
-const HANDOFF_LOG_SCHEMA = { type: 'object', properties: { logged: { type: 'boolean' } } };
 
 function makeStubAgent(responders) {
   const calls = [];
@@ -642,147 +371,135 @@ function makeStubLog() {
   return { log: (msg) => messages.push(msg), messages };
 }
 
-test('runJournalHandoff (happy path) saves then logs and returns logged, calling agent twice with the expected labels/agentType/phase', async () => {
-  const { agent, calls } = makeStubAgent({
-    'journal-save': async () => ({ saved: true, path: HANDOFF_SAVE_PATH }),
-    'journal-log-failure': async () => ({ logged: true, summary: 'ok' }),
-  });
-  const { log } = makeStubLog();
-
+async function runHandoffWith(responder, overrides = {}) {
+  const { agent, calls } = makeStubAgent({ 'journal-log-failure': responder });
+  const { log, messages } = makeStubLog();
   const status = await runJournalHandoff({
     agent,
     log,
-    saveSchema: HANDOFF_SAVE_SCHEMA,
-    logSchema: HANDOFF_LOG_SCHEMA,
     payload: HANDOFF_PAYLOAD,
-    savePath: HANDOFF_SAVE_PATH,
     prefix: 'devflow',
-    id: 556,
-    subject: 'dev-flow 失敗',
+    id: 807,
     logLabel: 'journal-log-failure',
     phase: 'Setup',
+    ...overrides,
   });
+  return { status, calls, messages };
+}
+
+// AC-1: 1 spawn（dev-runner-haiku）で payload を pending/ のパスへ一字一句そのまま Write させる。
+// 一時ファイルを経由しないので、spawn の prompt だけで書き込みが完結することを、prompt から
+// 実際に書き出した内容で確認する。
+test('runJournalHandoff spawns exactly one dev-runner-haiku agent whose prompt alone writes the payload verbatim to pending/', async () => {
+  const { status, calls } = await runHandoffWith(async () => ({ saved: true, logged: true }), { payload: EDGE_CASE_PAYLOAD });
 
   assert.equal(status, 'logged');
-  assert.equal(calls.length, 2);
-  assert.equal(calls[0].opts.label, 'journal-save');
+  assert.equal(calls.length, 1);
   assert.equal(calls[0].opts.agentType, 'dev-runner-haiku');
+  assert.equal(calls[0].opts.label, 'journal-log-failure');
   assert.equal(calls[0].opts.phase, 'Setup');
-  assert.equal(calls[0].opts.schema, HANDOFF_SAVE_SCHEMA);
-  assert.equal(calls[1].opts.label, 'journal-log-failure');
-  assert.equal(calls[1].opts.agentType, 'dev-runner-haiku');
-  assert.equal(calls[1].opts.phase, 'Setup');
-  assert.equal(calls[1].opts.schema, HANDOFF_LOG_SCHEMA);
+  assert.equal(calls[0].opts.schema, JOURNAL_HANDOFF_RESULT);
 
-  assert.ok(calls[0].prompt.includes(HANDOFF_PAYLOAD));
-  assert.ok(calls[0].prompt.includes(HANDOFF_SAVE_PATH));
+  const pendingPath = buildJournalPendingPath({ prefix: 'devflow', id: 807, effectId: journalEffectId(EDGE_CASE_PAYLOAD) });
+  assert.ok(calls[0].prompt.includes(pendingPath));
+  assert.ok(!calls[0].prompt.includes('.devflow-tmp'), 'payload の一時ファイルを経由してはならない');
 
-  const pendingPath = buildJournalPendingPath({ prefix: 'devflow', id: 556, effectId: journalEffectId(HANDOFF_PAYLOAD) });
-  assert.ok(calls[1].prompt.includes(pendingPath));
+  withScratchJournalDir((journalDir) => {
+    simulateHandoffWrite({ instr: calls[0].prompt, journalDir });
+    const files = listPending(journalDir);
+    assert.equal(files.length, 1);
+    assert.equal(readFileSync(join(journalDir, 'pending', files[0]), 'utf8'), EDGE_CASE_PAYLOAD);
+  });
 });
 
-test('runJournalHandoff returns save_failed and never calls stage2 when stage1 reports saved:false', async () => {
-  const { agent, calls } = makeStubAgent({
-    'journal-save': async () => ({ saved: false }),
-    'journal-log-failure': async () => { throw new Error('stage2 should not be called'); },
-  });
-  const { log } = makeStubLog();
+// AC-2: 統合 spawn の申告 {saved, logged} から 3 値を帰属できる（issue #499 の段の区別を保つ）。
+test('runJournalHandoff returns log_failed and warns when the spawn reports the write was attempted but failed (saved:true, logged:false)', async () => {
+  const { status, calls, messages } = await runHandoffWith(async () => ({ saved: true, logged: false }));
+  assert.equal(status, 'log_failed');
+  assert.equal(calls.length, 1);
+  assert.ok(messages.some((m) => m.includes('log_failed')), `log dep に log_failed の警告が無い: ${JSON.stringify(messages)}`);
+});
 
-  const status = await runJournalHandoff({
-    agent,
-    log,
-    saveSchema: HANDOFF_SAVE_SCHEMA,
-    logSchema: HANDOFF_LOG_SCHEMA,
-    payload: HANDOFF_PAYLOAD,
-    savePath: HANDOFF_SAVE_PATH,
-    prefix: 'devflow',
-    id: 556,
-    subject: 'dev-flow 失敗',
-    logLabel: 'journal-log-failure',
-    phase: 'Setup',
-  });
-
+test('runJournalHandoff returns save_failed and warns when the spawn reports the write was never attempted (saved:false)', async () => {
+  const { status, calls, messages } = await runHandoffWith(async () => ({ saved: false, logged: false }));
   assert.equal(status, 'save_failed');
   assert.equal(calls.length, 1);
+  assert.ok(messages.some((m) => m.includes('save_failed')), `log dep に save_failed の警告が無い: ${JSON.stringify(messages)}`);
 });
 
-test('runJournalHandoff returns log_failed and warns via the log dep when stage2 reports logged:false', async () => {
-  const { agent } = makeStubAgent({
-    'journal-save': async () => ({ saved: true, path: HANDOFF_SAVE_PATH }),
-    'journal-log-failure': async () => ({ logged: false }),
-  });
-  const { log, messages } = makeStubLog();
-
-  const status = await runJournalHandoff({
-    agent,
-    log,
-    saveSchema: HANDOFF_SAVE_SCHEMA,
-    logSchema: HANDOFF_LOG_SCHEMA,
-    payload: HANDOFF_PAYLOAD,
-    savePath: HANDOFF_SAVE_PATH,
-    prefix: 'devflow',
-    id: 556,
-    subject: 'dev-flow 失敗',
-    logLabel: 'journal-log-failure',
-    phase: 'Setup',
-  });
-
-  assert.equal(status, 'log_failed');
-  assert.ok(messages.length >= 1, 'log dep should have been called with a warning');
+// saved が true でない申告は logged の値に関係なく save_failed（書き込み試行に到達していない段を
+// logged / log_failed へ昇格させない）。
+test('runJournalHandoff never promotes a report without saved:true to logged', async () => {
+  const { status } = await runHandoffWith(async () => ({ saved: false, logged: true }));
+  assert.equal(status, 'save_failed');
 });
 
-// AC7 順序 pin: stage2 呼び出し直前に journalLogStatus を log_failed へ倒す preset が
-// canonical 側で保証されていることを、stage2 responder が throw するケースで固定する。
-// preset が無いと catch 節で 'save_failed'（初期値）のまま返ってしまい、実際の失敗段
-// （stage2）と観測 status が食い違う（issue #499）。
-test('runJournalHandoff (AC7 order pin) returns log_failed — not save_failed — when stage2 responder throws, and the throw never escapes', async () => {
-  const { agent, calls } = makeStubAgent({
-    'journal-save': async () => ({ saved: true, path: HANDOFF_SAVE_PATH }),
-    'journal-log-failure': async () => { throw new Error('stage2 boom'); },
-  });
-  const { log } = makeStubLog();
-
-  const status = await runJournalHandoff({
-    agent,
-    log,
-    saveSchema: HANDOFF_SAVE_SCHEMA,
-    logSchema: HANDOFF_LOG_SCHEMA,
-    payload: HANDOFF_PAYLOAD,
-    savePath: HANDOFF_SAVE_PATH,
-    prefix: 'devflow',
-    id: 556,
-    subject: 'dev-flow 失敗',
-    logLabel: 'journal-log-failure',
-    phase: 'Setup',
-  });
-
-  assert.equal(status, 'log_failed');
-  assert.equal(calls.length, 2);
-});
-
-test('runJournalHandoff returns save_failed and never calls stage2 when stage1 responder throws', async () => {
-  const { agent, calls } = makeStubAgent({
-    'journal-save': async () => { throw new Error('stage1 boom'); },
-    'journal-log-failure': async () => { throw new Error('stage2 should not be called'); },
-  });
-  const { log } = makeStubLog();
-
-  const status = await runJournalHandoff({
-    agent,
-    log,
-    saveSchema: HANDOFF_SAVE_SCHEMA,
-    logSchema: HANDOFF_LOG_SCHEMA,
-    payload: HANDOFF_PAYLOAD,
-    savePath: HANDOFF_SAVE_PATH,
-    prefix: 'devflow',
-    id: 556,
-    subject: 'dev-flow 失敗',
-    logLabel: 'journal-log-failure',
-    phase: 'Setup',
-  });
-
+// spawn が throw / null の場合は Write 到達の申告が無いので save_failed のまま残す。throw は外へ漏らさない（fail-open）。
+test('runJournalHandoff returns save_failed — and never lets the throw escape — when the spawn throws', async () => {
+  const { status, calls, messages } = await runHandoffWith(async () => { throw new Error('handoff boom'); });
   assert.equal(status, 'save_failed');
   assert.equal(calls.length, 1);
+  assert.ok(messages.some((m) => m.includes('handoff boom')));
+});
+
+test('runJournalHandoff returns save_failed when the spawn returns null', async () => {
+  const { status } = await runHandoffWith(async () => null);
+  assert.equal(status, 'save_failed');
+});
+
+test('runJournalHandoff always returns one of the 3-value closed enum', async () => {
+  for (const responder of [
+    async () => ({ saved: true, logged: true }),
+    async () => ({ saved: true, logged: false }),
+    async () => ({ saved: false, logged: false }),
+    async () => null,
+    async () => { throw new Error('boom'); },
+  ]) {
+    const { status } = await runHandoffWith(responder);
+    assert.ok(JOURNAL_LOG_STATUSES.includes(status), `3 値 enum 外: ${status}`);
+  }
+});
+
+// AC-3: spawn の prompt に payload 以外の結論値・要約を載せない（classifier による journal-log
+// ブロックの面を広げない）。call site ごとの label / phase や payload の中身が変わっても、
+// payload 本文と payload 由来の pending パスを除いた prompt は一字一句同じでなければならない。
+test('runJournalHandoff prompt carries no conclusion value or summary other than the payload itself', async () => {
+  const capture = async ({ payload, prefix, id, logLabel, phase }) => {
+    const calls = [];
+    await runJournalHandoff({
+      agent: async (prompt, opts) => { calls.push({ prompt, opts }); return { saved: true, logged: true }; },
+      log: () => {},
+      payload,
+      prefix,
+      id,
+      logLabel,
+      phase,
+    });
+    assert.equal(calls.length, 1);
+    const pendingPath = buildJournalPendingPath({ prefix, id, effectId: journalEffectId(payload) });
+    return calls[0].prompt.replace(BODY_RE, '<BODY>').split(pendingPath).join('<PENDING>');
+  };
+
+  const success = await capture({
+    payload: '{"skill":"dev-flow","outcome":"success","telemetry":{"merge_tier":"REVIEW"}}',
+    prefix: 'devflow', id: 807, logLabel: 'journal-log', phase: 'Merge tier',
+  });
+  const failure = await capture({
+    payload: '{"skill":"dev-flow","outcome":"failure","error_category":"empty_diff"}',
+    prefix: 'devflow', id: 807, logLabel: 'journal-log-failure', phase: 'Validate',
+  });
+  const abort = await capture({
+    payload: '{"skill":"pr-iterate","outcome":"failure","error_category":"abort","error_msg":"abort@Iterate/fix#1: boom"}',
+    prefix: 'priterate', id: 12, logLabel: 'journal-log-abort', phase: 'Iterate',
+  });
+
+  assert.equal(failure, success);
+  assert.equal(abort, success);
+  // 旧 prompt の Objective に載っていた call site の subject（'dev-flow 完走' / 'dev-flow 失敗' /
+  // 'pr-iterate abort' 等）や label / phase も現れない。
+  for (const leaked of ['success', 'failure', 'abort', 'REVIEW', 'empty_diff', 'merge_tier', '完走', '終端', 'journal-log-failure', 'Merge tier', 'Validate', 'Iterate', 'dev-flow', 'pr-iterate']) {
+    assert.ok(!success.includes(leaked), `payload 外の prompt に '${leaked}' が含まれている:\n${success}`);
+  }
 });
 
 // ---- buildAbortErrorMsg / buildAbortHandoffPayload (issue #607) ----
@@ -877,80 +594,52 @@ test('buildAbortHandoffPayload omits telemetry when none is given (phase/label a
   assert.equal(payload.error_msg, 'abort@?/?: boom');
 });
 
-// ---- conformance: call sites use the canonical Write-tool-verbatim helpers ----
+// ---- conformance: call sites use the canonical single-spawn handoff ----
 //
-// issue #494 F3 / #556 F4: all payload-carrying journal handoff call sites — the 2
-// telemetry sites (dev-flow.js Merge tier, pr-iterate.js Iterate) and
-// dev-flow.js's writeFailureTelemetry (outcome:'failure'/'partial') — carry the payload body
-// as a file on disk and the finalize prompt takes only a path, regardless of outcome.
-// dev-flow.js's writeFailureTelemetry / Merge tier and pr-iterate.js's Iterate terminus
-// route through the canonical `runJournalHandoff` choreography (_lib/journal-handoff.mjs,
-// issue #556) rather than repeating the 2-stage buildJournalSaveInstr + buildJournalLogInstr
-// choreography inline. dev-flow / pr-iterate use the `savePath` mode: the
-// payload file sits under the worktree's gitignored `.devflow-tmp/` (dev-flow: `${WT}/.devflow-tmp`,
-// pr-iterate: `${isoWt}/.devflow-tmp`) at a path the workflow fixes itself, so the
-// agent-reported path is never used. This test pins that neither workflow references the
-// removed single-stage buildJournalHandoffInstr / buildFailureJournalInstr names.
+// dev-flow.js（writeFailureTelemetry / Merge tier / top-level abort）と pr-iterate.js（終端 /
+// top-level abort）の 5 call site は canonical `runJournalHandoff` を通り、payload を pending/ へ
+// 直接書く 1 spawn に集約されている（issue #807）。payload の一時ファイル（.devflow-tmp/payload-*.json、
+// WT 未確定 abort 用の ~/.claude/journal/abort-payload/）とそれを書く journal-save spawn は残っていない。
 
-test('workflows construct journal handoff instructions through the canonical Write-tool-verbatim helpers', () => {
+test('workflows route every journal handoff through the canonical single-spawn runJournalHandoff', () => {
   const devFlow = readFileSync(join(repoRoot, '.claude/workflows/dev-flow.js'), 'utf8');
   const prIterate = readFileSync(join(repoRoot, '.claude/workflows/pr-iterate.js'), 'utf8');
 
-  // dev-flow.js: writeFailureTelemetry and the Merge tier success path both route through the
-  // canonical runJournalHandoff with the worktree-scoped savePath fixed by the workflow itself
-  // (agent-reported path never used — enforced inside the canonical, not per call site).
-  assert.equal(
-    (devFlow.match(/savePath: `\$\{WT\}\/\.devflow-tmp\/payload-devflow-\$\{ISSUE\}\.json`/g) ?? []).length,
-    1, // Merge tier success handoff
-  );
-  assert.equal(
-    (devFlow.match(/savePath: `\$\{WT\}\/\.devflow-tmp\/payload-devflow-\$\{ISSUE\}-failure\.json`/g) ?? []).length,
-    1, // writeFailureTelemetry
-  );
-  assert.equal(
-    (devFlow.match(/(?<!function )runJournalHandoff\(\{/g) ?? []).length,
-    3,
-  );
+  assert.equal((devFlow.match(/(?<!function )runJournalHandoff\(\{/g) ?? []).length, 3);
+  assert.equal((prIterate.match(/(?<!function )runJournalHandoff\(\{/g) ?? []).length, 2);
   // logLabel は現行値のまま維持されている（issue #556 AC6）。
   assert.ok(devFlow.includes("logLabel: 'journal-log',"));
   assert.ok(devFlow.includes("logLabel: 'journal-log-failure',"));
-  assert.ok(!devFlow.includes('validateJournalSavedPath(journalSaveRes.path'));
-  assert.ok(!devFlow.includes('buildFailureJournalInstr'));
-  // top-level abort handoff（issue #607）: WT 確定済みの savePath と WT 未確定時の tilde 退避先の
-  // 両方を pin する。
-  assert.equal(
-    (devFlow.match(/`\$\{WT\}\/\.devflow-tmp\/payload-devflow-\$\{ISSUE\}-abort\.json`/g) ?? []).length,
-    1,
-  );
-  assert.equal(
-    (devFlow.match(/`~\/\.claude\/journal\/abort-payload\/payload-devflow-\$\{ISSUE\}-abort\.json`/g) ?? []).length,
-    1,
-  );
   assert.ok(devFlow.includes("logLabel: 'journal-log-abort',"));
-  // pr-iterate.js: Iterate telemetry handoff routes through the same canonical, worktree-scoped
-  // savePath, logLabel 現行値維持。
-  assert.equal(
-    (prIterate.match(/savePath: `\$\{isoWt\}\/\.devflow-tmp\/payload-priterate-\$\{PR\}\.json`/g) ?? []).length,
-    1,
-  );
-  assert.equal(
-    (prIterate.match(/(?<!function )runJournalHandoff\(\{/g) ?? []).length,
-    2,
-  );
   assert.ok(prIterate.includes("logLabel: 'journal-log',"));
-  assert.ok(!prIterate.includes('validateJournalSavedPath(journalSaveRes.path'));
-  // top-level abort handoff（issue #607）: pr-iterate にも同種の穴があった（handoff は終端 1 箇所のみで
-  // isolation probe の fail-closed throw 等で全損）ため同機構で塞いだ。
-  assert.equal(
-    (prIterate.match(/`\$\{isoWt\}\/\.devflow-tmp\/payload-priterate-\$\{PR\}-abort\.json`/g) ?? []).length,
-    1,
-  );
   assert.ok(prIterate.includes("logLabel: 'journal-log-abort',"));
-  // The removed single-stage buildJournalHandoffInstr is not referenced by either workflow.
-  assert.ok(!devFlow.includes('buildJournalHandoffInstr('));
-  assert.ok(!prIterate.includes('buildJournalHandoffInstr('));
-  assert.ok(!devFlow.includes('buildJournalHandoffCommand'));
-  assert.ok(!prIterate.includes('buildJournalHandoffCommand'));
-  assert.ok(!devFlow.includes("<<'TELEMETRY_EOF'"));
-  assert.ok(!prIterate.includes("<<'TELEMETRY_EOF'"));
+
+  for (const [name, src] of [['dev-flow.js', devFlow], ['pr-iterate.js', prIterate]]) {
+    assert.ok(!src.includes("'journal-save'"), `${name} に journal-save spawn が残っている`);
+    assert.ok(!src.includes('JOURNAL_SAVE_RESULT'), `${name} に journal-save の schema が残っている`);
+    assert.ok(!src.includes('savePath'), `${name} に payload 一時ファイルの savePath が残っている`);
+    assert.ok(!src.includes('buildJournalSaveInstr'), `${name} に buildJournalSaveInstr が残っている`);
+    assert.ok(!src.includes('buildJournalLogInstr'), `${name} に buildJournalLogInstr が残っている`);
+    assert.ok(!src.includes('buildJournalHandoffInstr('), `${name} に削除済み buildJournalHandoffInstr が残っている`);
+    assert.ok(!src.includes('buildJournalHandoffCommand'), `${name} に削除済み buildJournalHandoffCommand が残っている`);
+    assert.ok(!src.includes("<<'TELEMETRY_EOF'"), `${name} に heredoc handoff が残っている`);
+  }
+});
+
+// AC-4: journal-save が書いていた payload 一時ファイルを読む箇所が残っていないこと。workflow・
+// canonical（_lib/*.mjs）・plugin bin/ のどこにも一時ファイルのパスが現れない。
+test('no dev-flow code path reads the removed journal-save payload temp files', () => {
+  const sources = [];
+  for (const dir of ['.claude/workflows', '_lib', 'bin']) {
+    for (const entry of readdirSync(join(repoRoot, dir), { withFileTypes: true })) {
+      if (!entry.isFile() || entry.name.endsWith('.test.mjs')) continue;
+      sources.push([`${dir}/${entry.name}`, readFileSync(join(repoRoot, dir, entry.name), 'utf8')]);
+    }
+  }
+  assert.ok(sources.length > 0);
+  for (const [name, content] of sources) {
+    for (const needle of ['payload-devflow-', 'payload-priterate-', 'abort-payload']) {
+      assert.ok(!content.includes(needle), `${name} が journal-save の一時ファイル（${needle}）を参照している`);
+    }
+  }
 });
