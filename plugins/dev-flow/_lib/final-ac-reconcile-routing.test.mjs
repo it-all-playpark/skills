@@ -18,9 +18,6 @@
 //        + result.final_unsatisfied_ac===true + critical AC-FINAL-2 append が reasons の
 //        'ledger 未収束' に反映
 //   (r6) fixes=1 + test#final red → 'final-ac-reconcile' 不発 + skipped + HOLD（'final test red'）
-//   (r7) acceptance_criteria:[] + fixes=1 → Analyze needs_clarification で早期終了 →
-//        'final-ac-reconcile' 不発（agent 浪費ゼロの実証。acCount===0 の skip 判定自体は
-//        _lib/final-ac-reconcile.test.mjs の shouldRunFinalAcReconcile 単体テストが決定論的に担保）
 
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
@@ -274,25 +271,4 @@ test("[final-ac-reconcile] (r6) fixes=1 + test#final red → final-ac-reconcile 
 
   // AC 判定が stale であることの証拠: final test red により final-ac-reconcile 自体が不発
   // （返り値 final_ac_reconcile:'skipped'）+ 返り値 merge_tier===HOLD（上で確認済み）
-});
-
-// ============================================================
-// (r7) acceptance_criteria:[] + fixes=1 → Analyze needs_clarification で早期終了 →
-//      'final-ac-reconcile' 不発（agent 浪費ゼロの実証）
-// ============================================================
-
-test("[final-ac-reconcile] (r7) acceptance_criteria:[] → Analyze needs_clarification で早期終了 → final-ac-reconcile 不発", async () => {
-  const { ctx, calls } = makeSandbox({
-    fixesApplied: 1,
-    analyze: { acceptance_criteria: [] },
-  });
-  const { result, error } = await runDevFlowCapture(devFlowSrc, ctx);
-  assertNoCrash(error, 'r7');
-  assert.ok(result !== null, '(r7) workflow は return object を返すべきだが null だった');
-  assert.equal(result?.status, 'needs_clarification', `(r7) status は 'needs_clarification' のはずだが ${JSON.stringify(result?.status)}`);
-
-  // acCount===0 の skip 判定自体は _lib/final-ac-reconcile.test.mjs の shouldRunFinalAcReconcile
-  // 単体テストが決定論的に担保する（no_ac reason）。ここでは Analyze 早期終了により
-  // final-ac-reconcile agent が一切起動しない（agent 浪費ゼロ）ことのみを確認する。
-  assert.ok(!calls.some((c) => c.label === 'final-ac-reconcile'), "(r7) needs_clarification 早期終了時は 'final-ac-reconcile' が呼ばれてはならない");
 });

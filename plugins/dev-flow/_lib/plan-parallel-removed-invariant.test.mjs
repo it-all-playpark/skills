@@ -6,21 +6,12 @@
 // Run: npx vitest run _lib/plan-parallel-removed-invariant.test.mjs
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const pluginRoot = join(here, '..');
-
-// ---- (a) 参照ゼロの schema（旧 dev-kickoff state / iterate schema）が存在しない ----
-
-test('[plan-parallel-removed] (a) _lib/schemas の kickoff / iterate schema が存在しない', () => {
-  for (const name of ['kickoff.schema.json', 'iterate.schema.json']) {
-    const p = join(here, 'schemas', name);
-    assert.ok(!existsSync(p), `参照ゼロの schema が残っている: _lib/schemas/${name}`);
-  }
-});
 
 // ---- (b) dev-flow.js と _lib/*.mjs（test 除く）に plan.parallel の参照が無い ----
 

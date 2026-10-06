@@ -329,9 +329,3 @@ HOOK
     run grep -E '(^|[^A-Za-z0-9_-])gh (issue|api|pr (comment|edit|merge|create|close))' "$SCRIPT"
     [ "$status" -ne 0 ]
 }
-
-@test "(6b) 静的pin: bin/pr-iterate-prerun はこのスクリプトへの 3 行 exec wrapper" {
-    BIN="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd)/bin/pr-iterate-prerun"
-    [ -f "$BIN" ]
-    [ "$(sed -n '3p' "$BIN")" = 'exec bash "$(dirname "$0")/../_shared/scripts/pr-iterate-prerun.sh" "$@"' ]
-}

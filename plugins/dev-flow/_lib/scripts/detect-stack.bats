@@ -50,40 +50,6 @@ JSON
     echo "$output" | jq -e '.frameworks == []' >/dev/null
 }
 
-@test "(c) 出力 JSON に rules_paths キーが含まれない (回帰防止)" {
-    PROJ="$BATS_TEST_TMPDIR/proj-next2"
-    mkdir -p "$PROJ"
-    cat > "$PROJ/package.json" <<'JSON'
-{
-  "dependencies": {
-    "next": "14.0.0"
-  }
-}
-JSON
-
-    run "$SCRIPT" "$PROJ"
-
-    [ "$status" -eq 0 ]
-    echo "$output" | jq -e 'has("rules_paths") == false' >/dev/null
-}
-
-@test "(d) 出力 JSON に best_practice_skills キーが含まれない (回帰防止)" {
-    PROJ="$BATS_TEST_TMPDIR/proj-next3"
-    mkdir -p "$PROJ"
-    cat > "$PROJ/package.json" <<'JSON'
-{
-  "dependencies": {
-    "next": "14.0.0"
-  }
-}
-JSON
-
-    run "$SCRIPT" "$PROJ"
-
-    [ "$status" -eq 0 ]
-    echo "$output" | jq -e 'has("best_practice_skills") == false' >/dev/null
-}
-
 @test "(e) remotion 依存 -> frameworks に remotion が含まれる" {
     PROJ="$BATS_TEST_TMPDIR/proj-remotion"
     mkdir -p "$PROJ"

@@ -18,16 +18,11 @@ import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash, STANDARD_FILES }
 const here = dirname(fileURLToPath(import.meta.url));
 const src = readFileSync(join(here, '..', '.claude/workflows/dev-flow.js'), 'utf8');
 
-// 実効 shape は既定 responder の realized 3 件（STANDARD_FILES）+ AC 4 で standard（issue #676）
-const STANDARD_REQ = {
-  summary: 's', acceptance_criteria: ['a', 'b', 'c', 'd'], issue_type: 'fix', scope: 'src',
-  issue_number: 1, issue_title: 'stub-issue-title',
-};
+// 実効 shape は既定 responder の realized 3 件（STANDARD_FILES）で standard（issue #676）
 
 test('[blocked-done-preservation] BLOCKED → reimpl-blocked#1 DONE_WITH_CONCERNS: b=2 は発火せず、concerns と files が保持される', async () => {
   const { ctx, calls, logs } = makeDevFlowSandbox({
     overrides: {
-      'analyze#1': STANDARD_REQ,
       'impl:serial:issue-1': {
         status: 'BLOCKED', task_id: 'issue-1', files: [], summary: '', concerns: [],
         blocking_reason: { block_class: 'approach_mismatch', detail: 'RZ: lib-z api missing' },

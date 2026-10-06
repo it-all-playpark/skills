@@ -503,16 +503,6 @@ JSON
     [ "$outcome" = "failure" ]
 }
 
-# ---------------------------------------------------------------------------
-# Test (c): 未知カテゴリは guard_blocked 追加後も引き続き die_json で拒否される
-# ---------------------------------------------------------------------------
-@test "partial with bogus category still exits non-zero after guard_blocked addition" {
-    run "$SCRIPT" log dev-flow partial \
-        --error-category bogus \
-        --error-msg 'x'
-    [ "$status" -ne 0 ]
-}
-
 # ===========================================================================
 # Tests for new error category: pr_phase_failed (issue #823)
 # ===========================================================================

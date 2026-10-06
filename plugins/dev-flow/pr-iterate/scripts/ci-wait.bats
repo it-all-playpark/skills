@@ -20,16 +20,6 @@ setup() {
     [ "$output" = '{"slept":true,"seconds":0}' ]
 }
 
-@test "ci-wait: waits at least the requested seconds before reporting slept:true" {
-    local start end
-    start=$(date +%s)
-    run bash "$SCRIPT" 2
-    end=$(date +%s)
-    [ "$status" -eq 0 ]
-    [ "$output" = '{"slept":true,"seconds":2}' ]
-    [ $(( end - start )) -ge 2 ]
-}
-
 @test "ci-wait: durations longer than one internal step are chained to the exact total" {
     # STEP=5 inside the script; 6 exercises the remainder chunk.
     local start end

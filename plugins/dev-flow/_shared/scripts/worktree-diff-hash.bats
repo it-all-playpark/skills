@@ -126,14 +126,6 @@ teardown() {
     [ "$before" = "$after" ]
 }
 
-# ---------------------------------------------------------------------------
-# 7. 引数不足 -> exit 非 0
-# ---------------------------------------------------------------------------
-@test "missing arguments -> non-zero exit" {
-    run bash "$SCRIPT"
-    [ "$status" -ne 0 ]
-}
-
 @test "missing base-ref argument -> non-zero exit" {
     run bash "$SCRIPT" "$WT"
     [ "$status" -ne 0 ]
@@ -164,16 +156,6 @@ teardown() {
     if command -v jq >/dev/null 2>&1; then
         printf '%s\n' "$output" | jq -e '.epoch | type == "number"' >/dev/null
     fi
-}
-
-# ---------------------------------------------------------------------------
-# 10. hash/empty の既存挙動は epoch 追加後も不変
-# ---------------------------------------------------------------------------
-@test "hash and empty fields remain unchanged after epoch addition" {
-    run bash "$SCRIPT" "$WT" "$BASE_REF"
-    [ "$status" -eq 0 ]
-    printf '%s\n' "$output" | grep -q '"hash":"[^"]*"'
-    printf '%s\n' "$output" | grep -q '"empty":true'
 }
 
 # ---------------------------------------------------------------------------

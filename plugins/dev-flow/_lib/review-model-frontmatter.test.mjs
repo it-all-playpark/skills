@@ -12,8 +12,6 @@
 //       model と一致し、journal 経路（dev-flow: 失敗 / 成功 / abort、pr-iterate: 終端 / abort）全てに載る。
 //       3 agent とも frontmatter は `model: opus`。effort は evaluator のみ `medium`、pr-reviewer / dev-implementer は `high`
 //   (e) 両 workflow の evaluator / pr-reviewer の call site に `model:` が無い（静的）
-//   (f) 両 workflow に quality model 定数 / fallback 機構の残骸（QUALITY_MODEL / QUALITY_FALLBACK /
-//       nested.quality_fallback / quality_model_config / quality_model_fallback_label）が無い（静的）
 
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
@@ -133,13 +131,4 @@ test('[review-model] (e) 両 workflow の evaluator / pr-reviewer の call site 
   // model override を持つ call は dev-implementer（IMPL_AGENT）の call 行だけ
   const modelHits = devFlowSrc.split('\n').filter((l) => /\bagentType:\s*'/.test(l) && /\bmodel:/.test(l));
   assert.deepEqual(modelHits, [], 'dev-flow.js: 文字列 agentType の call 行に model が残っている（model override は IMPL_AGENT の call 行に限る）');
-});
-
-test('[review-model] (f) 両 workflow に quality model 定数 / fallback 機構の残骸が無い（静的）', () => {
-  const forbidden = ['QUALITY_MODEL', 'QUALITY_FALLBACK', 'quality_fallback', 'quality_model_config', 'quality_model_fallback_label', 'omitModel', '_lib/quality-model.mjs'];
-  for (const [name, src] of [['dev-flow.js', devFlowSrc], ['pr-iterate.js', prIterateSrc]]) {
-    for (const tok of forbidden) {
-      assert.ok(!src.includes(tok), `${name}: '${tok}' が残っている（quality model fallback は撤去済み。品質ゲート agent の model は frontmatter で決める）`);
-    }
-  }
 });

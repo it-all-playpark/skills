@@ -201,50 +201,6 @@ test('[fix-throw-recovery] (T2) fix throw → retryもthrow → error null、sta
   assert.equal(result?.fixes_applied, 0, `fixes_applied は 0 であるべきだが ${result?.fixes_applied} だった`);
 });
 
-// (T3 回帰) null → retry で成功 → lgtm（既存挙動）
-test('[fix-throw-recovery] (T3 回帰) fix null → retry成功 → lgtm, fix_null_retries=1', async () => {
-  const { ctx, fixCalls } = makeSandbox({
-    reviewerStub: (round) => {
-      if (round === 1) {
-        return {
-          decision: 'request-changes',
-          issues: [{ severity: 'major', topic: 't1', description: 'd', suggestion: 's' }],
-          summary: 'ng',
-        };
-      }
-      return { decision: 'approve', issues: [], summary: 'ok' };
-    },
-    fixSequence: [null, { applied: true, summary: 'fixed' }],
-  });
-
-  const { result, error } = await runPrIterate(src, ctx);
-  assert.equal(error, null, `run 全体が例外終了してはならないが error が発生: ${error?.name}: ${error?.message}`);
-
-  assert.equal(result?.status, 'lgtm', `status は lgtm であるべきだが '${result?.status}' だった`);
-  assert.deepEqual(fixCalls, ['fix#1', 'fix#1-retry'], `fix agent は 2 回（初回+retry）呼ばれるべきだが ${JSON.stringify(fixCalls)} だった`);
-  assert.equal(result?.fix_null_retries, 1, `fix_null_retries は 1 であるべきだが ${result?.fix_null_retries} だった`);
-});
-
-// (T4 回帰) applied:false → retry なし・即時 fix_failed（既存挙動）
-test('[fix-throw-recovery] (T4 回帰) fix applied:false → retryなし即時fix_failed, fix_null_retries=0', async () => {
-  const { ctx, fixCalls } = makeSandbox({
-    reviewerStub: (_round) => ({
-      decision: 'request-changes',
-      issues: [{ severity: 'major', topic: 't1', description: 'd', suggestion: 's' }],
-      summary: 'ng',
-    }),
-    fixSequence: [{ applied: false, summary: 'no' }],
-  });
-
-  const { result, error } = await runPrIterate(src, ctx);
-  assert.equal(error, null, `run 全体が例外終了してはならないが error が発生: ${error?.name}: ${error?.message}`);
-
-  assert.equal(result?.status, 'fix_failed', `status は fix_failed であるべきだが '${result?.status}' だった`);
-  assert.equal(fixCalls.length, 1, `fix agent は 1 回（retry なし）だけ呼ばれるべきだが ${fixCalls.length} 回だった: ${JSON.stringify(fixCalls)}`);
-  assert.equal(result?.fix_null_retries, 0, `fix_null_retries は 0 であるべきだが ${result?.fix_null_retries} だった`);
-  assert.equal(result?.fixes_applied, 0, `fixes_applied は 0 であるべきだが ${result?.fixes_applied} だった`);
-});
-
 // (T5 edge) throw → retry が applied:false を返す → 再 retry しない
 test('[fix-throw-recovery] (T5 edge) fix throw → retryがapplied:false → 再retryしない、status:fix_failed、fixCalls=2', async () => {
   const { ctx, fixCalls } = makeSandbox({

@@ -21,9 +21,8 @@
 //   runtime が honor するかまでは検証できないため、本テストは有限性のみを検証する)。
 //
 // Design:
-//   このテストは .claude/agents/ の 3 ファイルの YAML frontmatter を正規表現で検証する。
-//   既存 _lib/dev-runner-model.test.mjs と同じ抽出パターン
-//   (`/^---\n([\s\S]*?)\n---/` でフロントマター本文を切り出す) を踏襲する。
+//   このテストは .claude/agents/ の 3 ファイルの YAML frontmatter を正規表現で検証する
+//   (`/^---\n([\s\S]*?)\n---/` でフロントマター本文を切り出す)。
 //
 // Run: npx vitest run _lib/exec-proxy-frontmatter.test.mjs
 // Full CI: bash tests/run-node-tests.sh --strict
