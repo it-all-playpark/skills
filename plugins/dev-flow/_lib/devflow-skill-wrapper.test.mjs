@@ -129,3 +129,20 @@ test('[devflow-skill-wrapper] Workflow args に旧形式 base を渡さない', 
     'dev-flow/SKILL.md に旧形式 `args: { issue: <N>, base: \'<base>\' }` が残存している（base は dev-flow-prerun が解決するので渡さない）',
   );
 });
+
+// (l) PR phase 失敗（issue #823）: run は throw せず error_category=pr_phase_failed で返る。wrapper は返り値の
+//     issue_comment を Write で .devflow-tmp に保存し、top-level の bare `gh issue comment --body-file` で issue に投稿する。
+//     回収コマンドは .devflow-tmp に保存済みの commit message / PR body を使い、wrapper は push / PR 作成を再試行しない。
+test('[devflow-skill-wrapper] PR phase 失敗（pr_phase_failed）は issue_comment を bare gh issue comment で issue に投稿し、push / PR 作成を再試行しない', () => {
+  const start = src.indexOf('## PR phase 失敗の扱い');
+  assert.ok(start >= 0, 'dev-flow/SKILL.md に `## PR phase 失敗の扱い` 節が無い');
+  const section = src.slice(start, src.indexOf('\n## ', start + 1));
+  for (const s of [
+    'pr_phase_failed', 'issue_comment', 'Write tool', '.devflow-tmp/pr-phase-failure-comment.md',
+    'bare 単文 `gh issue comment <issue> --repo <repo> --body-file', 'committed', 'failed_step',
+    'git push -u origin HEAD', 'gh pr create --draft --body-file .devflow-tmp/pr-body.md', '/pr-iterate <N>',
+    '.devflow-tmp/commit-msg.txt', '再生成しない', '再試行せず',
+  ]) {
+    assert.ok(section.includes(s), `dev-flow/SKILL.md「PR phase 失敗の扱い」節に '${s}' が無い`);
+  }
+});

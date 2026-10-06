@@ -108,10 +108,10 @@ test('[review-model] (d) review_model_config / eval_model_config / impl_model_co
     assert.equal(frontmatterField(md, name, 'effort'), effort, `${name} frontmatter の effort は ${effort} のはず`);
   }
   const lines = (src, key) => src.split('\n').filter((l) => l.includes(`${key}:`));
-  // dev-flow.js: 失敗 handoff（journalLogFailure）/ 成功 payload / abort handoff の 3 経路
+  // dev-flow.js: 失敗 handoff（journalLogFailure）/ 成功 payload / abort handoff / PR phase 失敗 handoff の 4 経路
   for (const [key, fm] of [['review_model_config', reviewerFm], ['eval_model_config', evaluatorFm], ['impl_model_config', implFm]]) {
     const hits = lines(devFlowSrc, key);
-    assert.equal(hits.length, 3, `dev-flow.js の ${key} は 3 経路（失敗 / 成功 / abort）に載るはず: ${JSON.stringify(hits)}`);
+    assert.equal(hits.length, 4, `dev-flow.js の ${key} は 4 経路（失敗 / 成功 / abort / PR phase 失敗）に載るはず: ${JSON.stringify(hits)}`);
     for (const l of hits) assert.ok(l.includes(`${key}: '${fm}'`), `${key} の値が frontmatter(${fm}) と一致しない: ${l.trim()}`);
   }
   // pr-iterate.js: 終端 payload / abort handoff の 2 経路。evaluator は dev-flow 側の agent なので eval_model_config は載せない

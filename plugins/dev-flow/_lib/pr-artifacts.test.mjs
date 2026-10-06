@@ -12,6 +12,10 @@ import {
   prBodyViewPrompt,
   prBodyEditPrompt,
   prPhaseFailure,
+  prPhaseFailureFacts,
+  prPhaseRecoveryCommands,
+  prPhaseFailureComment,
+  PR_PHASE_FAILED_CATEGORY,
   PR_FAILED_STEP_VALUES,
   PR_BODY_MAX_CHARS,
   PR_BODY_HEADINGS,
@@ -733,6 +737,54 @@ test('[pr-artifacts] prPhaseFailure: failed_step 欠落 / enum 外は step: unkn
   assert.ok(msg.includes('reason: （proxy が failure_reason を返さず）'), msg);
   assert.ok(prPhaseFailure({ pr_url: '', pr_number: 0, committed: false, failed_step: 'add', failure_reason: 'x' }).includes('step: unknown、reason: x'));
   assert.deepEqual(PR_FAILED_STEP_VALUES, ['commit', 'push', 'pr-create']);
+});
+
+// ---- PR phase 失敗の failure 終端（issue #823）: workflow は throw せず、facts を返り値に載せる ----
+
+test('[pr-artifacts] prompt: 中断時の head_sha は committed:true なら手順 6 の git rev-parse HEAD だけを実行して返す', () => {
+  const p = prPhasePrompt({ wt: '/w', base: 'main', branch: 'b', repo: 'o/r', issue: 1, commitMessage: 'x (#1)\n', prBody: 'y' });
+  assert.ok(p.includes('head_sha は committed が true なら手順 6 の `git rev-parse HEAD` だけを実行してその stdout・それ以外は空文字'), p);
+});
+
+test('[pr-artifacts] prPhaseFailureFacts: 成功は null、失敗は failed_step / failure_reason / committed と取れた head_sha・push log だけを返す', () => {
+  assert.equal(prPhaseFailureFacts({ pr_url: 'http://x/pull/1', pr_number: 1, committed: true }), null);
+  const pushLog = prPushLogPath('/wt');
+  const push = prPhaseFailureFacts({ pr_url: '', pr_number: 0, committed: true, head_sha: ' abc123 ', failed_step: 'push', failure_reason: 'remote: 403\n' }, { pushLog });
+  assert.deepEqual(push, { failed_step: 'push', failure_reason: 'remote: 403', committed: true, head_sha: 'abc123', push_log: '/wt/.devflow-tmp/push-output.log' });
+  // head_sha が空・step が push 以外なら head_sha / push_log キー自体を持たない
+  const commit = prPhaseFailureFacts({ pr_url: '', pr_number: 0, committed: false, head_sha: '', failed_step: 'commit', failure_reason: 'x' }, { pushLog });
+  assert.deepEqual(commit, { failed_step: 'commit', failure_reason: 'x', committed: false });
+  // committed 欠落は false（commit 済みと推測しない）、step 欠落は unknown
+  assert.deepEqual(prPhaseFailureFacts({ pr_url: '', pr_number: 0 }), { failed_step: 'unknown', failure_reason: '（proxy が failure_reason を返さず）', committed: false });
+  assert.equal(PR_PHASE_FAILED_CATEGORY, 'pr_phase_failed');
+});
+
+test('[pr-artifacts] prPhaseRecoveryCommands: committed と失敗段に応じて保存済みの .devflow-tmp の本文を使う回収コマンドだけを返す', () => {
+  const common = { base: 'main', branch: 'feature/issue-9', repo: 'o/r', commitMessage: 'fix(x): "q" (#9)\n\nbody' };
+  const create = 'gh pr create --draft --body-file .devflow-tmp/pr-body.md --repo o/r --base main --head feature/issue-9 --title "fix(x): \\"q\\" (#9)"';
+  assert.deepEqual(prPhaseRecoveryCommands({ ...common, committed: false, failedStep: 'commit' }),
+    ['git add -A', 'git commit -F .devflow-tmp/commit-msg.txt', 'git push -u origin HEAD', create, '/pr-iterate <N>']);
+  assert.deepEqual(prPhaseRecoveryCommands({ ...common, committed: true, failedStep: 'push' }),
+    ['git push -u origin HEAD', create, '/pr-iterate <N>']);
+  // pr-create で落ちた run は push 済み
+  assert.deepEqual(prPhaseRecoveryCommands({ ...common, committed: true, failedStep: 'pr-create' }), [create, '/pr-iterate <N>']);
+  // 段が不明なら push を飛ばさない（再 push は up-to-date で終わる）
+  assert.equal(prPhaseRecoveryCommands({ ...common, committed: true, failedStep: 'unknown' })[0], 'git push -u origin HEAD');
+  // repo 不明なら --repo を付けない
+  assert.ok(!prPhaseRecoveryCommands({ ...common, repo: null, committed: true, failedStep: 'push' })[1].includes('--repo'));
+});
+
+test('[pr-artifacts] prPhaseFailureComment: 失敗段・理由・commit 状態・branch・worktree・push log・回収コマンドを載せ、理由中の fence に負けない', () => {
+  const facts = { failed_step: 'push', failure_reason: 'hook said ```boom```', committed: true, head_sha: 'f'.repeat(40), push_log: '/wt/.devflow-tmp/push-output.log' };
+  const commands = prPhaseRecoveryCommands({ committed: true, failedStep: 'push', base: 'main', branch: 'feature/issue-9', repo: 'o/r', commitMessage: 't (#9)' });
+  const body = prPhaseFailureComment({ worktree: '/wt', branch: 'feature/issue-9', facts, commands });
+  for (const s of ['step: push', '`push`', '`feature/issue-9`', '`/wt`', '/wt/.devflow-tmp/push-output.log', 'f'.repeat(40), ...commands, '再生成しない']) {
+    assert.ok(body.includes(s), `comment に '${s}' が無い:\n${body}`);
+  }
+  assert.ok(body.includes('````\nhook said ```boom```\n````'), `理由が内側の backtick より長い fence で囲まれていない:\n${body}`);
+  const uncommitted = prPhaseFailureComment({ worktree: '/wt', branch: 'b', facts: { failed_step: 'commit', failure_reason: 'x', committed: false }, commands: ['git add -A'] });
+  assert.ok(uncommitted.includes('commit: 未'), uncommitted);
+  assert.ok(!uncommitted.includes('push 出力全文'), uncommitted);
 });
 
 // ---- (g) prBodyViewPrompt / prBodyEditPrompt ----

@@ -77,6 +77,24 @@ sig_field() {
     [ "$(printf '%s' "$output" | jq '.runs["dev-flow"]')" = "12" ]
 }
 
+@test "PR phase 失敗（error_category pr_phase_failed）は category / phase PR の signature になり、worktree パスと番号の違う run は 1 つにまとまる" {
+    load_fixture pr-phase-failed.jsonl
+    run report --repo "$BATS_TEST_TMPDIR/no-repo"
+    [ "$status" -eq 0 ]
+
+    [ "$(printf '%s' "$output" | jq '[.signatures[] | select(.category == "pr_phase_failed")] | length')" = "2" ]
+    [ "$(sig_field 'step: push' .signature)" = "dev-flow | pr_phase_failed | PR | dev-flow: PR phase 失敗（step: push、reason: error: failed to push some refs to 'github.com:o/r.git'、push 出力全文: <*> proxy 応答 pr_url=\"\" pr_number=<*> committed=true。closes-check / nested pr-iterate へは進まない" ]
+    [ "$(sig_field 'step: push' .count)" = "2" ]
+    [ "$(sig_field 'step: push' .status)" = "new" ]
+    [ "$(sig_field 'step: push' .candidates.first_bad_commit)" = "ddddddddddd4" ]
+    [ "$(sig_field 'step: push' .candidates.last_good_commit)" = "bbbbbbbbbbb2" ]
+    # commit 段の失敗は push とは別の signature
+    [ "$(sig_field 'step: commit' .category)" = "pr_phase_failed" ]
+    [ "$(sig_field 'step: commit' .phase)" = "PR" ]
+    [ "$(sig_field 'step: commit' .count)" = "1" ]
+    [ "$(printf '%s' "$output" | jq '.needs_llm')" = "true" ]
+}
+
 # --- 解消済みの判定 -------------------------------------------------------------
 
 @test "last_seen と別の commit で N 回（既定 5）成功し再発しなければ resolved" {

@@ -5,6 +5,8 @@
 // を 1 件残し、fail-open（handoff 自体の失敗が元の例外の rethrow を妨げない）であることを
 // VM sandbox で検証する。makeSandbox / runDevFlowInSandbox は devflow-failure-telemetry-routing
 // test.mjs の パターンを踏襲し、throwAt / journalLogAbortThrows / journal-log-abort stub を追加する。
+// PR phase の失敗（pr#<issue> の中断応答）は abort にせず、throw しない failure 終端
+// （error_category: pr_phase_failed）で返り値と journal に成果物・所要時間・回収手順を残す（(8)、issue #823）。
 
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
@@ -24,7 +26,7 @@ const REALIZED_FILES = ['src/a.ts', 'src/b.ts', 'src/c.ts'];
 
 function makeSandbox({
   analyzeReq, implementerFn, diffGateConfig, throwAt, journalLogAbortThrows, journalLogAbortResult,
-  workflowThrows, args,
+  workflowThrows, args, prResponse,
 } = {}) {
   const calls = [];
   let implementerCallIndex = 0;
@@ -51,6 +53,7 @@ function makeSandbox({
         feedback: [], feedback_level: 'implementation', ac_results: [], security_clearance: [],
       };
     }
+    if (label === 'pr#1' && prResponse !== undefined) return prResponse;
     if (label.startsWith('pr')) return { pr_url: 'http://x', pr_number: 1, committed: true };
     if (label === 'post-summary') return { posted: true, method: 'gh pr comment', url: 'http://x' };
     if (label === 'journal-log' && agentType === 'dev-flow:dev-runner-haiku') return { saved: true, logged: true };
@@ -75,7 +78,8 @@ function makeSandbox({
   };
 
   const parallelStub = async (fns) => Promise.all((fns || []).map((f) => f()));
-  const workflowStub = async () => {
+  const workflowStub = async (name) => {
+    calls.push({ label: `workflow:${name}`, agentType: '', prompt: '' });
     if (workflowThrows) throw workflowThrows;
     return { status: 'lgtm', iterations: 1, fixes_applied: 0 };
   };
@@ -322,5 +326,92 @@ test('[abort-telemetry] (7) nested workflow(pr-iterate) が throw → abort entr
   }
 });
 
-// (8) ABORT_CTX 宣言 / try 開始位置 / failure_recorded / 末尾 catch+rethrow の静的 pin は撤去した（issue #636）。
+// ============================================================
+// (8) PR phase 失敗（issue #823）: pr#1 の中断応答は throw せず failure 終端で run を終える
+// ============================================================
+function handoffPayload(prompt) {
+  const m = prompt.match(/<<<JOURNAL_HANDOFF_BODY_BEGIN>>>\n([\s\S]*?)\n<<<JOURNAL_HANDOFF_BODY_END>>>/);
+  assert.ok(m, `journal handoff prompt に delimiter が無い:\n${prompt.slice(0, 500)}`);
+  return JSON.parse(m[1]);
+}
+
+const PUSH_REASON = "error: failed to push some refs to 'github.com:o/r.git'";
+const PR_PUSH_FAILED = {
+  pr_url: '', pr_number: 0, committed: true, head_sha: 'b'.repeat(40),
+  failed_step: 'push', failure_reason: PUSH_REASON, epoch: 1300,
+};
+
+test('[abort-telemetry] (8) PR phase 失敗: throw せず、返り値に error_category / failed_step / failure_reason / committed / head_sha / branch / phase_durations / shape / eval_verdict が載る', async () => {
+  const { ctx } = makeSandbox({ analyzeReq: STANDARD_ANALYZE_REQ, prResponse: PR_PUSH_FAILED });
+  const { error, result } = await runDevFlowInSandbox(src, ctx);
+
+  assert.equal(error, null, `(8) PR phase 失敗で run が throw した: ${error?.message}`);
+  assert.equal(result?.status, 'pr_phase_failed');
+  assert.equal(result.error_category, 'pr_phase_failed');
+  assert.equal(result.failed_step, 'push');
+  assert.equal(result.failure_reason, PUSH_REASON);
+  assert.equal(result.committed, true);
+  assert.equal(result.head_sha, 'b'.repeat(40));
+  assert.equal(result.branch, 'feature/issue-1');
+  assert.equal(result.worktree, '/tmp/wt');
+  assert.equal(result.push_log, '/tmp/wt/.devflow-tmp/push-output.log');
+  assert.equal(result.shape, 'standard');
+  assert.equal(result.eval_verdict, 'pass');
+  // start=1000（args.setup.epoch）・setup_end=1050・pr_end=end=1300（pr#1 の epoch）
+  assert.equal(JSON.stringify(result.phase_durations), JSON.stringify({ pr: 250 }));
+  assert.equal(result.duration_seconds, 300);
+  assert.equal(result.journal_log_status, 'logged');
+});
+
+test('[abort-telemetry] (8) PR phase 失敗: 回収コマンドは committed に応じて決まり、issue コメント本文に失敗段・理由・回収コマンドが載る', async () => {
+  const { ctx } = makeSandbox({ analyzeReq: STANDARD_ANALYZE_REQ, prResponse: PR_PUSH_FAILED });
+  const { result } = await runDevFlowInSandbox(src, ctx);
+  const cmds = result.recovery_commands;
+  assert.equal(cmds[0], 'git push -u origin HEAD', `push 失敗（commit 済み）は push から: ${JSON.stringify(cmds)}`);
+  assert.ok(cmds[1].startsWith('gh pr create --draft --body-file .devflow-tmp/pr-body.md --base main --head feature/issue-1 --title "'), cmds[1]);
+  assert.equal(cmds[2], '/pr-iterate <N>');
+  assert.equal(cmds.length, 3);
+  for (const s of ['step: push', PUSH_REASON, '/tmp/wt/.devflow-tmp/push-output.log', 'git push -u origin HEAD', '/pr-iterate <N>', '.devflow-tmp/pr-body.md', 'b'.repeat(40)]) {
+    assert.ok(result.issue_comment.includes(s), `issue_comment に '${s}' が無い:\n${result.issue_comment}`);
+  }
+
+  const { ctx: ctx2 } = makeSandbox({
+    analyzeReq: STANDARD_ANALYZE_REQ,
+    prResponse: { pr_url: '', pr_number: 0, committed: false, head_sha: '', failed_step: 'commit', failure_reason: 'fatal: index.lock' },
+  });
+  const { error: error2, result: result2 } = await runDevFlowInSandbox(src, ctx2);
+  assert.equal(error2, null, `(8) commit 失敗で run が throw した: ${error2?.message}`);
+  assert.equal(result2.failed_step, 'commit');
+  assert.equal(result2.committed, false);
+  assert.ok(!('head_sha' in result2), `head_sha が取れなかった run に head_sha キーがある: ${result2.head_sha}`);
+  assert.ok(!('push_log' in result2), 'commit 失敗に push_log が載っている');
+  assert.deepEqual([...result2.recovery_commands.slice(0, 3)], ['git add -A', 'git commit -F .devflow-tmp/commit-msg.txt', 'git push -u origin HEAD']);
+});
+
+test('[abort-telemetry] (8) PR phase 失敗: abort entry ではなく outcome=failure / error_category=pr_phase_failed の handoff を 1 件書き、closes-check・nested pr-iterate・Merge tier・終端サマリは実行しない', async () => {
+  const { ctx, calls } = makeSandbox({ analyzeReq: STANDARD_ANALYZE_REQ, prResponse: PR_PUSH_FAILED });
+  await runDevFlowInSandbox(src, ctx);
+
+  assert.equal(calls.filter((c) => c.label === 'journal-log-abort').length, 0, '(8) abort entry が書かれた');
+  const failureCalls = calls.filter((c) => c.label === 'journal-log-failure');
+  assert.equal(failureCalls.length, 1, `(8) journal-log-failure は 1 回のはずだが ${failureCalls.length} 回だった`);
+  const payload = handoffPayload(failureCalls[0].prompt);
+  assert.equal(payload.skill, 'dev-flow');
+  assert.equal(payload.outcome, 'failure');
+  assert.equal(payload.error_category, 'pr_phase_failed');
+  assert.equal(payload.error_phase, 'PR');
+  assert.ok(payload.error_msg.startsWith(`dev-flow: PR phase 失敗（step: push、reason: ${PUSH_REASON}、push 出力全文: /tmp/wt/.devflow-tmp/push-output.log）`), payload.error_msg);
+  assert.equal(payload.telemetry.shape, 'standard');
+  assert.equal(payload.telemetry.eval_verdict, 'pass');
+  assert.deepEqual(payload.telemetry.phase_durations, { pr: 250 });
+  assert.equal(payload.telemetry.duration_seconds, 300);
+
+  for (const label of ['closes-check', 'workflow:dev-flow:pr-iterate', 'merge-tier-facts', 'post-summary', 'journal-log']) {
+    assert.equal(calls.filter((c) => c.label === label).length, 0, `(8) PR 失敗後に ${label} が呼ばれた`);
+  }
+  // push / PR 作成は pr#1 の 1 spawn だけで、run 内で再試行しない（#804 / #819）
+  assert.equal(calls.filter((c) => c.label.startsWith('pr#')).length, 1, '(8) pr#<issue> が再 spawn された');
+});
+
+// (9) ABORT_CTX 宣言 / try 開始位置 / failure_recorded / 末尾 catch+rethrow の静的 pin は撤去した（issue #636）。
 // Setup 段の abort は (3)、failure_recorded による二重記録防止は (5)、rethrow は (1)(4) が VM 挙動で担保する。

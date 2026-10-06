@@ -94,6 +94,29 @@ CI test は green」を意味する。呼び出し元は journal・`gh pr checks
 その旨をそのまま報告する。`validate_tests === 'error'` で `ci_test_verified` が `true` でなければ
 テストは未検証なので、その旨を報告して CI の確認を人間に委ねる。`validate_tests === 'failed'` は本物の red。
 
+## PR phase 失敗の扱い（`error_category: "pr_phase_failed"`）
+
+PR phase（commit / push / `gh pr create`）が失敗した run は throw せず、`status` / `error_category` が
+`"pr_phase_failed"` の返り値で終わる（PR は無く、pr-iterate・Merge tier・終端サマリは走っていない）。返り値には
+`failed_step`（`commit` / `push` / `pr-create` / `unknown`）・`failure_reason`（失敗コマンドの stderr 末尾 verbatim）・
+`committed`・`head_sha`（取れた場合）・`push_log`（push 失敗時。pr-push が出力全文を残したファイル）・`branch`・
+`worktree`・`shape`・`eval_verdict`・`phase_durations`・`recovery_commands`・`issue_comment` が載る。
+
+呼び出し元セッションは次の 2 手順で失敗段・理由と回収コマンドを issue に残す:
+
+1. 返り値の `issue_comment` を **Write tool** で `<worktree>/.devflow-tmp/pr-phase-failure-comment.md` へ
+   一字一句そのまま保存する（要約・追記・書き換えをしない）
+2. top-level の Bash で bare 単文 `gh issue comment <issue> --repo <repo> --body-file <worktree>/.devflow-tmp/pr-phase-failure-comment.md`
+   を実行する（`repo` が null なら `--repo` を省く。`cd X &&` / env 前置 / `bash` 前置は付けない）
+
+`issue_comment` の回収コマンドは `committed` と `failed_step` から決まる。commit 未了なら `git add -A` →
+`git commit -F .devflow-tmp/commit-msg.txt` から、push で止まった run は `git push -u origin HEAD` から、
+pr-create で止まった run は `gh pr create --draft --body-file .devflow-tmp/pr-body.md ...` から始まり、最後は
+`/pr-iterate <N>`。commit message と PR body は run が `.devflow-tmp/` に保存済みのものを使い、再生成しない
+（run が決定論で組んだ Closes 行・AC・設計判断と食い違うため）。wrapper は回収コマンドを自分で実行しない —
+push / PR 作成は run 内でも wrapper でも再試行せず（pre-push hook の失敗等は原因を人間が判断する）、
+コメント投稿の後に失敗段・理由と issue コメントの URL を人間に報告して終える。
+
 ## Implement 経路（全 shape で dev-implementer 一本）
 
 Setup 末尾の analyze ゲート（固有の phase は持たない）は `args.setup.analyze`（prerun の決定論 analyze）を

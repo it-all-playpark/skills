@@ -8,6 +8,8 @@
 #      message の URL・絶対パス・hash・PR 番号・数値は <*> に置き換える（Drain 系）。
 #      error.category == "needs_clarification"（analyze ゲート等が人間の判断待ちで止めた設計どおりの停止）は
 #      dev-flow の欠陥ではないので signature にしない（1 signature = 1 issue で毎回起票されるのを防ぐ）。
+#      error.category == "pr_phase_failed"（PR phase の commit / push / gh pr create が失敗し、throw せずに終えた run）は
+#      人間の回収が要る失敗なので abort と同じく signature にする（phase は PR）。
 #   2. signature ごとに first_seen / last_seen（timestamp と telemetry.plugin_commit）を出し、状態を決める:
 #        resolved  : last_seen 以後に、last_seen と別の plugin_commit で同じ skill が N 回以上成功し、再発していない
 #                    （別の失敗で止まった run はその phase まで到達した証拠にならないので数えない）
