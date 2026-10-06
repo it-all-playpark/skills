@@ -77,7 +77,7 @@ Claude Code runtime によって frontmatter レベルで適用されるため�
 | Evaluate / Final reconcile | `ui-verify-stack smoke`（smoke の決定的検証）/ `ui-verify-stack login`（scenario 前段のログイン） | `UIVERIFY` / `UILOGIN` |
 | Evaluate / Final reconcile | ui-verify teardown（`ui-verify-stack down` + `agent-browser close`） | `UISTOP` |
 | Evaluate / Merge tier | journal 書き込み等その他決定論スクリプト | 各 schema |
-| PR | PR 作成（pr#<issue> — 確定済み commit message / PR body の verbatim 保存 + bare 単文 `git add -A` / `git commit -F` / `git push -u origin HEAD` / `gh pr create --draft --body-file`） | `{pr_url, pr_number, committed}` |
+| PR | PR 作成（pr#<issue> — 確定済み commit message / PR body の verbatim 保存 + bare 単文 `git add -A` / `git commit -F` / `pr-push <log>`（内部で `git push -u origin HEAD`）/ `gh pr create --draft --body-file`） | `{pr_url, pr_number, committed}` |
 | Iterate / Merge tier | PR コメント投稿（post-review#i / post-summary — 確定済み本文の verbatim 転写 + gh pr comment/review 実行） | `{posted, method, url}` |
 
 read-only な決定論 proxy（danger-grep / diff-hash / changed-files
