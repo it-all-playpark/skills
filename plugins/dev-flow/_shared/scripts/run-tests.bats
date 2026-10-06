@@ -7,6 +7,8 @@ bats_require_minimum_version 1.5.0
 # 失敗出力を吐く script）を置き、status / tests / green / scripts / failed_files を stdout の JSON 1 行で検査する。
 # tests/run-*.sh が無い repo のフォールバックは npm / pnpm を stub（PATH 先頭）に差し替えて実 install なしで回す。
 # untracked の intent-to-add（issue #833）は WT を git init した fixture で、git grep invariant の red と index の状態を見る。
+# 変更ファイルの受け渡し（issue #835）は、受け取った DEVFLOW_CHANGED_FILES / DEVFLOW_BASE を WT 外へ書き出す
+# probe ランナー（make_env_probe）で、値と一覧の中身・未設定の各経路を見る。
 
 setup() {
     SCRIPT="$BATS_TEST_DIRNAME/run-tests.sh"
@@ -293,4 +295,125 @@ make_grep_invariant() {
     run bash "$SCRIPT"
     [ "$status" -eq 2 ]
     echo "$output" | jq -e '.status == "error" and .green == false'
+    run bash "$SCRIPT" "$WT" --base
+    [ "$status" -eq 2 ]
+    echo "$output" | jq -e '.status == "error" and (.summary | contains("--base <ref>"))'
+}
+
+# --- 変更ファイルの受け渡し（issue #835）---
+
+run_tests_base() {
+    run --separate-stderr bash "$SCRIPT" "$WT" --base "$1"
+    [ "${#lines[@]}" -eq 1 ]
+    JSON="$output"
+}
+
+# 受け取った DEVFLOW_CHANGED_FILES / DEVFLOW_BASE を WT 外に書き出すランナー（未設定は "unset"）。
+# 一覧ファイルの中身も WT 外へ写す
+make_env_probe() {
+    make_script run-probe.sh "$(cat <<EOF
+printf '%s\n%s\n' "\${DEVFLOW_CHANGED_FILES-unset}" "\${DEVFLOW_BASE-unset}" > "$TMP_DIR/env.out"
+if [ -n "\${DEVFLOW_CHANGED_FILES-}" ]; then cp "\$DEVFLOW_CHANGED_FILES" "$TMP_DIR/list.out"; fi
+exit 0
+EOF
+)"
+}
+
+git_commit() {
+    git -C "$WT" -c user.name=t -c user.email=t@example.com commit -q -m "$1"
+}
+
+@test "--base: 変数がランナーに届き、一覧に commit 済み・staged・未 stage・untracked が WT 相対で重複なく入る" {
+    make_env_probe
+    echo base > "$WT/committed.txt"
+    echo base > "$WT/staged.txt"
+    echo base > "$WT/unstaged.txt"
+    echo base > "$WT/old-name.txt"
+    init_repo
+    git -C "$WT" branch base-ref
+    # commit 済み（さらに未 stage の変更も重ね、一覧では 1 件になること）と rename（旧・新の両方）
+    echo committed > "$WT/committed.txt"
+    git -C "$WT" mv old-name.txt new-name.txt
+    git -C "$WT" add committed.txt
+    git_commit change
+    echo again > "$WT/committed.txt"
+    # staged / 未 stage / untracked（.devflow-tmp/ は載せない）
+    echo staged > "$WT/staged.txt"
+    git -C "$WT" add staged.txt
+    echo unstaged > "$WT/unstaged.txt"
+    mkdir -p "$WT/src" "$WT/.devflow-tmp"
+    echo new > "$WT/src/new file.txt"
+    echo tmp > "$WT/.devflow-tmp/pr-body.md"
+    run_tests_base base-ref
+    echo "$JSON" | jq -e '.status == "passed" and .green == true'
+    [[ "$stderr" != *"warning"* ]]
+    changed_path=$(sed -n 1p "$TMP_DIR/env.out")
+    [[ "$changed_path" == /* ]]
+    [ "$(sed -n 2p "$TMP_DIR/env.out")" = "$(git -C "$WT" rev-parse base-ref)" ]
+    expected=$(printf '%s\n' committed.txt new-name.txt old-name.txt "src/new file.txt" staged.txt unstaged.txt)
+    [ "$(LC_ALL=C sort "$TMP_DIR/list.out")" = "$expected" ]
+    [ -z "$(sort "$TMP_DIR/list.out" | uniq -d)" ]
+}
+
+@test "--base: 2 回目の実行（intent-to-add 済み）でも untracked だったファイルが一覧に残る" {
+    make_env_probe
+    init_repo
+    echo new > "$WT/added.txt"
+    run_tests_base HEAD
+    run_tests_base HEAD
+    [ "$(cat "$TMP_DIR/list.out")" = "added.txt" ]
+}
+
+@test "--base 無し: 両変数とも未設定（呼び出し元の環境にあっても継がない）" {
+    make_env_probe
+    init_repo
+    echo new > "$WT/added.txt"
+    export DEVFLOW_CHANGED_FILES="$TMP_DIR/outer.txt" DEVFLOW_BASE=outer
+    run_tests
+    echo "$JSON" | jq -e '.status == "passed" and .green == true'
+    [ "$(cat "$TMP_DIR/env.out")" = "$(printf 'unset\nunset')" ]
+}
+
+@test "--base 解決失敗: 両変数とも未設定、stderr に 1 行だけ出して status / green は変えない" {
+    make_env_probe
+    init_repo
+    run_tests_base no-such-ref
+    echo "$JSON" | jq -e '.status == "passed" and .tests == "passed" and .green == true'
+    [ "$(cat "$TMP_DIR/env.out")" = "$(printf 'unset\nunset')" ]
+    [ "$(grep -c 'DEVFLOW_CHANGED_FILES / DEVFLOW_BASE not set' <<< "$stderr")" -eq 1 ]
+}
+
+@test "--base で git が失敗（git の work tree でない）: 両変数とも未設定、status は変えない" {
+    make_env_probe
+    run_tests_base HEAD
+    echo "$JSON" | jq -e '.status == "passed" and .green == true'
+    [ "$(cat "$TMP_DIR/env.out")" = "$(printf 'unset\nunset')" ]
+    [ "$(grep -c 'not set' <<< "$stderr")" -eq 1 ]
+}
+
+@test "--base: フォールバック経路（npm test）には変数を渡さない" {
+    echo '{"name":"x","scripts":{"test":"node t.js"}}' > "$WT/package.json"
+    rmdir "$WT/tests"
+    init_repo
+    echo new > "$WT/added.txt"
+    printf '#!/usr/bin/env bash\nprintf "%%s\\n%%s\\n" "${DEVFLOW_CHANGED_FILES-unset}" "${DEVFLOW_BASE-unset}" > "%s/env.out"\nexit 0\n' "$TMP_DIR" > "$STUB_DIR/npm"
+    chmod +x "$STUB_DIR/npm"
+    export PATH="$STUB_DIR:$PATH"
+    run_tests_base HEAD
+    echo "$JSON" | jq -e '.status == "passed" and .scripts == [{path: "npm test", exit: 0, launch_failed: false}]'
+    [ "$(cat "$TMP_DIR/env.out")" = "$(printf 'unset\nunset')" ]
+}
+
+@test "--base: 変数を読まないランナーでは status と出力 JSON が --base 無しと同一（epoch・log パスを除く）" {
+    make_script run-a.sh 'echo "ok 1 a"'
+    make_script run-b.sh 'echo "not ok 1 b"; echo "# (in test file '"$WT"'/plugins/b.bats, line 2)"; exit 1'
+    init_repo
+    echo new > "$WT/added.txt"
+    normalize='del(.epoch) | .summary |= gsub("log: [^)]*"; "log: X")'
+    run_tests
+    without=$(jq -c "$normalize" <<< "$JSON")
+    run_tests_base HEAD
+    with=$(jq -c "$normalize" <<< "$JSON")
+    echo "$with" | jq -e '.status == "failed" and .failed_files == ["plugins/b.bats"]'
+    [ "$with" = "$without" ]
 }

@@ -1,9 +1,18 @@
 #!/usr/bin/env bash
 # run-tests.sh - Validate（test#i）・post-eval・test#final のテスト実行 exec-proxy（issue #821）。
-# Usage: run-tests.sh <worktree>
+# Usage: run-tests.sh <worktree> [--base <ref>]
 #
 # green 判定を LLM の解釈ではなく exit code から決める。呼び出し側 agent は stdout の JSON 1 行を
 # verbatim で転写するだけで、スクリプトの選択・起動失敗の分類・failed_files の抽出はここで行う。
+#
+# 変更ファイルの受け渡し（issue #835）: --base があり `git merge-base <ref> HEAD` が解決できたときだけ、
+# merge-base から working tree への差分（commit 済み・staged・未 stage）と untracked（--exclude-standard、
+# .devflow-tmp/ を除く）の <WT> 相対パスを重複なく 1 行 1 件で $LOG_DIR/changed-files.txt に書き、
+# tests/run-*.sh に DEVFLOW_CHANGED_FILES=<その絶対パス> と DEVFLOW_BASE=<merge-base の sha> を渡す。
+# 何を回すかは repo 側のランナーが決める — run-tests はテストの選択・skip をしない（repo 固有の知識を持たない）。
+# --base 無し・merge-base 解決失敗・git 失敗では両変数とも設定しない（未設定 = ランナーは全件実行）。
+# 失敗は stderr に 1 行出すだけで status / green には影響させない。フォールバック経路には渡さない。
+# 呼び出し元の環境に同名変数があっても継がない（入れ子の run-tests で外側の一覧を誤って使わない）。
 #
 # 手順:
 #   0. <WT> の untracked で ignore 対象外のファイル（.devflow-tmp/ を除く）を git add --intent-to-add で index に
@@ -48,8 +57,13 @@ emit() {
         '{status: $s, tests: $t, green: $g, summary: $m, scripts: $sc, failed_files: $ff, epoch: $e}'
 }
 
-if [[ $# -ne 1 ]]; then
-    emit error error false "usage: run-tests <worktree>" '[]' '[]'
+unset DEVFLOW_CHANGED_FILES DEVFLOW_BASE
+
+BASE_REF=""
+if [[ $# -eq 3 && "$2" == "--base" && -n "$3" ]]; then
+    BASE_REF="$3"
+elif [[ $# -ne 1 ]]; then
+    emit error error false "usage: run-tests <worktree> [--base <ref>]" '[]' '[]'
     exit 2
 fi
 WT=$(cd "$1" 2>/dev/null && pwd) || { emit error error false "cd failed: $1" '[]' '[]'; exit 2; }
@@ -59,6 +73,25 @@ cd "$WT" || { emit error error false "cd failed: $WT" '[]' '[]'; exit 2; }
 
 LOG_DIR=$(mktemp -d "${TMPDIR:-/tmp}/run-tests-XXXXXX") \
     || { emit error error false "cannot create log dir under ${TMPDIR:-/tmp}" '[]' '[]'; exit 0; }
+
+# 変更ファイルの一覧（--base があるときだけ。intent-to-add の前に取る — 載せた後は untracked に出ないが、
+# git diff <merge-base> には intent-to-add のファイルも出るので、再実行時も一覧は変わらない）。
+# rename は旧パス・新パスの両方を載せる（--no-renames）。-z で取り、パスを quote させない
+CHANGED_FILES=""
+MERGE_BASE=""
+if [[ -n "$BASE_REF" ]]; then
+    changed="$LOG_DIR/changed-files.txt"
+    if ! MERGE_BASE=$(git merge-base "$BASE_REF" HEAD 2>"$LOG_DIR/changed-files.log"); then
+        echo "[run-tests] warning: merge-base of $BASE_REF and HEAD not resolved — DEVFLOW_CHANGED_FILES / DEVFLOW_BASE not set (log: $LOG_DIR/changed-files.log)" >&2
+    elif ! { git diff -z --name-only --no-renames --relative "$MERGE_BASE" -- \
+                && git ls-files -z --others --exclude-standard -- . ':(exclude).devflow-tmp'; } \
+            > "$LOG_DIR/changed-files.raw" 2>>"$LOG_DIR/changed-files.log"; then
+        echo "[run-tests] warning: git diff / ls-files failed — DEVFLOW_CHANGED_FILES / DEVFLOW_BASE not set (log: $LOG_DIR/changed-files.log)" >&2
+    else
+        tr '\0' '\n' < "$LOG_DIR/changed-files.raw" | LC_ALL=C awk 'length && !seen[$0]++' > "$changed"
+        CHANGED_FILES="$changed"
+    fi
+fi
 
 # 0. untracked の新規ファイルを intent-to-add で index に載せる
 #    テストは commit 前の worktree で走るため、Implement / fix が作ったファイルは untracked のまま。
@@ -172,7 +205,10 @@ SUMMARY_BODY=""
 for i in "${!TARGETS[@]}"; do
     target="${TARGETS[$i]}"
     log="$LOG_DIR/$i.log"
-    if [[ -z "${COMMANDS[$i]}" ]]; then
+    if [[ -z "${COMMANDS[$i]}" && -n "$CHANGED_FILES" ]]; then
+        DEVFLOW_CHANGED_FILES="$CHANGED_FILES" DEVFLOW_BASE="$MERGE_BASE" "$target" > "$log" 2>&1 < /dev/null
+        rc=$?
+    elif [[ -z "${COMMANDS[$i]}" ]]; then
         "$target" > "$log" 2>&1 < /dev/null
         rc=$?
     else

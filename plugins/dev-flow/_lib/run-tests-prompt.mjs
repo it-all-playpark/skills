@@ -14,17 +14,21 @@
 // timeout 未指定だと background に回され、agent が待った後に同じコマンドを再発行して二重実行になるので、
 // timeout: 600000 を明示し background 化・再実行を禁じる。JSON が返らなかった場合の応答は固定文字列にして
 // agent に結果を組み立てさせない（tests:"error" は green-fix を回さず Final reconcile では CI 委譲へ進む経路）。
+//
+// --base: run-tests は merge-base からの変更ファイル一覧を DEVFLOW_CHANGED_FILES / DEVFLOW_BASE で tests/run-*.sh に渡す
+// （issue #835）。何を回すかは repo 側のランナーが決める。全 test spawn・全 shape・全 gate_policy で同じ ref を渡す。
 
 /**
  * @param {string} wt worktree の絶対パス
+ * @param {string} base 変更ファイルの起点 ref（`origin/<base branch>`）
  * @returns {string}
  */
-export function runTestsPrompt(wt) {
+export function runTestsPrompt(wt, base) {
   return `cd ${wt} で作業。次のコマンドを **先頭トークンが run-tests の bare 単文** で 1 回だけ実行し、`
     + `**stdout の JSON 1 行だけ** を verbatim で返せ（判定や脚色をしない。キーの追加・削除・値の書き換えをしない）。`
     + `argv は一字一句そのまま実行する — which による絶対パス解決・絶対パスへの書き換え・cd 前置・\`bash\` 前置・環境変数代入前置・&& 連結は禁止。`
     + `Bash tool の \`timeout: 600000\` を指定して実行し、\`run_in_background\` は使わない（禁止）。再実行しない（timeout に達した場合も含む）。`
     + `timeout に達した・stdout に JSON 1 行が無い場合だけは、`
     + `{"tests":"error","green":false,"summary":"run-tests did not return JSON"} を一字一句そのまま返せ:\n`
-    + `run-tests ${wt}`;
+    + `run-tests ${wt} --base ${base}`;
 }

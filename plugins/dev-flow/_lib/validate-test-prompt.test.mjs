@@ -88,15 +88,29 @@ test('[validate-test-prompt] test#1 は dev-runner-haiku に GREEN schema（test
   assert.deepEqual([...(c.schema?.required ?? [])], ['tests', 'green'], `test#1 の schema が GREEN ではない: ${JSON.stringify(c.schema)}`);
 });
 
-test('[validate-test-prompt] test#1 prompt は runTestsPrompt(WT) と byte 一致する（canonical から inline 生成された転写契約）', async () => {
+test('[validate-test-prompt] test#1 prompt は runTestsPrompt(WT, origin/<base>) と byte 一致する（canonical から inline 生成された転写契約）', async () => {
   await ensureSharedRun();
-  assert.equal(test1Call().prompt, runTestsPrompt('/tmp/wt'));
+  assert.equal(test1Call().prompt, runTestsPrompt('/tmp/wt', 'origin/main'));
 });
 
-test('[validate-test-prompt] 転写契約: 最終行が bare 単文 `run-tests <WT>` で、stdout の JSON 1 行を verbatim で返させる', () => {
-  const prompt = runTestsPrompt('/tmp/wt');
+test('[validate-test-prompt] --base は PRERUN.base（origin/<base>）に追従し、test#1 / test#final が同じ ref を渡す', async () => {
+  const { ctx, calls } = makeRecordingSandbox(
+    (c) => (c.label === 'reconcile-sync' ? { ok: true, head: 'a'.repeat(40) } : responder(c)),
+    { args: devFlowArgs('553', { base: 'dev' }), workflow: async () => ({ status: 'lgtm', iterations: 2, fixes_applied: 1 }) },
+  );
+  await runDevFlowInSandbox(devFlowSrc, ctx);
+  for (const label of ['test#1', 'test#final']) {
+    const c = calls.find((x) => x.label === label);
+    assert.ok(c != null, `${label} の call が見つからない (labels: ${calls.map((x) => x.label).join(', ')})`);
+    assert.equal(c.prompt.split('\n').at(-1), 'run-tests /tmp/wt --base origin/dev', `${label} の実行コマンド行: ${c.prompt.split('\n').at(-1)}`);
+  }
+});
+
+test('[validate-test-prompt] 転写契約: 最終行が bare 単文 `run-tests <WT> --base <ref>` で、stdout の JSON 1 行を verbatim で返させる', () => {
+  const prompt = runTestsPrompt('/tmp/wt', 'origin/main');
   const lines = prompt.split('\n');
-  assert.equal(lines.at(-1), 'run-tests /tmp/wt', `実行コマンド行が bare 単文の run-tests ではない: ${lines.at(-1)}`);
+  assert.equal(lines.at(-1), 'run-tests /tmp/wt --base origin/main', `実行コマンド行が bare 単文の run-tests ではない: ${lines.at(-1)}`);
+  assert.ok(prompt.includes('1 回だけ実行') && prompt.includes('再実行しない'), '1 回だけ実行の指示が無い');
   assert.ok(prompt.includes('stdout の JSON 1 行だけ'), 'stdout の JSON 1 行だけを返させる指示が無い');
   assert.ok(prompt.includes('verbatim'), 'verbatim 転写の指示が無い');
   assert.ok(prompt.includes('timeout: 600000') && prompt.includes('run_in_background'), 'timeout 明示と background 禁止の指示が無い');
@@ -139,4 +153,19 @@ test('[validate-test-prompt] Final reconcile の test#final は Validate の tes
   assert.equal(tf.prompt, t1.prompt, 'test#final の prompt が test#1 と一致しない');
   assert.equal(tf.agentType, 'dev-flow:dev-runner-haiku');
   assert.deepEqual([...(tf.schema?.required ?? [])], ['tests', 'green'], 'test#final の schema が GREEN ではない');
+});
+
+// 変数の契約（名前・形式・未設定 = 全件）は repo 側のランナーが読む唯一の仕様なので、reference の記述を pin する
+test('[validate-test-prompt] exec-proxy.md / pipeline.md の run-tests 説明に DEVFLOW_CHANGED_FILES / DEVFLOW_BASE の契約がある', () => {
+  const execProxyMd = readFileSync(join(repoRoot, 'dev-flow/references/exec-proxy.md'), 'utf8');
+  const pipelineMd = readFileSync(join(repoRoot, 'dev-flow/references/pipeline.md'), 'utf8');
+  const execRow = execProxyMd.match(/^\| validate-test.*$/m)?.[0];
+  assert.ok(execRow, 'exec-proxy.md に validate-test 行が無い');
+  const pipelinePara = pipelineMd.split('\n\n').find((p) => p.includes('run-tests <WT>'));
+  assert.ok(pipelinePara, 'pipeline.md に run-tests の段落が無い');
+  for (const [name, text] of [['exec-proxy.md', execRow], ['pipeline.md', pipelinePara]]) {
+    for (const token of ['--base', 'DEVFLOW_CHANGED_FILES', 'DEVFLOW_BASE', '絶対パス', '1 行 1 件', '全件', 'untracked']) {
+      assert.ok(text.includes(token), `${name} の run-tests 説明に '${token}' が無い`);
+    }
+  }
 });
