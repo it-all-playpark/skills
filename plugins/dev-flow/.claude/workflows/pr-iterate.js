@@ -1443,10 +1443,17 @@ for (i = 1; i <= MAX; i++) {
     let ciEff = null
     let gateWaited = 0   // この gate の nominal 累積待機秒
     let gatePolls = 0    // この gate の判定 spawn（ci-check + 実待機が成立した ci-wait-check）回数
+    // 並列 ci-check は round 冒頭（fix push 直後）に取るので、head_sha が一致しても GitHub が新 head の
+    // check を未登録なだけで no_checks が返り得る。no_checks は passed 扱いで lgtm を確定させるため、
+    // LGTM gate では並列分の no_checks を採らず review の後の直列 ci-check で取り直す（CI 未検証の lgtm を防ぐ）。
+    const gateAdopted = ciAdopted?.status === 'no_checks' ? null : ciAdopted
+    if (ciAdopted != null && gateAdopted == null) {
+      log(`⚠️ iteration ${i}: 並列 ci-check#${i} の no_checks を CI gate では採らない（新 head の check 未登録の可能性）— 直列に起動し直す`)
+    }
     for (;;) {
       if (gatePolls === 0) {
         gatePolls = 1
-        ci = await firstCiCheck(i, ciAdopted, ciParallelLaunched)
+        ci = await firstCiCheck(i, gateAdopted, ciParallelLaunched)
         if (ci == null) log(`⚠️ ci-check#${i} が結果を返さず — fail-open で status=error（ci_error 終端）扱い`)
       } else {
         const waitLabel = `ci-wait-check#${i}.${gatePolls + 1}`

@@ -100,6 +100,35 @@ test('[AC-2] head_sha 不一致: 並列の passed（旧 head）は採らず、re
   assert.ok(logs.some((l) => l.includes('head_mismatch')), `不採用理由 head_mismatch が log に出るべき: ${JSON.stringify(logs)}`);
 });
 
+test('[AC-2][AC-4] LGTM round: 並列で得た no_checks（head 一致でも新 head の check 未登録の可能性）は採らず、review の後に ci-check#1-serial を取り直してその結果で判定する', async () => {
+  const { result, labels, logs } = await run({
+    'ci-check#1': ci('no_checks', HEAD1),
+    'ci-check#1-serial': ci('pending', HEAD1),
+    'ci-wait-check#1.2': { slept: true, status: 'passed', failed_checks: [] },
+  });
+
+  const iReview = labels.indexOf('review#1');
+  const iSerial = labels.indexOf('ci-check#1-serial');
+  assert.ok(iSerial > iReview, `並列の no_checks を採らず ci-check#1-serial を review#1 の後に起動すべき: ${JSON.stringify(labels)}`);
+  assert.ok(labels.includes('ci-wait-check#1.2'), '直列の pending で待機ループへ進むべき（並列の no_checks で lgtm にしない）');
+  assert.equal(result?.status, 'lgtm');
+  assert.equal(result?.ci_last_status, 'passed');
+  assert.equal(result?.ci_poll_attempts, 2, '直列 1 + ci-wait-check 1（採らなかった並列分は数えない）');
+  assert.ok(logs.some((l) => l.includes('no_checks')), `no_checks を採らない旨が log に出るべき: ${JSON.stringify(logs)}`);
+});
+
+test('[AC-4] LGTM round: 直列で取り直しても no_checks なら CI 未設定として lgtm（従来の no_checks=passing を維持）', async () => {
+  const { result, labels } = await run({
+    'ci-check#1': ci('no_checks', HEAD1),
+    'ci-check#1-serial': ci('no_checks', HEAD1),
+  });
+
+  assert.ok(labels.includes('ci-check#1-serial'), `直列で取り直すべき: ${JSON.stringify(labels)}`);
+  assert.equal(result?.status, 'lgtm');
+  assert.equal(result?.ci_last_status, 'no_checks');
+  assert.equal(result?.ci_poll_attempts, 1);
+});
+
 for (const [name, response] of [
   ['null', null],
   ['throw', () => { throw new Error('stub: StructuredOutput 未返却'); }],
