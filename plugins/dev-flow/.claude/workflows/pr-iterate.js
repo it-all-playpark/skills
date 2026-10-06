@@ -109,6 +109,33 @@ function buildJournalPendingPath({ prefix, id, effectId }) {
   return `${JOURNAL_PENDING_DIR}/${safePrefix}-${safeId}-effect-${effectId}.json`;
 }
 
+const JOURNAL_HANDOFF_RESULT = {
+  type: 'object',
+  required: ['saved', 'logged'],
+  properties: {
+    saved: { type: 'boolean' },
+    logged: { type: 'boolean' },
+  },
+};
+
+function buildJournalPendingWriteInstr({ prefix, id, payload }) {
+  if (typeof payload !== 'string' || payload === '') {
+    throw new Error('journal-handoff: payload is required');
+  }
+  const pendingPath = buildJournalPendingPath({ prefix, id, effectId: journalEffectId(payload) });
+
+  return `## Journal pending への書き出し\n`
+    + `1. \`${pendingPath}\` が既に存在する場合は、先に **Read tool** で同ファイルを読め`
+    + `（Write tool は既存ファイルを未 Read のまま上書きできない）。Read が失敗しても手順 2 は必ず試みること。\n`
+    + `2. **Write tool** を使い、下記 delimiter 内の JSON を **一字一句そのまま** \`${pendingPath}\` へ書け。\n`
+    + `本文は絶対に shell（echo/printf/heredoc 等）へ渡さず、必ず Write tool の content 引数として渡すこと。\n`
+    + `エスケープ・再整形・pretty-print・truncate も禁止する。**Bash は使うな** — 書き込みは Write tool のみで行う。\n`
+    + `<<<JOURNAL_HANDOFF_BODY_BEGIN>>>\n${payload}\n<<<JOURNAL_HANDOFF_BODY_END>>>\n\n`
+    + `3. 手順 2 の Write tool を呼び出したら saved:true（呼び出しに到達しなかったら saved:false）、`
+    + `その Write が成功したら logged:true（失敗・拒否されたら logged:false）とし、`
+    + `結果を {saved, logged} で返せ。どの手順で失敗しても throw せず {saved, logged} を返すこと。\n`;
+}
+
 const JOURNAL_LOG_STATUSES = ['logged', 'save_failed', 'log_failed'];
 
 function classifyJournalLogStatus({ saved, logged }) {
@@ -117,120 +144,22 @@ function classifyJournalLogStatus({ saved, logged }) {
   return 'log_failed';
 }
 
-const JOURNAL_PAYLOAD_BASENAME_RE = /^payload-[A-Za-z0-9._-]+\.json$/;
-
-function buildJournalSaveInstr({ payload, savePath, saveDir, fileName }) {
-  if (payload == null) throw new Error('journal-handoff: payload is required');
-  if (savePath != null && saveDir != null) {
-    throw new Error('journal-handoff: savePath と saveDir は同時に指定できません');
-  }
-
-  const bodyBlock = `<<<JOURNAL_HANDOFF_BODY_BEGIN>>>\n${payload}\n<<<JOURNAL_HANDOFF_BODY_END>>>\n\n`;
-  const verbatimRule = `本文は絶対に shell（echo/printf/heredoc 等）へ渡さず、必ず Write tool の\n`
-    + `content 引数として渡すこと。エスケープ・改変・pretty-print も禁止する。\n`;
-  const idempotentReadRule = (target) => `${target} が既に存在する場合は、先に **Read tool** で同ファイルを`
-    + `読んでから **Write tool** で上書きせよ（Write tool は既存ファイルを未 Read のまま上書きできない）。`
-    + `Read が失敗しても Write は必ず試み、Read の成否を saved の判定に混ぜないこと。\n`;
-
-  if (savePath != null) {
-    if (!validateJournalSavedPath(savePath)) {
-      throw new Error(`journal-handoff: invalid savePath: ${JSON.stringify(savePath)}`);
-    }
-    return `## Journal handoff payload の保存\n`
-      + `1. ${idempotentReadRule(`\`${savePath}\``)}`
-      + `2. **Write tool** を使い、下記 delimiter 内の JSON を **一字一句そのまま**\n`
-      + `\`${savePath}\` へ書き出せ。${verbatimRule}`
-      + `Bash は使うな。保存先は上記のパスで固定されており、一時ファイル名を作る必要はない。\n`
-      + bodyBlock
-      + `3. 書き出しに成功したら {saved:true, path:"${savePath}"} を返せ。\n`
-      + `失敗した場合は throw せず {saved:false} を返せ。\n`;
-  }
-
-  if (!saveDir) throw new Error('journal-handoff: savePath か saveDir のどちらかが必要です');
-  if (!JOURNAL_PAYLOAD_BASENAME_RE.test(String(fileName ?? ''))) {
-    throw new Error(`journal-handoff: invalid fileName: ${JSON.stringify(fileName ?? null)}`);
-  }
-  const resolveCmd = `mkdir -p "${saveDir}" && printf '%s\\n' "${saveDir}/${fileName}"`;
-
-  return `## Journal handoff payload の保存\n`
-    + `1. まず Bash で \`${resolveCmd}\` を実行し、\n`
-    + `出力された絶対パスを <PAYLOAD_FILE> とする。\n`
-    + `2. ${idempotentReadRule('<PAYLOAD_FILE>')}`
-    + `3. 次に **Write tool** を使い、下記 delimiter 内の JSON を\n`
-    + `**一字一句そのまま** <PAYLOAD_FILE> へ書き出せ。${verbatimRule}`
-    + bodyBlock
-    + `4. 書き出しに成功したら {saved:true, path:<PAYLOAD_FILE の絶対パス>} を返せ。\n`
-    + `失敗した場合は throw せず {saved:false} を返せ。\n`;
-}
-
-const JOURNAL_TILDE_PREFIX = '~/.claude/journal/';
-
-function validateJournalSavedPath(path, { requiredDirSuffix } = {}) {
-  if (typeof path !== 'string' || path === '') return false;
-  const abs = path.startsWith(JOURNAL_TILDE_PREFIX) ? path.slice(1) : path;
-  if (!abs.startsWith('/')) return false;
-  if (!/^[A-Za-z0-9._\/-]+$/.test(abs)) return false;
-  if (abs.includes('..')) return false;
-
-  const idx = abs.lastIndexOf('/');
-  const dirPart = idx === 0 ? '/' : abs.slice(0, idx);
-  const basePart = abs.slice(idx + 1);
-  if (!JOURNAL_PAYLOAD_BASENAME_RE.test(basePart)) return false;
-  if (requiredDirSuffix && !dirPart.endsWith(requiredDirSuffix)) return false;
-
-  return true;
-}
-
-function buildJournalLogInstr({ prefix, id, payloadPath, payload }) {
-  if (!validateJournalSavedPath(payloadPath)) {
-    throw new Error(`journal-handoff: invalid payloadPath: ${JSON.stringify(payloadPath ?? null)}`);
-  }
-  if (typeof payload !== 'string' || payload === '') {
-    throw new Error(`journal-handoff: payload is required for effect ID derivation`);
-  }
-  const pendingPath = buildJournalPendingPath({ prefix, id, effectId: journalEffectId(payload) });
-
-  return `## Journal pending への書き出し\n`
-    + `1. **Read tool** で \`${payloadPath}\` を読め。\n`
-    + `2. 読み取った内容を **一字一句そのまま**、**Write tool** で \`${pendingPath}\` へ書け。\n`
-    + `再整形・pretty-print・truncate は禁止する。**Bash は使うな** — 書き込みは Write tool のみで行う。\n`
-    + `${pendingPath} が既に存在する場合は、先に **Read tool** で読んでから Write tool で上書きせよ\n`
-    + `（Write tool は既存ファイルを未 Read のまま上書きできない）。\n`
-    + `3. 書き込みに成功したら {logged:true} を返せ。どの手順で失敗しても throw せず {logged:false} を返せ。\n`;
-}
-
-async function runJournalHandoff({ agent: runAgent, log, saveSchema, logSchema, payload, savePath, prefix, id, subject, logLabel, phase }) {
+async function runJournalHandoff({ agent: runAgent, log, payload, prefix, id, logLabel, phase }) {
   let journalLogStatus = 'save_failed'
   try {
-    const journalSaveRes = await runAgent(
-      `## Objective\n${subject}の telemetry handoff payload を一時ファイルへ保存する。\n\n`
+    const res = await runAgent(
+      `## Objective\ntelemetry handoff payload を ~/.claude/journal/pending/ に書き出す（Stop hook が journal へ flush する）。\n\n`
       + `## Instructions\n`
-      + buildJournalSaveInstr({ payload, savePath })
-      + `\n## Output format\n{ "saved": boolean, "path": string }\n`
-      + `\n## Tools\n使用可: Write, Read（保存先は指示で固定済み — Bash は不要。Read は既存 payload の\n`
-      + `冪等上書きに必要）\n`
-      + `\n## Boundary\n作成した一時ファイル以外のファイルを変更しない。git 操作禁止。\n`
-      + `\n## Token cap\n120 語以内。`,
-      { agentType: 'dev-runner-haiku', schema: saveSchema, label: 'journal-save', phase },
+      + buildJournalPendingWriteInstr({ prefix, id, payload })
+      + `\n## Output format\n{ "saved": boolean, "logged": boolean }\n`
+      + `\n## Tools\n使用可: Write, Read のみ（Read は既存ファイルの冪等上書きに必要）\n`
+      + `\n## Boundary\n~/.claude/journal 以外のファイルを変更しない。git 操作禁止。\n`
+      + `\n## Token cap\n100 語以内で完結すること。`,
+      { agentType: 'dev-runner-haiku', schema: JOURNAL_HANDOFF_RESULT, label: logLabel, phase },
     )
-    const journalSavedPath = journalSaveRes?.saved === true ? savePath : null
-    if (journalSavedPath) {
-      journalLogStatus = classifyJournalLogStatus({ saved: true, logged: false })
-      const journalPost = await runAgent(
-        `## Objective\n${subject}の telemetry handoff を ~/.claude/journal/pending/ に書き出す（Stop hook が journal へ flush する）。\n\n`
-        + `## Instructions\n`
-        + buildJournalLogInstr({ prefix, id, payloadPath: journalSavedPath, payload })
-        + `\n## Output format\n{ "logged": boolean, "summary": string }\n`
-        + `\n## Tools\n使用可: Read, Write のみ\n`
-        + `\n## Boundary\n~/.claude/journal 以外のファイルを変更しない。git 操作禁止。\n`
-        + `\n## Token cap\n100 語以内で完結すること。`,
-        { agentType: 'dev-runner-haiku', schema: logSchema, label: logLabel, phase },
-      )
-      journalLogStatus = classifyJournalLogStatus({ saved: true, logged: journalPost?.logged === true })
-      if (!journalPost?.logged) log(`⚠️ ${logLabel} の記録に失敗しました（logged=${journalPost?.logged ?? 'null'}）。ワークフローは継続します。`)
-    } else {
-      journalLogStatus = classifyJournalLogStatus({ saved: false })
-      log('⚠️ journal-save 失敗（fail-open）— telemetry 記録漏れの可能性')
+    journalLogStatus = classifyJournalLogStatus({ saved: res?.saved === true, logged: res?.logged === true })
+    if (journalLogStatus !== 'logged') {
+      log(`⚠️ ${logLabel} の記録に失敗しました（${journalLogStatus}: saved=${res?.saved ?? 'null'}, logged=${res?.logged ?? 'null'}）。ワークフローは継続します。`)
     }
   } catch (e) {
     log(`⚠️ journal handoff 失敗（fail-open）: ${e?.message ?? e}`)
@@ -350,8 +279,8 @@ const REVIEW_STUCK = 2   // 同一 topic がこの回数出たら stuck と判�
 // call site を無差別リトライすると、副作用完了後に StructuredOutput 未達で終わった agent を
 // 同一 prompt で再実行して二重 push・journal 二重追記・重複コメントを起こし得るため、副作用の
 // ない読み取り専用 probe 系 call site（dev-flow.js の resolve-base / worktree-base-check 等）
-// のみで有効化する。pr-iterate.js の call site（fix / review / commit-ensure / journal-save /
-// journal-log 等）はいずれも副作用を伴うため opt-in しない（dev-flow.js と同型実装のみ共有）。
+// のみで有効化する。pr-iterate.js の call site（fix / review / commit-ensure / journal-log 等）は
+// いずれも副作用を伴うため opt-in しない（dev-flow.js と同型実装のみ共有）。
 const SUBAGENT_COUNTS = {};
 // ABORT_CTX: top-level abort handoff が catch から参照する「直前に何が起きていたか」の
 // 可変 state。pr-iterate は単一 phase（'Iterate'）固定のため phase は書き換えない。label は
@@ -882,16 +811,6 @@ function ciHeadRejectReason({ ci, expectedSha }) {
 }
 // ==== END inline: _lib/ci-check.mjs ====
 
-// journal-save（stage1）の返り値 schema。JOURNAL_RESULT（journal-log/stage2）と対で使う。
-const JOURNAL_SAVE_RESULT = {
-  type: 'object',
-  required: ['saved'],
-  properties: {
-    saved: { type: 'boolean' },
-    path: { type: 'string' },
-  },
-}
-
 const REVIEW = {
   type: 'object',
   required: ['decision', 'issues', 'summary'],
@@ -1047,10 +966,8 @@ const ISOLATION_CLEANUP = {
   properties: { cleaned: { type: 'boolean' }, error: { type: 'string' } },
 }
 const isoWt = prMeta?.cwd || '.'
-// cwd 欠落は後段に効く: journal-save の savePath が相対パスになり buildJournalSaveInstr が
-// throw するため、その run の telemetry は決定論的に save_failed になる（fail-open なので run は
-// 継続する）。原因が pr-meta probe 側にあることを追えるよう fallback 発生を明示する。
-if (!prMeta?.cwd) log('⚠️ pr-meta が cwd を返さなかったため isoWt=. で継続します（telemetry は save_failed になります）')
+// 原因が pr-meta probe 側にあることを追えるよう fallback 発生を明示する。
+if (!prMeta?.cwd) log('⚠️ pr-meta が cwd を返さなかったため isoWt=. で継続します')
 try {
 // isoTargetPath: 回避手順で提示する新規 worktree 先。isoWt（書き込みに失敗した共有 checkout の cwd）
 // とは別の孤立した先を提示する必要があるため、cwd 自体を git worktree add の対象にしない
@@ -1730,13 +1647,9 @@ const telemetryHandoff = buildJournalHandoffPayload({
 const journalLogStatus = await runJournalHandoff({
   agent: trackedAgent,
   log,
-  saveSchema: JOURNAL_SAVE_RESULT,
-  logSchema: JOURNAL_RESULT,
   payload: telemetryHandoff,
-  savePath: `${isoWt}/.devflow-tmp/payload-priterate-${PR}.json`,
   prefix: 'priterate',
   id: PR,
-  subject: 'pr-iterate 終端',
   logLabel: 'journal-log',
   phase: 'Iterate',
 })
@@ -1781,13 +1694,9 @@ return {
     const abortLogStatus = await runJournalHandoff({
       agent: trackedAgent,
       log,
-      saveSchema: JOURNAL_SAVE_RESULT,
-      logSchema: JOURNAL_RESULT,
       payload: abortPayload,
-      savePath: `${isoWt}/.devflow-tmp/payload-priterate-${PR}-abort.json`,
       prefix: 'priterate',
       id: PR,
-      subject: 'pr-iterate abort',
       logLabel: 'journal-log-abort',
       phase: 'Iterate',
     })

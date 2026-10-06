@@ -54,10 +54,8 @@ function makeCountingSandbox(analyzeReq, diffHashConfig) {
     if (label === 'merge-tier-facts') return mergeTierFacts({ files: ['src/foo.ts'] });
     if (agentType === 'dev-flow:dev-implementer') return { status: 'DONE', task_id: 'issue-1', files: [...realizedFiles], summary: '', concerns: [] };
     if (label === 'issue-meta') return { ok: true, number: 1, title: 'stub-issue-title' };
-    // journal-save (stage1, issue #494): 実際の telemetry payload はここに載る。saved:true を
-    // 返して journal-log (stage2) へ進めさせる。
-    if (label === 'journal-save') return { saved: true, path: '/tmp/wt/.devflow-tmp/payload-test.json' };
-    if (label === 'journal-log') return { logged: true, summary: 'ok' };
+    // journal-log: 実際の telemetry payload はここに載る（issue #807: pending/ へ直接書く 1 spawn）。
+    if (label === 'journal-log') return { saved: true, logged: true };
     return null;
   };
 
@@ -226,9 +224,9 @@ test('[empty-diff] (I) 両 hash 一致 + status=stuck → eval_staleness===itera
   if (error) assert.fail(`(I) 想定外エラー: ${error.message}`);
   assert.ok(returned !== null, '(I) return object を返すべき');
   assert.strictEqual(returned?.eval_staleness, 'iterate_incomplete', `(I) status=stuck なら eval_staleness==='iterate_incomplete' のはずだが ${JSON.stringify(returned?.eval_staleness)}`);
-  const journalCall = calls.find((c) => c.label === 'journal-save');
-  assert.ok(journalCall !== undefined, '(I) journal-save の agent 呼び出しが存在すべき');
-  assert.ok(journalCall?.prompt?.includes('"iterate_status":"stuck"'), `(I) journal-save prompt に "iterate_status":"stuck" を含むべきだが: ${journalCall?.prompt?.slice(0, 500)}`);
+  const journalCall = calls.find((c) => c.label === 'journal-log');
+  assert.ok(journalCall !== undefined, '(I) journal-log の agent 呼び出しが存在すべき');
+  assert.ok(journalCall?.prompt?.includes('"iterate_status":"stuck"'), `(I) journal-log prompt に "iterate_status":"stuck" を含むべきだが: ${journalCall?.prompt?.slice(0, 500)}`);
 });
 
 // (K) empty-diff gate retry 経路の phase タグが 'Validate'（'Security floor' でない）こと（issue #253）
@@ -310,7 +308,7 @@ test('[empty-diff] (M) micro path（runEval=false）+ iterate fix あり → eva
 });
 
 // (P) iterate_status ごとの merge_tier routing（reviewer 指摘の代替ケース）
-test('[empty-diff] (P-1) iterate status=max_reached → merge_tier===HOLD かつ journal-save prompt が "iterate_status":"max_reached" を含む', async () => {
+test('[empty-diff] (P-1) iterate status=max_reached → merge_tier===HOLD かつ journal-log prompt が "iterate_status":"max_reached" を含む', async () => {
   const { ctx, calls } = makeCountingSandbox(STANDARD_REQ, {
     gateEmpty: false,
     evalHash: 'AAA',
@@ -322,9 +320,9 @@ test('[empty-diff] (P-1) iterate status=max_reached → merge_tier===HOLD かつ
   if (error) assert.fail(`(P-1) 想定外エラー: ${error.message}`);
   assert.ok(returned !== null, '(P-1) return object を返すべき');
   assert.strictEqual(returned?.merge_tier, 'HOLD', `(P-1) status=max_reached なら merge_tier==='HOLD' のはずだが ${JSON.stringify(returned?.merge_tier)}`);
-  const journalCall = calls.find((c) => c.label === 'journal-save');
-  assert.ok(journalCall !== undefined, '(P-1) journal-save の agent 呼び出しが存在すべき');
-  assert.ok(journalCall?.prompt?.includes('"iterate_status":"max_reached"'), `(P-1) journal-save prompt に "iterate_status":"max_reached" を含むべきだが: ${journalCall?.prompt?.slice(0, 500)}`);
+  const journalCall = calls.find((c) => c.label === 'journal-log');
+  assert.ok(journalCall !== undefined, '(P-1) journal-log の agent 呼び出しが存在すべき');
+  assert.ok(journalCall?.prompt?.includes('"iterate_status":"max_reached"'), `(P-1) journal-log prompt に "iterate_status":"max_reached" を含むべきだが: ${journalCall?.prompt?.slice(0, 500)}`);
 });
 
 test('[empty-diff] (P-2) status=lgtm + fixes_applied=0 + hash 一致 → merge_tier===REVIEW', async () => {

@@ -8,7 +8,7 @@
 //       成功・失敗（writeFailureTelemetry）・abort の各組み立て口が literal として存在すること、
 //       telemetry を literal 以外（変数・shorthand）で渡す箇所が無いことも pin する。
 //   (2) 挙動 pin: DEV_FLOW_SCENARIOS（成功 / lite / abort / empty-diff / cross-repo / needs_clarification …）と
-//       pr-iterate.js の成功・abort を VM 実行し、journal-save payload の telemetry キーが 12 キーの部分集合であること。
+//       pr-iterate.js の成功・abort を VM 実行し、journal handoff payload の telemetry キーが 12 キーの部分集合であること。
 //   (3) telemetry.md のキー一覧が 12 キーと一致すること。
 
 import { test } from 'vitest';
@@ -131,11 +131,12 @@ test('[telemetry-keys] 静的: 走査器は 12 キー外のキー（直下・条
 
 // ---- 挙動（VM 実行） ----
 
-function handoffTelemetry(calls, label = 'journal-save') {
-  const save = calls.find((c) => c.label === label);
+// journal handoff は journal-log / journal-log-failure / journal-log-abort の 1 spawn（issue #807）。
+function handoffTelemetry(calls) {
+  const save = calls.find((c) => c.label.startsWith('journal-log'));
   if (!save) return null;
   const m = save.prompt.match(/<<<JOURNAL_HANDOFF_BODY_BEGIN>>>\n([\s\S]*?)\n<<<JOURNAL_HANDOFF_BODY_END>>>/);
-  assert.ok(m, `journal-save prompt に JOURNAL_HANDOFF_BODY delimiter が見つからない:\n${save.prompt.slice(0, 500)}`);
+  assert.ok(m, `journal-log prompt に JOURNAL_HANDOFF_BODY delimiter が見つからない:\n${save.prompt.slice(0, 500)}`);
   return JSON.parse(m[1]).telemetry ?? {};
 }
 
@@ -145,7 +146,7 @@ for (const [name, sc] of Object.entries(DEV_FLOW_SCENARIOS)) {
     const { error } = await runWorkflowCapture(devFlowSrc, ctx);
     assertNoCrash(error, name);
     const telemetry = handoffTelemetry(calls);
-    assert.ok(telemetry, `[${name}] journal-save が呼ばれていない: ${calls.map((c) => c.label).join(', ')}`);
+    assert.ok(telemetry, `[${name}] journal handoff が呼ばれていない: ${calls.map((c) => c.label).join(', ')}`);
     const extra = Object.keys(telemetry).filter((k) => !KEPT_TELEMETRY_KEYS.includes(k));
     assert.deepEqual(extra, [], `[${name}] 残す 12 キー以外の telemetry キー: ${JSON.stringify(telemetry)}`);
     assert.ok('plugin_version' in telemetry && 'plugin_commit' in telemetry, `[${name}] 世代キーが無い: ${JSON.stringify(telemetry)}`);
@@ -174,7 +175,7 @@ for (const [name, overrides] of [
     const { error } = await runWorkflowCapture(prIterateSrc, ctx, '.claude/workflows/pr-iterate.js');
     assertNoCrash(error, `pr-iterate ${name}`);
     const telemetry = handoffTelemetry(calls);
-    assert.ok(telemetry, `journal-save が呼ばれていない: ${calls.map((c) => c.label).join(', ')}`);
+    assert.ok(telemetry, `journal handoff が呼ばれていない: ${calls.map((c) => c.label).join(', ')}`);
     const extra = Object.keys(telemetry).filter((k) => !KEPT_TELEMETRY_KEYS.includes(k));
     assert.deepEqual(extra, [], `残す 12 キー以外の telemetry キー: ${JSON.stringify(telemetry)}`);
     assert.equal(telemetry.merge_tier, 'PR_ITERATE');

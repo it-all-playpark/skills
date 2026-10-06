@@ -2,7 +2,7 @@
 // pr-iterate.js にも dev-flow.js と同種の穴があった（handoff は終端 1 箇所のみで、isolation probe の
 // fail-closed throw 等の handoff 到達前の例外で telemetry が全損する）ため、同機構
 // （top-level try/catch + journal-log-abort）で同時に塞いだ。makeSandbox / runPrIterateCapture は
-// priterate-journal-log.test.mjs のパターンを踏襲し、isolationProbeResult / journalSaveThrows
+// priterate-journal-log.test.mjs のパターンを踏襲し、isolationProbeResult / journalLogAbortThrows
 // オプションと 'journal-log-abort' stub を追加する。
 
 import { test } from 'vitest';
@@ -16,7 +16,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
 const prIteratePath = join(repoRoot, '.claude/workflows/pr-iterate.js');
 
-function makeSandbox({ isolationProbeResult, journalSaveThrows } = {}) {
+function makeSandbox({ isolationProbeResult, journalLogAbortThrows } = {}) {
   const calls = [];
 
   const agentStub = async (prompt, opts) => {
@@ -49,20 +49,15 @@ function makeSandbox({ isolationProbeResult, journalSaveThrows } = {}) {
       return { posted: true, method: 'gh', url: 'http://x' };
     }
 
-    // journal-save (stage1): 通常終端・abort 終端の双方で共有する call site。
-    if (label === 'journal-save' && agentType === 'dev-flow:dev-runner-haiku') {
-      if (journalSaveThrows) throw new Error('journal-save boom');
-      return { saved: true, path: '/tmp/wt/.devflow-tmp/payload-test.json' };
-    }
-
-    // journal-log (stage2, 通常終端)
+    // journal-log（通常終端）: payload を pending/ へ直接書く 1 spawn（issue #807）
     if (label === 'journal-log' && agentType === 'dev-flow:dev-runner-haiku') {
-      return { logged: true, summary: 'ok' };
+      return { saved: true, logged: true };
     }
 
-    // journal-log-abort (stage2, abort 終端)
+    // journal-log-abort（abort 終端）
     if (label === 'journal-log-abort' && agentType === 'dev-flow:dev-runner-haiku') {
-      return { logged: true, summary: 'ok' };
+      if (journalLogAbortThrows) throw new Error('journal-log-abort boom');
+      return { saved: true, logged: true };
     }
 
     return null;
@@ -124,8 +119,9 @@ test("[abort-telemetry] (1) isolation probe fail-closed（written:false）→ ru
   assert.ok(/isolation/i.test(String(error?.message ?? '')),
     `(1) error.message に isolation 系メッセージを含むべきだが: ${error?.message}`);
 
-  const saveCalls = calls.filter((c) => c.label === 'journal-save' && c.agentType === 'dev-flow:dev-runner-haiku');
-  assert.equal(saveCalls.length, 1, `(1) journal-save は 1 回のはずだが ${saveCalls.length} 回だった`);
+  assert.equal(calls.filter((c) => c.label === 'journal-save').length, 0, '(1) journal-save spawn は起動しない');
+  const saveCalls = calls.filter((c) => c.label === 'journal-log-abort' && c.agentType === 'dev-flow:dev-runner-haiku');
+  assert.equal(saveCalls.length, 1, `(1) journal-log-abort は 1 回のはずだが ${saveCalls.length} 回だった`);
 
   const savePrompt = saveCalls[0]?.prompt ?? '';
   for (const key of [
@@ -135,35 +131,29 @@ test("[abort-telemetry] (1) isolation probe fail-closed（written:false）→ ru
     '"pr_number":5', '"args":"pr=5"', '"repo":"acme/skills"',
   ]) {
     assert.ok(savePrompt.includes(key),
-      `(1) journal-save prompt に '${key}' が含まれるべきだが含まれていなかった。prompt:\n${savePrompt.slice(0, 900)}`);
+      `(1) journal-log-abort prompt に '${key}' が含まれるべきだが含まれていなかった。prompt:\n${savePrompt.slice(0, 900)}`);
   }
   // label は error_msg に載る。telemetry には複製しない（残す 12 キー以外を書かない）
   for (const key of ['"abort_label"', '"abort_phase"', '"iterate_rounds"', '"subagent_invocations"']) {
     assert.ok(!savePrompt.includes(key),
-      `(1) journal-save prompt に削除済み telemetry キー '${key}' が含まれていた。prompt:\n${savePrompt.slice(0, 900)}`);
+      `(1) journal-log-abort prompt に削除済み telemetry キー '${key}' が含まれていた。prompt:\n${savePrompt.slice(0, 900)}`);
   }
-  assert.ok(savePrompt.includes('/tmp/wt/.devflow-tmp/payload-priterate-5-abort.json'),
-    `(1) journal-save prompt に abort savePath が含まれるべきだが含まれていなかった。prompt:\n${savePrompt.slice(0, 900)}`);
-
-  const logAbortCalls = calls.filter((c) => c.label === 'journal-log-abort' && c.agentType === 'dev-flow:dev-runner-haiku');
-  assert.equal(logAbortCalls.length, 1, `(1) journal-log-abort は 1 回のはずだが ${logAbortCalls.length} 回だった`);
-  const logAbortPrompt = logAbortCalls[0]?.prompt ?? '';
-  assert.ok(logAbortPrompt.includes('/tmp/wt/.devflow-tmp/payload-priterate-5-abort.json'),
-    `(1) journal-log-abort prompt に abort savePath が含まれるべきだが含まれていなかった。prompt:\n${logAbortPrompt.slice(0, 900)}`);
-  assert.ok(!logAbortPrompt.includes('"error_category"'),
-    `(1) journal-log-abort prompt に結論値リテラル '"error_category"' が含まれるべきではないが含まれていた。prompt:\n${logAbortPrompt.slice(0, 900)}`);
+  assert.ok(savePrompt.includes('~/.claude/journal/pending/priterate-5-effect-'),
+    `(1) journal-log-abort prompt に pending パスが含まれるべきだが含まれていなかった。prompt:\n${savePrompt.slice(0, 900)}`);
+  assert.ok(!savePrompt.includes('.devflow-tmp'),
+    `(1) journal-log-abort prompt は payload の一時ファイルを経由してはならない。prompt:\n${savePrompt.slice(0, 900)}`);
 
   const logCalls = calls.filter((c) => c.label === 'journal-log' && c.agentType === 'dev-flow:dev-runner-haiku');
   assert.equal(logCalls.length, 0, `(1) 通常終端の journal-log は 0 回のはずだが ${logCalls.length} 回だった`);
 });
 
 // ============================================================
-// (2) fail-open: journal-save 自体が throw しても元の例外は変わらない
+// (2) fail-open: journal-log-abort 自体が throw しても元の例外は変わらない
 // ============================================================
-test('[abort-telemetry] (2) fail-open: journal-save stub が throw しても元の isolation エラーを rethrow し journal-log-abort は 0 回', async () => {
+test('[abort-telemetry] (2) fail-open: journal-log-abort stub が throw しても元の isolation エラーを rethrow する', async () => {
   const { ctx, calls } = makeSandbox({
     isolationProbeResult: { written: false, error: "parent bg session hasn't isolated" },
-    journalSaveThrows: true,
+    journalLogAbortThrows: true,
   });
 
   const { error } = await runPrIterateCapture(src, ctx);
@@ -173,7 +163,7 @@ test('[abort-telemetry] (2) fail-open: journal-save stub が throw しても元�
     `(2) handoff 自体の失敗で元の例外が置き換わってはならないが: ${error?.message}`);
 
   const logAbortCalls = calls.filter((c) => c.label === 'journal-log-abort');
-  assert.equal(logAbortCalls.length, 0, `(2) journal-save が失敗した場合 journal-log-abort は 0 回のはずだが ${logAbortCalls.length} 回だった`);
+  assert.equal(logAbortCalls.length, 1, `(2) journal-log-abort は 1 回のはずだが ${logAbortCalls.length} 回だった`);
 });
 
 // ============================================================

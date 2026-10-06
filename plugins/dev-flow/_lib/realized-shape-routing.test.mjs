@@ -57,8 +57,8 @@ async function run(overrides, analyze = {}) {
 }
 
 function journalTelemetry(calls) {
-  const save = calls.find((c) => c.label === 'journal-save');
-  assert.ok(save, 'journal-save が呼ばれていない');
+  const save = calls.find((c) => c.label === 'journal-log');
+  assert.ok(save, 'journal-log が呼ばれていない');
   const begin = '<<<JOURNAL_HANDOFF_BODY_BEGIN>>>';
   const b = save.prompt.indexOf(begin);
   const e = save.prompt.indexOf('<<<JOURNAL_HANDOFF_BODY_END>>>');

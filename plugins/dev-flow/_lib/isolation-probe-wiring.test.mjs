@@ -103,8 +103,8 @@ test('[epoch 供給元] start mark は args.setup.epoch から給電され durat
   });
   const { error } = await runWorkflowCapture(src, ctx);
   assertNoCrash(error, 'epoch-source');
-  const save = calls.find((c) => c.label === 'journal-save');
-  assert.ok(save, 'journal-save が呼ばれていない');
+  const save = calls.find((c) => c.label === 'journal-log');
+  assert.ok(save, 'journal-log が呼ばれていない');
   assert.ok(
     save.prompt.includes('"duration_seconds":300'),
     `duration_seconds は args.setup.epoch(5000)→post-summary(5300) の 300 のはず:\n${save.prompt.slice(0, 900)}`,

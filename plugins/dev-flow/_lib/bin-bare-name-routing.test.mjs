@@ -156,8 +156,8 @@ test("[bin-bare-name-routing][AC2] dev-flow.js の journal handoff payload は j
     const { ctx, calls } = makeDevFlowSandbox({ overrides });
     const { error } = await runWorkflowCapture(devFlowSrc, ctx);
     assertNoCrash(error, name);
-    const save = calls.find((c) => c.label === 'journal-save');
-    assert.ok(save, `${name} run に journal-save が無い`);
+    const save = calls.find((c) => c.label.startsWith('journal-log'));
+    assert.ok(save, `${name} run に journal handoff が無い`);
     assert.ok(save.prompt.includes('"journal_sh":"journal"'), `${name} run の payload に "journal_sh":"journal" が無い`);
   }
 });

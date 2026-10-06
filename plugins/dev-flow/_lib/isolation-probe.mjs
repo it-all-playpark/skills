@@ -10,8 +10,7 @@
 //   必須引数: dev-flow Setup は run 開始時点なので `.devflow-tmp` 全体を消せるが、pr-iterate は
 //   dev-flow から nested 起動されると isoWt が実行中 run の worktree 自身になるため、
 //   `ISOLATION_PROBE_CLEANUP_GLOB`（`.devflow-tmp/.isolation-probe*`）だけに絞る（当該 run が既に
-//   書いた run 専用 scratch（journal payload payload-devflow-*.json / ui-verify state 等の
-//   .devflow-tmp 配下生成物）を run 途中で消さない）。デフォルト値を持たせると、呼び出し元が範囲を意識しないまま広い方を選ぶ。
+//   書いた run 専用 scratch（ui-verify state 等の .devflow-tmp 配下生成物）を run 途中で消さない）。デフォルト値を持たせると、呼び出し元が範囲を意識しないまま広い方を選ぶ。
 //   probe の成立自体はもう本 prompt の実行成否に依存しない（下記 isolationProbePrompt 参照）。
 //   probe ファイル名（token 付き `.isolation-probe-<token>`）と `ISOLATION_PROBE_CLEANUP_GLOB` は
 //   対応させて保つこと（git pathspec の前方一致は自動で辿らないため、drift すると cleanup が

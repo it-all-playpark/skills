@@ -380,8 +380,7 @@ export function devFlowResponder(overrides = {}, { issue = 1 } = {}) {
     if (label === 'closes-reinject' || label === 'ac-checkbox-sync') return { edited: true };
     if (label.startsWith('pr')) return { pr_url: 'http://x', pr_number: 1, committed: true };
     if (label === 'post-summary') return { posted: true, method: 'gh', url: 'http://x', epoch: 2000 };
-    if (label.startsWith('journal-save')) return { saved: true };
-    if (label.startsWith('journal-log')) return { logged: true, summary: 'ok' };
+    if (label.startsWith('journal-log')) return { saved: true, logged: true };
     return null;
   };
 }
@@ -419,8 +418,7 @@ export function prIterateResponder(overrides = {}) {
     if (label.startsWith('ci-check')) return { status: 'passed', failed_checks: [] };
     if (label.startsWith('post-')) return { posted: true, method: 'gh', url: 'http://x', epoch: 3000 };
     if (label === 'worktree-dirty') return { dirty: false };
-    if (label.startsWith('journal-save')) return { saved: true };
-    if (label.startsWith('journal-log')) return { logged: true, summary: 'ok' };
+    if (label.startsWith('journal-log')) return { saved: true, logged: true };
     return null;
   };
 }

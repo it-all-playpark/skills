@@ -152,20 +152,12 @@ const EXPECTED_DEV_FLOW = {
     },
   },
   'post-summary': { config: DF_B1, policy: 'abort', reason: 'bare据え置き。投稿失敗の吸収整備は別issueの検討対象' },
-  'journal-save': {
-    config: DF_B1,
-    policy: 'continue',
-    reason: 'runJournalHandoff内のtry/catchで吸収しsave_failedを返すfail-open経路',
-    extra: async ({ result }) => {
-      assert.equal(result?.journal_log_status, 'save_failed', "journal-save throw 時は journal_log_status が 'save_failed' になるべき");
-    },
-  },
   'journal-log': {
     config: DF_B1,
     policy: 'continue',
-    reason: 'runJournalHandoff内のtry/catchで吸収しlog_failedを返すfail-open経路',
+    reason: 'runJournalHandoff内のtry/catchで吸収しsave_failedを返すfail-open経路（Write到達の申告なし）',
     extra: async ({ result }) => {
-      assert.equal(result?.journal_log_status, 'log_failed', "journal-log throw 時は journal_log_status が 'log_failed' になるべき");
+      assert.equal(result?.journal_log_status, 'save_failed', "journal-log throw 時は journal_log_status が 'save_failed' になるべき");
     },
   },
   'reconcile-sync': { config: DF_B2, policy: 'abort', reason: 'bare据え置き。worktree同期不能のままFinal reconcileを進めない' },
@@ -292,10 +284,10 @@ const EXPECTED_DEV_FLOW = {
   'journal-log-failure': {
     config: DF_CROSS_REPO,
     policy: 'continue',
-    reason: 'runJournalHandoff内のtry/catchで吸収しlog_failedを返すfail-open経路（failure telemetry）',
+    reason: 'runJournalHandoff内のtry/catchで吸収しsave_failedを返すfail-open経路（failure telemetry）',
     extra: async ({ result }) => {
       assert.equal(result?.status, 'cross_repo_artifact', "journal-log-failure throw 後の result.status が cross_repo_artifact でない");
-      assert.equal(result?.journal_log_status, 'log_failed', "journal-log-failure throw 時は journal_log_status が 'log_failed' になるべき");
+      assert.equal(result?.journal_log_status, 'save_failed', "journal-log-failure throw 時は journal_log_status が 'save_failed' になるべき");
     },
   },
   'journal-log-abort': {
@@ -454,7 +446,6 @@ const EXPECTED_PR_ITERATE = {
   'review#1': { config: PR_B1, policy: 'continue', reason: 'callReviewAgent内try/catchで吸収しschema-retryへ倒すfail-safe経路' },
   'ci-check#1': { config: PR_B1, policy: 'continue', reason: 'failOpenAgent経由。throw/nullはstatus:errorに合成しci_errorへ流す' },
   'post-summary': { config: PR_B1, policy: 'continue', reason: 'failOpenAgent経由。投稿失敗はfail-openでgate判定に影響しない' },
-  'journal-save': { config: PR_B1, policy: 'continue', reason: 'runJournalHandoff内try/catchで吸収するfail-open経路' },
   'journal-log': { config: PR_B1, policy: 'continue', reason: 'runJournalHandoff内try/catchで吸収するfail-open経路' },
   'fix#1': { config: PR_B2, policy: 'continue', reason: 'callFixAgent内try/catchで吸収しnull-retryへ倒すfail-safe経路' },
   'commit-ensure#1': { config: PR_B2, policy: 'continue', reason: 'try/catchで吸収しfix_failedエスカレーションへ倒すfail-safe経路' },

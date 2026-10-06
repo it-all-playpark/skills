@@ -82,8 +82,8 @@ test('[skills-script-path-routing] (b) analyze-issue --contract は prerun（pre
 for (const name of Object.keys(RUNS)) {
   test(`[skills-script-path-routing] (b) ${name} run の journal handoff payload は journal_sh が bare 名 'journal'`, async () => {
     const calls = await run(name);
-    const journalSave = calls.find((c) => c.label === 'journal-save');
-    assert.ok(journalSave, `${name} run に journal-save が無い`);
+    const journalSave = calls.find((c) => c.label.startsWith('journal-log'));
+    assert.ok(journalSave, `${name} run に journal handoff が無い`);
     assert.ok(journalSave.prompt.includes('"journal_sh":"journal"'), `${name} run の payload に "journal_sh":"journal" が無い:\n${journalSave.prompt.slice(0, 800)}`);
     assert.ok(!journalSave.prompt.includes('"journal_sh":"/tmp/wt/'), `${name} run の payload が journal_sh を WT 相対で渡している`);
   });

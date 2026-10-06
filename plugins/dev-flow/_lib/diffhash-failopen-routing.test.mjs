@@ -73,8 +73,7 @@ function createResponder(overrides = {}) {
     if (label === 'merge-tier-facts') return mergeTierFacts({ hash: 'SAMEHASH', files: ['src/x.ts'] });
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false };
     if (label === 'post-summary') return { posted: true, method: 'gh pr comment', url: 'http://x' };
-    if (label === 'journal-save') return { saved: true, path: '/tmp/wt/.devflow-tmp/payload-test.json' };
-    if (label === 'journal-log') return { logged: true };
+    if (label === 'journal-log') return { saved: true, logged: true };
     if (agentType === 'dev-flow:dev-implementer') return { status: 'DONE', task_id: 't', files: ['src/x.ts'], summary: 's', concerns: [] };
     if (label.startsWith('test')) return { tests: 'passed', green: true, summary: '' };
     if (label === 'issue-meta') return { ok: true, number: 605, title: 'stub-issue-title' };
@@ -96,7 +95,7 @@ function makeSandbox({ overrides = {} } = {}) {
 // (a) diff-hash-eval が契約違反で throw → 継続 + リトライ2回 + 警告ログ + Evaluate/handoff 到達
 // ============================================================
 
-test('[diffhash-failopen] (a) diff-hash-eval が契約違反で throw → run 完走・2 回呼ばれ吸収・警告 log・Evaluate/journal-save 到達', async () => {
+test('[diffhash-failopen] (a) diff-hash-eval が契約違反で throw → run 完走・2 回呼ばれ吸収・警告 log・Evaluate/journal-log 到達', async () => {
   const { ctx, calls, logs } = makeSandbox({
     overrides: {
       'diff-hash-eval': () => { throw new Error(CV) },
@@ -113,14 +112,14 @@ test('[diffhash-failopen] (a) diff-hash-eval が契約違反で throw → run �
   assert.ok(logs.some((l) => l.includes('stale-eval 検出は skip')), '(a) stale-eval skip の警告 log が無い');
 
   assert.ok(calls.some((c) => c.agentType === 'dev-flow:evaluator'), '(a) Evaluate phase（evaluator 呼び出し）へ継続しているはず');
-  assert.ok(calls.some((c) => c.label === 'journal-save'), '(a) journal-save まで到達しているはず（handoff 到達）');
+  assert.ok(calls.some((c) => c.label === 'journal-log'), '(a) journal-log まで到達しているはず（handoff 到達）');
 });
 
 // ============================================================
 // (b) diff-hash-pr が契約違反以外の理由で throw → リトライなし 1 回のみ + 継続
 // ============================================================
 
-test('[diffhash-failopen] (b) diff-hash-pr が非契約違反エラーで throw → run 完走・1 回のみ呼ばれ吸収・警告 log・journal-save 到達', async () => {
+test('[diffhash-failopen] (b) diff-hash-pr が非契約違反エラーで throw → run 完走・1 回のみ呼ばれ吸収・警告 log・journal-log 到達', async () => {
   const { ctx, calls, logs } = makeSandbox({
     overrides: {
       'diff-hash-pr': () => { throw new Error('EPERM: operation not permitted') },
@@ -134,14 +133,14 @@ test('[diffhash-failopen] (b) diff-hash-pr が非契約違反エラーで throw 
   assert.equal(dhPrCalls.length, 1, `(b) 契約違反以外はリトライしないため diff-hash-pr は 1 回のみ呼ばれるはずだが ${dhPrCalls.length} 回`);
 
   assert.ok(logs.some((l) => l.includes('diff-hash-pr の取得に失敗 — stale-eval 検出は skip')), '(b) diff-hash-pr の fail-open 警告 log が無い');
-  assert.ok(calls.some((c) => c.label === 'journal-save'), '(b) journal-save まで到達しているはず（handoff 到達）');
+  assert.ok(calls.some((c) => c.label === 'journal-log'), '(b) journal-log まで到達しているはず（handoff 到達）');
 });
 
 // ============================================================
 // (c) merge-tier-facts が契約違反で throw → 継続 + リトライ2回 + risk fail-closed（HOLD）+ handoff 到達
 // ============================================================
 
-test('[diffhash-failopen] (c) merge-tier-facts が契約違反で throw → run 完走・2 回呼ばれ吸収・risk fail-closed で HOLD・journal-save 到達', async () => {
+test('[diffhash-failopen] (c) merge-tier-facts が契約違反で throw → run 完走・2 回呼ばれ吸収・risk fail-closed で HOLD・journal-log 到達', async () => {
   const { ctx, calls, logs } = makeSandbox({
     overrides: {
       'merge-tier-facts': () => { throw new Error(CV) },
@@ -156,7 +155,7 @@ test('[diffhash-failopen] (c) merge-tier-facts が契約違反で throw → run 
 
   assert.ok(logs.some((l) => l.includes('diff-hash-merge') && l.includes('fail-safe')), '(c) diffhash 取得失敗 → Security floor 結果の再利用 skip の警告 log が無い');
   assert.ok(logs.some((l) => l.includes('merge-tier-facts') && l.includes('fail-closed')), '(c) risk fail-closed の警告 log が無い');
-  assert.ok(calls.some((c) => c.label === 'journal-save'), '(c) journal-save まで到達しているはず（handoff 到達）');
+  assert.ok(calls.some((c) => c.label === 'journal-log'), '(c) journal-log まで到達しているはず（handoff 到達）');
 });
 
 // ============================================================
@@ -174,7 +173,7 @@ test('[diffhash-failopen] (c2) merge-tier-facts の diffhash だけ ok:false →
   assert.equal(err, null, `(c2) run は完走するはずだが error: ${err?.name}: ${err?.message}`);
   assert.ok(logs.some((l) => l.includes('diff-hash-merge の取得に失敗')), '(c2) diffhash 取得失敗の fail-safe 警告 log が無い');
   assert.ok(!logs.some((l) => l.includes('risk fail-closed')), '(c2) diffhash 失敗は risk に波及してはならない');
-  assert.ok(calls.some((c) => c.label === 'journal-save'), '(c2) journal-save まで到達しているはず');
+  assert.ok(calls.some((c) => c.label === 'journal-log'), '(c2) journal-log まで到達しているはず');
 });
 
 // ============================================================
@@ -205,5 +204,5 @@ test('[diffhash-failopen] (e) 対照: diff-hash 全て正常応答 → run 完�
   assert.equal(err, null, `(e) run は完走するはずだが error: ${err?.name}: ${err?.message}`);
 
   assert.ok(!logs.some((l) => l.includes('stale-eval 検出は skip')), '(e) 正常応答時は stale-eval skip 警告が出ないはず');
-  assert.ok(calls.some((c) => c.label === 'journal-save'), '(e) journal-save まで到達しているはず（handoff 到達）');
+  assert.ok(calls.some((c) => c.label === 'journal-log'), '(e) journal-log まで到達しているはず（handoff 到達）');
 });

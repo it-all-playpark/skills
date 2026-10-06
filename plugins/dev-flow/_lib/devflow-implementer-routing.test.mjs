@@ -73,10 +73,10 @@ async function runFlow(shape, overrides = {}, extra = {}, analyzeOverrides = {})
 const byType = (calls, t) => calls.filter((c) => c.agentType === t);
 const goneCalls = (calls) => calls.filter((c) => GONE_AGENTS.some((g) => c.agentType === `dev-flow:${g}`));
 
-// journal-save (stage1) prompt から JOURNAL_HANDOFF_BODY 区間の JSON を抽出する
+// journal handoff prompt から JOURNAL_HANDOFF_BODY 区間の JSON を抽出する
 function parseJournalHandoffPayload(prompt) {
   const match = prompt.match(/<<<JOURNAL_HANDOFF_BODY_BEGIN>>>\n([\s\S]*?)\n<<<JOURNAL_HANDOFF_BODY_END>>>/);
-  assert.ok(match, `journal-save prompt に JOURNAL_HANDOFF_BODY delimiter が見つからない。prompt:\n${prompt}`);
+  assert.ok(match, `journal handoff prompt に JOURNAL_HANDOFF_BODY delimiter が見つからない。prompt:\n${prompt}`);
   return JSON.parse(match[1]);
 }
 
@@ -361,8 +361,8 @@ test('[implementer] PR fail-closed (#682): pr#1 が committed:false / pr_number:
 test('[implementer] PR fail-closed (#682): abort handoff の error_phase が PR で、error_msg が pr#1 を指し PR phase 失敗文が載る', async () => {
   const { calls, error } = await runStandardWithWorkflowCapture({ 'pr#1': PR_FAILED_RESPONSE });
   assert.ok(error, 'pr#1 の中断応答で run が throw していない');
-  const save = calls.find((c) => c.label === 'journal-save');
-  assert.ok(save, 'abort handoff の journal-save が呼ばれていない');
+  const save = calls.find((c) => c.label === 'journal-log-abort');
+  assert.ok(save, 'abort handoff の journal-log-abort が呼ばれていない');
   const payload = parseJournalHandoffPayload(save.prompt);
   assert.equal(payload.outcome, 'failure');
   assert.equal(payload.error_category, 'abort');
