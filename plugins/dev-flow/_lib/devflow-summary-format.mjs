@@ -32,8 +32,10 @@ const DEFAULT_TIER_REASONS = [
 // セルは空白・改行を 1 空白に畳んでから code point 単位で切るので、1 セルは escape 後も
 // 高々 2 × RESOLVED_CELL_MAX 文字（'|' → '\|'）、表全体は 30 行 × 2 セルで約 25,000 文字に収まる。
 // 切った残りは打ち切り件数だけを出す（全文の保存先は持たない）。
+// RESOLVED_CELL_MAX は evaluator の evidence 上限（evaluator-contract の EVAL_EVIDENCE_MAX）以上に保つ
+// （evaluator-contract.test.mjs が pin）。
 const RESOLVED_ROWS_MAX = 30;
-const RESOLVED_CELL_MAX = 200;
+export const RESOLVED_CELL_MAX = 200;
 
 function resolvedCell(v) {
   if (v == null) return '';
