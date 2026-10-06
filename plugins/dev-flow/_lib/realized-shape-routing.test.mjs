@@ -44,7 +44,7 @@ function filesOverrides(files, { declared = files, changed = files, lines = unde
       ...(lines !== undefined ? { lines } : {}),
     },
     'merge-tier-facts': mergeTierFacts({ files: changed === null ? ['src/x.ts'] : [...changed] }),
-    'ci-check-lite': { status: 'passed', failed_checks: [], waited_seconds: 0, poll_attempts: 0 },
+    'ci-check-lite': { status: 'passed', passed: 1, failed: 0, pending: 0, skipped: 0, failed_checks: [], waited_seconds: 0, poll_attempts: 0 },
   };
 }
 

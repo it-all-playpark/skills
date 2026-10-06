@@ -15,7 +15,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { makePrIterateSandbox, runWorkflowCapture, assertNoCrash } from './test-helpers/vm-sandbox.mjs';
+import { makePrIterateSandbox, runWorkflowCapture, assertNoCrash, ciCounts } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const prIteratePath = join(here, '..', '.claude', 'workflows', 'pr-iterate.js');
@@ -35,7 +35,7 @@ const blockingReview = (topic = 't1') => ({
   issues: [{ severity: 'major', topic, file: 'src/a.js', line: 12, description: REVIEW_DESC, suggestion: 'throw に戻す' }],
   summary: 'ng',
 });
-const ci = (status, head_sha, extra = {}) => ({ status, failed_checks: [], ...(head_sha ? { head_sha } : {}), ...extra });
+const ci = (status, head_sha, extra = {}) => ({ status, ...ciCounts(status), failed_checks: [], ...(head_sha ? { head_sha } : {}), ...extra });
 const CI_FAILED_AT = (head_sha) => ci('failed', head_sha, { failed_checks: [{ name: 'bats', bucket: 'fail', state: 'FAILURE' }] });
 
 // parallel() 呼び出しごとに、その呼び出しで起動された agent の label を記録する。
@@ -74,7 +74,7 @@ test('[AC-1][AC-4] review#1 と ci-check#1 は同じ parallel() で起動され�
 test('[AC-4] LGTM round: 並列で得た pending は 1 回目の poll として扱い、ci-wait-check#1.2 の待機ループへ進む（ci_poll_attempts=2）', async () => {
   const { result, labels } = await run({
     'ci-check#1': ci('pending', HEAD1),
-    'ci-wait-check#1.2': { slept: true, status: 'passed', failed_checks: [] },
+    'ci-wait-check#1.2': { slept: true, status: 'passed', ...ciCounts('passed'), failed_checks: [] },
   });
 
   assert.equal(result?.status, 'lgtm');
@@ -88,7 +88,7 @@ test('[AC-2] head_sha 不一致: 並列の passed（旧 head）は採らず、re
   const { result, labels, logs } = await run({
     'ci-check#1': ci('passed', STALE),
     'ci-check#1-serial': ci('pending'),
-    'ci-wait-check#1.2': { slept: true, status: 'passed', failed_checks: [] },
+    'ci-wait-check#1.2': { slept: true, status: 'passed', ...ciCounts('passed'), failed_checks: [] },
   });
 
   const iReview = labels.indexOf('review#1');
@@ -104,7 +104,7 @@ test('[AC-2][AC-4] LGTM round: 並列で得た no_checks（head 一致でも新 
   const { result, labels, logs } = await run({
     'ci-check#1': ci('no_checks', HEAD1),
     'ci-check#1-serial': ci('pending', HEAD1),
-    'ci-wait-check#1.2': { slept: true, status: 'passed', failed_checks: [] },
+    'ci-wait-check#1.2': { slept: true, status: 'passed', ...ciCounts('passed'), failed_checks: [] },
   });
 
   const iReview = labels.indexOf('review#1');

@@ -97,7 +97,7 @@ function buildAgentStub({ reviewerStub, ciStub, fixStub, agentCalls }) {
       return reviewerStub(label);
     }
     if (agentType === 'dev-flow:dev-runner-haiku-ro' && promptStr.includes('check-ci --checks-data')) {
-      return ciStub ? ciStub(label) : { status: 'passed', failed_checks: [] };
+      return ciStub ? ciStub(label) : { status: 'passed', passed: 1, failed: 0, pending: 0, skipped: 0, failed_checks: [] };
     }
     if (label.startsWith('fix#')) {
       return fixStub ? fixStub(label) : { applied: true, summary: 'fixed', files: [] };
@@ -291,9 +291,9 @@ test('[AC-6 回帰] approve + issues:[] だが CI failed -> CI gate 内の fix a
   const ciStub = () => {
     ciCallCount += 1;
     if (ciCallCount === 1) {
-      return { status: 'failed', failed_checks: [{ name: 'bats', bucket: 'test', state: 'failure' }] };
+      return { status: 'failed', passed: 0, failed: 1, pending: 0, skipped: 0, failed_checks: [{ name: 'bats', bucket: 'test', state: 'failure' }] };
     }
-    return { status: 'passed', failed_checks: [] };
+    return { status: 'passed', passed: 1, failed: 0, pending: 0, skipped: 0, failed_checks: [] };
   };
   const agentStub = buildAgentStub({ reviewerStub, ciStub, agentCalls });
   const ctx = makeSandbox(agentStub);

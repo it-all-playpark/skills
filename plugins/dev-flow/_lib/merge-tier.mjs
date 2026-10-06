@@ -139,8 +139,29 @@ export const HOLD_REASON_CODES = [
   'ledger_unconverged', 'danger_unresolved', 'breaking_structured', 'escalate',
   'ac_agent_unsatisfied', 'ac_human_pending', 'danger_fail_closed', 'final_reconcile_unavailable', 'final_test_red',
   'final_ac_unavailable', 'iterate_non_lgtm', 'hash_mismatch', 'testsurf_uncleared',
-  'mergeable_conflicting', 'pr_closes_missing', 'merge_facts_dropped',
+  'mergeable_conflicting', 'pr_closes_missing', 'merge_facts_dropped', 'ci_checks_failed',
 ];
+
+// merge-tier-facts の checks サブ結果（parseChecks の返り値 {ok:true, checks} | {ok:false, error}）を
+// CI 状態へ写像する純関数（issue #834）。bucket の分類は check-ci.sh の compute_verdict と同じ:
+// fail / cancel と既知 5 値（pass / fail / pending / skipping / cancel）以外は failed（fail-closed —
+// 未知値を数え漏らして green に見せない）、pending は pending、pass / skipping は passed。
+// 返り値 state: 'failed'（1 件でも failed）> 'pending' > 'passed' > 'no_checks'（0 件）、
+// 取得失敗（ok!==true / checks が配列でない）は 'unavailable'。failedNames / pendingNames は check 名。
+export function classifyCiChecks(ciChecks) {
+  if (!ciChecks || ciChecks.ok !== true || !Array.isArray(ciChecks.checks)) {
+    return { state: 'unavailable', failedNames: [], pendingNames: [], error: ciChecks?.error ?? null };
+  }
+  const bucketOf = (c) => String(c?.bucket ?? '');
+  const nameOf = (c) => String(c?.name ?? 'unknown');
+  const isFailed = (c) => !['pass', 'pending', 'skipping'].includes(bucketOf(c));
+  const failedNames = ciChecks.checks.filter(isFailed).map(nameOf);
+  const pendingNames = ciChecks.checks.filter((c) => bucketOf(c) === 'pending').map(nameOf);
+  const state = failedNames.length > 0 ? 'failed'
+    : pendingNames.length > 0 ? 'pending'
+      : ciChecks.checks.length > 0 ? 'passed' : 'no_checks';
+  return { state, failedNames, pendingNames, error: null };
+}
 
 // PR body の Closes 行決定論検証（issue #661）の状態 enum。'verified': gh pr view --json body に
 // Closes #<issue> 行を確認済み。'reinjected': 欠落を検出し gh pr edit --body-file で再投入し確認済み。
@@ -283,6 +304,15 @@ export function classifyMergeableState(meta) {
 //   （gh pr edit --body-file の再投入で解消しうるため human_judgment ではない）。
 //   'verified'/'reinjected'/'unverified'/未指定は reason 追加なし（fail-open no-op、regression なし）。
 //   out-of-enum は明示 error（後方互換 scaffolding 禁止規約）。
+// s.ciChecks (optional {ok:true, checks:Array}|{ok:false, error}): merge-tier-facts の checks サブ結果
+//   （parseChecks の返り値。issue #834）。classifyCiChecks で 'failed'（bucket が fail / cancel / 既知 5 値
+//   以外の check が 1 件以上）なら blocking の HOLD reason 'ci_checks_failed'（human_judgment）を積む —
+//   pr-iterate の lgtm は CI の真偽を保証しない（proxy の転記に依存する）ため、Merge tier が PR head の
+//   checks を決定論で見て止める最後のゲート（軸A。gate_policy に依らず不変）。'pending' / 'unavailable'
+//   （取得失敗）は HOLD にせず「CI 未完了」の開示行を disclosures に積む（fail-open。Merge tier は CI の
+//   完了を待たない）。判定は bucket だけで行い mergeStateStatus（UNSTABLE 等）は見ない。
+//   未指定 = reason・開示とも追加なし。object でない / ok が boolean でない / ok:true で checks が配列で
+//   ないものは明示 error。
 // 返り値: { tier, reasons, holdReasons, holdKind, disclosures }（issue #599 で holdReasons/holdKind、
 //   issue #658 で disclosures を追加）。
 //   reasons は従来どおり string[]（HOLD 時は blocking 文言 + 可視化行、AUTO/REVIEW 時は従来文言 +
@@ -290,7 +320,7 @@ export function classifyMergeableState(meta) {
 //   含めない）、AUTO/REVIEW 時は []。code は HOLD_REASON_CODES の閉じた enum（summary 側の
 //   現状/対応写像キー）。holdKind は aggregateHoldKind(holdReasons)（HOLD 以外は null）。
 //   disclosures は HOLD/AUTO/REVIEW 全 3 分岐共通で、可視化のみ（tier 判定に寄与しない）の開示
-//   文言 string[]（keywordAloneDisclosure / evalFailDisclosure / ciVerifiedDisclosure のうち
+//   文言 string[]（keywordAloneDisclosure / evalFailDisclosure / ciVerifiedDisclosure / ciIncompleteDisclosure のうち
 //   非 null のもの）。reasons の内容・順序（可視化行を末尾に含む従来形）は不変 — disclosures は
 //   reasons の部分集合を別途複製したものであり、reasons から可視化行を除去するものではない。
 export function classifyMergeTier(s) {
@@ -333,6 +363,11 @@ export function classifyMergeTier(s) {
   if (s.prClosesStatus != null && !isValidPrClosesStatus(s.prClosesStatus)) {
     throw new Error('classifyMergeTier: invalid prClosesStatus: ' + s.prClosesStatus);
   }
+  if (s.ciChecks != null && (typeof s.ciChecks !== 'object' || typeof s.ciChecks.ok !== 'boolean'
+    || (s.ciChecks.ok === true && !Array.isArray(s.ciChecks.checks)))) {
+    throw new Error('classifyMergeTier: invalid ciChecks');
+  }
+  const ci = s.ciChecks != null ? classifyCiChecks(s.ciChecks) : null;
   // blocking 文言のみ（可視化行は含めない）。HOLD 判定・holdReasons/holdKind の入力に使う。
   const blockingReasons = [];
   const pushBlocking = (code, reason, kind) => blockingReasons.push({ code, reason, kind });
@@ -401,12 +436,19 @@ export function classifyMergeTier(s) {
   }
   if (s.mergeableState === 'conflicting') pushBlocking('mergeable_conflicting', 'base branch と conflict（mergeStateStatus=DIRTY / mergeable=CONFLICTING）— merge 前に conflict 解消が必要（人間確認必須。gate_policy に依らず不変）', 'human_judgment');
   if (s.prClosesStatus === 'missing') pushBlocking('pr_closes_missing', 'PR body に `Closes #<issue>` 行が無い（PR 作成後の決定論検証で欠落を検出し、本文の再投入も失敗）— merge しても issue が自動 close されないため本文の再投入が必要（決定論再チェックで解消しうる）', 'deterministic_recheck');
-  const disclosures = [keywordAloneDisclosure, evalFailDisclosure, ciVerifiedDisclosure].filter(Boolean);
+  if (ci?.state === 'failed') pushBlocking('ci_checks_failed', `CI checks 失敗（${ci.failedNames.join(', ')}）— PR head の CI が red（bucket が fail / cancel / 未知値）。pr-iterate の lgtm は CI の真偽を保証しないため人間確認必須（gate_policy に依らず不変）`, 'human_judgment');
+  const ciIncompleteDisclosure = ci?.state === 'pending'
+    ? `CI 未完了（pending: ${ci.pendingNames.join(', ')}）— Merge tier は CI の完了を待たない（fail-open。HOLD 理由にしない）。merge 前に gh pr checks で結果を確認する`
+    : ci?.state === 'unavailable'
+      ? `CI 未完了（checks を取得できず: ${ci.error ?? 'unknown'}）— CI 結果は未確認（fail-open。HOLD 理由にしない）。merge 前に gh pr checks で結果を確認する`
+      : null;
+  const disclosures = [keywordAloneDisclosure, evalFailDisclosure, ciVerifiedDisclosure, ciIncompleteDisclosure].filter(Boolean);
   if (blockingReasons.length) {
     const reasons = blockingReasons.map((r) => r.reason);
     if (keywordAloneDisclosure) reasons.push(keywordAloneDisclosure);
     if (evalFailDisclosure) reasons.push(evalFailDisclosure);
     if (ciVerifiedDisclosure) reasons.push(ciVerifiedDisclosure);
+    if (ciIncompleteDisclosure) reasons.push(ciIncompleteDisclosure);
     return { tier: 'HOLD', reasons, holdReasons: blockingReasons, holdKind: aggregateHoldKind(blockingReasons), disclosures };
   }
   if (s.shape === 'micro' && s.docsOrTestOnly) {
@@ -418,6 +460,7 @@ export function classifyMergeTier(s) {
     if (keywordAloneDisclosure) autoReasons.push(keywordAloneDisclosure);
     if (evalFailDisclosure) autoReasons.push(evalFailDisclosure);
     if (ciVerifiedDisclosure) autoReasons.push(ciVerifiedDisclosure);
+    if (ciIncompleteDisclosure) autoReasons.push(ciIncompleteDisclosure);
     return { tier: 'AUTO', reasons: autoReasons, holdReasons: [], holdKind: null, disclosures };
   }
   // REVIEW / AUTO の既定文は終端サマリーが「理由の節を出さない」判定に使う（devflow-summary-format.mjs の
@@ -426,5 +469,6 @@ export function classifyMergeTier(s) {
   if (keywordAloneDisclosure) reviewReasons.push(keywordAloneDisclosure);
   if (evalFailDisclosure) reviewReasons.push(evalFailDisclosure);
   if (ciVerifiedDisclosure) reviewReasons.push(ciVerifiedDisclosure);
+  if (ciIncompleteDisclosure) reviewReasons.push(ciIncompleteDisclosure);
   return { tier: 'REVIEW', reasons: reviewReasons, holdReasons: [], holdKind: null, disclosures };
 }

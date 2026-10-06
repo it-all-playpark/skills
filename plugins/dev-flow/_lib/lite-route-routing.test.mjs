@@ -106,7 +106,7 @@ function makeLiteRouteSandbox(analyzeReq, opts = {}) {
     // 必要はない（'ci-check-lite' は 'pr' で始まらない）が、明確化のため 'ci-check' 判定を
     // 独立させる。
     if (label.startsWith('ci-check')) {
-      return { status: 'passed', failed_checks: [], waited_seconds: 0, poll_attempts: 0 };
+      return { status: 'passed', passed: 1, failed: 0, pending: 0, skipped: 0, failed_checks: [], waited_seconds: 0, poll_attempts: 0 };
     }
     // Security floor: label 'danger-grep'（issue #544 統合呼び出し）。risk.hits は dangerHits で
     // 可変。files（旧 realized-diff。issue #376 F3 fix — 未stub だと realizedCount が NaN になり

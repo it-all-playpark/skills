@@ -41,10 +41,11 @@ function makeSandbox() {
       if (ciCallCount === 1) {
         return {
           status: 'failed',
+          passed: 0, failed: 1, pending: 0, skipped: 0,
           failed_checks: [{ name: 'bats', bucket: 'test', state: 'failure' }],
         };
       }
-      return { status: 'passed', failed_checks: [] };
+      return { status: 'passed', passed: 1, failed: 0, pending: 0, skipped: 0, failed_checks: [] };
     }
 
     // fix: label が 'fix#' で始まる

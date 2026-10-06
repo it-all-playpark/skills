@@ -35,7 +35,7 @@ function makeSandbox({ reviewerStub, fixResult = { applied: true, summary: 'fixe
 
     // CI チェック: agentType 'dev-runner-haiku-ro' かつ prompt に 'check-ci.sh' を含む
     if (agentType === 'dev-flow:dev-runner-haiku-ro' && typeof prompt === 'string' && prompt.includes('check-ci --checks-data')) {
-      return { status: 'passed', failed_checks: [] };
+      return { status: 'passed', passed: 1, failed: 0, pending: 0, skipped: 0, failed_checks: [] };
     }
 
     // fix stub: label が 'fix#' で始まる

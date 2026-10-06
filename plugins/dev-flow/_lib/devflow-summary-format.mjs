@@ -330,7 +330,7 @@ export function buildDevflowSummaryBody({
   // 他の指標が空でも修正必須と判定する（PR #662 レビュー: mergeable_conflicting 単独 HOLD で
   // 結論行「修正作業は不要です」と HOLD 理由テーブルの対応列「conflict を解消して push する」が
   // 自己矛盾していた。pr_closes_missing も同型 — issue #661）。
-  const FIX_REQUIRED_HOLD_CODES = ['mergeable_conflicting', 'final_test_red', 'iterate_non_lgtm', 'pr_closes_missing'];
+  const FIX_REQUIRED_HOLD_CODES = ['mergeable_conflicting', 'final_test_red', 'iterate_non_lgtm', 'pr_closes_missing', 'ci_checks_failed'];
   const testsurfUncleared = testsurfClearance.some(tc => !tc.cleared);
   const fixRequiredHold = Array.isArray(holdReasons) && holdReasons.some(hr => FIX_REQUIRED_HOLD_CODES.includes(hr && hr.code));
   const fixRequired = uncheckedBlocking.length > 0
@@ -1053,6 +1053,11 @@ function holdReasonDisplay(code, kind, ctx) {
       return {
         current: 'PR body に Closes 行が無い（merge しても issue が自動 close されない）',
         action: `\`gh pr edit ${ctx.pr} --body-file <本文ファイル>\` で Closes 行を含む本文を再投入する`,
+      };
+    case 'ci_checks_failed':
+      return {
+        current: 'PR head の CI checks が失敗（fail / cancel）',
+        action: `\`gh pr checks ${ctx.pr}\` で失敗した check を確認し、修正して push する`,
       };
     default:
       return { current: '—', action: '人が確認する' };

@@ -144,7 +144,7 @@ function assertNoCrash(error) {
 test('[terminal-telemetry] CI 経路 applied_false: fix_terminal_reason=applied_false / terminal_path=ci', async () => {
   const { ctx, getAgentCalls } = makeSandbox({
     reviewerStub: () => ({ decision: 'approve', issues: [], summary: 'ok' }),
-    ciResponses: [{ status: 'failed', failed_checks: [{ name: 'bats', bucket: 'fail', state: 'FAILURE' }], waited_seconds: 0, poll_attempts: 1 }],
+    ciResponses: [{ status: 'failed', passed: 0, failed: 1, pending: 0, skipped: 0, failed_checks: [{ name: 'bats', bucket: 'fail', state: 'FAILURE' }], waited_seconds: 0, poll_attempts: 1 }],
     fixSequence: [{ applied: false, summary: 'no' }],
   });
 
@@ -188,7 +188,7 @@ test('[terminal-telemetry] review 経路 commit_unensured: fix_terminal_reason=c
 test('[terminal-telemetry] 即 lgtm: fix_terminal_reason null / terminal_path=review / history 1 round、telemetry は merge_tier / iterate_status / review_model_config / plugin_version / plugin_commit だけ', async () => {
   const { ctx, getAgentCalls } = makeSandbox({
     reviewerStub: () => ({ decision: 'approve', issues: [], summary: 'ok' }),
-    ciResponses: [{ status: 'passed', failed_checks: [], waited_seconds: 0, poll_attempts: 1 }],
+    ciResponses: [{ status: 'passed', passed: 1, failed: 0, pending: 0, skipped: 0, failed_checks: [], waited_seconds: 0, poll_attempts: 1 }],
   });
 
   const { result, error } = await runPrIterateCapture(src, ctx);
@@ -220,8 +220,8 @@ test('[terminal-telemetry] CI failed→fix→passed の 2 round: history に syn
   const { ctx } = makeSandbox({
     reviewerStub: () => ({ decision: 'approve', issues: [], summary: 'ok' }),
     ciResponses: [
-      { status: 'failed', failed_checks: [{ name: 'bats', bucket: 'fail', state: 'FAILURE' }], waited_seconds: 0, poll_attempts: 1 },
-      { status: 'passed', failed_checks: [], waited_seconds: 0, poll_attempts: 1 },
+      { status: 'failed', passed: 0, failed: 1, pending: 0, skipped: 0, failed_checks: [{ name: 'bats', bucket: 'fail', state: 'FAILURE' }], waited_seconds: 0, poll_attempts: 1 },
+      { status: 'passed', passed: 1, failed: 0, pending: 0, skipped: 0, failed_checks: [], waited_seconds: 0, poll_attempts: 1 },
     ],
     fixSequence: [{ applied: true, summary: 'fixed', files: [] }],
   });

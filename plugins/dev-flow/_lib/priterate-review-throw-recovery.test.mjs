@@ -87,7 +87,7 @@ function buildAgentStub({ reviewerStub, ciStub, fixStub, agentCalls }) {
       return reviewerStub(label);
     }
     if (agentType === 'dev-flow:dev-runner-haiku-ro' && promptStr.includes('check-ci --checks-data')) {
-      return ciStub ? ciStub(label) : { status: 'passed', failed_checks: [] };
+      return ciStub ? ciStub(label) : { status: 'passed', passed: 1, failed: 0, pending: 0, skipped: 0, failed_checks: [] };
     }
     if (label.startsWith('fix#')) {
       return fixStub ? fixStub(label) : { applied: true, summary: 'fixed', files: [] };

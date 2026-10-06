@@ -129,7 +129,7 @@ const src = readFileSync(prIteratePath, 'utf8');
 
 test('[ci-wait-telemetry] ci-check#1 の prompt が bare gh fetch + check-ci 純変換で配線される（AC-1配線）', async () => {
   const { ctx, getAgentCalls } = makeSandbox({
-    ciResponses: [{ status: 'passed', failed_checks: [], waited_seconds: 0, poll_attempts: 1 }],
+    ciResponses: [{ status: 'passed', passed: 1, failed: 0, pending: 0, skipped: 0, failed_checks: [], waited_seconds: 0, poll_attempts: 1 }],
   });
 
   const { result, error } = await runPrIterateCapture(src, ctx);
@@ -173,8 +173,8 @@ test('[ci-wait-telemetry] ci-check#1 の prompt が bare gh fetch + check-ci 純
 test('[ci-wait-telemetry] AC-1: pending -> passed で LGTM に進み、waited_seconds/poll_attempts が累積される', async () => {
   const { ctx, getAgentCalls } = makeSandbox({
     ciResponses: [
-      { status: 'failed', failed_checks: [{ name: 'bats', bucket: 'fail', state: 'FAILURE' }], waited_seconds: 30, poll_attempts: 3 },
-      { status: 'passed', failed_checks: [], waited_seconds: 10, poll_attempts: 2 },
+      { status: 'failed', passed: 0, failed: 1, pending: 0, skipped: 0, failed_checks: [{ name: 'bats', bucket: 'fail', state: 'FAILURE' }], waited_seconds: 30, poll_attempts: 3 },
+      { status: 'passed', passed: 1, failed: 0, pending: 0, skipped: 0, failed_checks: [], waited_seconds: 10, poll_attempts: 2 },
     ],
   });
 
@@ -206,7 +206,7 @@ test('[ci-wait-telemetry] CI 呼び出しが 0 回（review が blocking で fix
   // 別テストの守備範囲外のため、ここでは ci-check が 1 度も呼ばれない状況を作らず、
   // 代わりに ci-check#1 が即 no_checks で終端する最小ケースで 0 加算を検証する。
   const { ctx } = makeSandbox({
-    ciResponses: [{ status: 'no_checks', failed_checks: [], waited_seconds: 0, poll_attempts: 1 }],
+    ciResponses: [{ status: 'no_checks', passed: 0, failed: 0, pending: 0, skipped: 0, failed_checks: [], waited_seconds: 0, poll_attempts: 1 }],
   });
 
   const { result, error } = await runPrIterateCapture(src, ctx);

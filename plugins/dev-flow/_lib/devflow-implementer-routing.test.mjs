@@ -57,7 +57,7 @@ function filesOf(shape) {
     return {
       'impl:serial:issue-1': { status: 'DONE', task_id: 'issue-1', files: [...MICRO_FILES], summary: 's', concerns: [] },
       'danger-grep': { risk: { ok: true, hits: [] }, files: [...MICRO_FILES], struct: null, diffhash: { hash: 'AAA', empty: false } },
-      'ci-check-lite': { status: 'passed', failed_checks: [], waited_seconds: 0, poll_attempts: 0 },
+      'ci-check-lite': { status: 'passed', passed: 1, failed: 0, pending: 0, skipped: 0, failed_checks: [], waited_seconds: 0, poll_attempts: 0 },
     };
   }
   return {};
@@ -186,7 +186,7 @@ test('[implementer] micro（clean, docs-only）: LITE 経路 — pr-review-lite 
   const { calls, result, error, workflowCalls } = await runMicro({
     'impl:serial:issue-1': implementerStubWith(DOCS),
     'pr-review-lite': { decision: 'approve', issues: [], summary: 'ok' },
-    'ci-check-lite': { status: 'passed', failed_checks: [], waited_seconds: 0, poll_attempts: 0 },
+    'ci-check-lite': { status: 'passed', passed: 1, failed: 0, pending: 0, skipped: 0, failed_checks: [], waited_seconds: 0, poll_attempts: 0 },
     'danger-grep': { risk: { ok: true, hits: [] }, files: DOCS, struct: null, diffhash: { hash: 'AAA', empty: false } },
   });
   assert.equal(error, null, `run が throw した: ${error?.message}`);

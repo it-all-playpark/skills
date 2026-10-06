@@ -150,7 +150,7 @@ test('[failopen-b] ci-check#1 が null(schema 未返却) -> status=ci_error', as
 // 生成文字列の完全一致で捕まえる。
 test('[failopen-c] dispatch された ci-check prompt が canonical ciCheckPrompt と一致し、--checks-data を使い --checks-json/$TMPDIR/ci-checks/リダイレクトを含まない', async () => {
   const agentCalls = [];
-  const ctx = makeSandbox(buildAgentStub({ ciStub: () => ({ status: 'passed', failed_checks: [] }), agentCalls }));
+  const ctx = makeSandbox(buildAgentStub({ ciStub: () => ({ status: 'passed', passed: 1, failed: 0, pending: 0, skipped: 0, failed_checks: [] }), agentCalls }));
   const { error } = await runPrIterate(ctx);
   assertNoSandboxCrash(error);
   const ci = agentCalls.find((c) => c.label === 'ci-check#1');
@@ -166,7 +166,7 @@ test('[failopen-c] dispatch された ci-check prompt が canonical ciCheckPromp
 test('[failopen-d] dispatch された ci-check / post-summary / journal 系 prompt に guard/sandbox 系の語が含まれない', async () => {
   const forbidden = ['guard', 'sandbox', 'ガード', 'サンドボックス'];
   const agentCalls = [];
-  const ctx = makeSandbox(buildAgentStub({ ciStub: () => ({ status: 'passed', failed_checks: [] }), agentCalls }));
+  const ctx = makeSandbox(buildAgentStub({ ciStub: () => ({ status: 'passed', passed: 1, failed: 0, pending: 0, skipped: 0, failed_checks: [] }), agentCalls }));
   const { error } = await runPrIterate(ctx);
   assertNoSandboxCrash(error);
   for (const label of ['ci-check#1', 'post-summary', 'journal-log']) {

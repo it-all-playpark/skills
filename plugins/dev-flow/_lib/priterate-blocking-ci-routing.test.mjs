@@ -31,7 +31,7 @@ const blockingReview = (topic = 't1') => ({
   issues: [{ severity: 'major', topic, file: 'src/a.js', line: 12, description: REVIEW_DESC, suggestion: 'throw に戻す' }],
   summary: 'ng',
 });
-const CI_FAILED = { status: 'failed', failed_checks: [{ name: 'bats', bucket: 'fail', state: 'FAILURE' }] };
+const CI_FAILED = { status: 'failed', passed: 0, failed: 1, pending: 0, skipped: 0, failed_checks: [{ name: 'bats', bucket: 'fail', state: 'FAILURE' }] };
 
 async function run(overrides) {
   const { ctx, calls } = makePrIterateSandbox({ overrides });
@@ -57,7 +57,7 @@ test('[AC-1a] review blocking + ci-check#1 failed → fix#1 prompt に review �
     'review#1': blockingReview(),
     'ci-check#1': CI_FAILED,
     'review#2': { decision: 'approve', issues: [], summary: 'ok' },
-    'ci-check#2': { status: 'passed', failed_checks: [] },
+    'ci-check#2': { status: 'passed', passed: 1, failed: 0, pending: 0, skipped: 0, failed_checks: [] },
   });
 
   const fix1 = calls.find((c) => c.label === 'fix#1');
@@ -87,7 +87,7 @@ test('[AC-1a] review blocking + ci-check#1 failed → fix#1 prompt に review �
 test('[AC-1b] review blocking + ci-check#1 pending → ci-wait は 0 回、fix#1 prompt に ci finding が無く、ci_last_status は pending を観測する', async () => {
   const { result, calls } = await run({
     'review#1': blockingReview(),
-    'ci-check#1': { status: 'pending', failed_checks: [] },
+    'ci-check#1': { status: 'pending', passed: 0, failed: 0, pending: 1, skipped: 0, failed_checks: [] },
     'fix#1': { applied: false, files: [], summary: 'cannot' },
   });
 
@@ -170,7 +170,7 @@ test('[AC-3d] 合流 prompt（review blocking + CI failed）に失敗ログ取�
 test('[AC-3d] 既存 ciFixPrompt（approve + ci_gate failed）にも同じ失敗ログ取得と origin/<base> merge 再現の指示が含まれる', async () => {
   const { result, calls } = await run({
     'ci-check#1': CI_FAILED,
-    'ci-check#2': { status: 'passed', failed_checks: [] },
+    'ci-check#2': { status: 'passed', passed: 1, failed: 0, pending: 0, skipped: 0, failed_checks: [] },
   });
   const fix1 = calls.find((c) => c.label === 'fix#1');
   assert.ok(fix1, 'ci_gate failed で fix#1 が dispatch されるべき');

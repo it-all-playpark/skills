@@ -399,8 +399,8 @@ const PR_B5 = {
 // ci-wait-check#1.2（待機 + 再判定の 1 spawn。slept:true）で passed になり lgtm。
 const PR_B6 = {
   overrides: {
-    'ci-check#1': { status: 'pending', failed_checks: [] },
-    'ci-wait-check#1.2': { slept: true, status: 'passed', failed_checks: [] },
+    'ci-check#1': { status: 'pending', passed: 0, failed: 0, pending: 1, skipped: 0, failed_checks: [] },
+    'ci-wait-check#1.2': { slept: true, status: 'passed', passed: 1, failed: 0, pending: 0, skipped: 0, failed_checks: [] },
   },
 };
 // B7: review 開始時の head（pr-meta の head_sha）が分かる round で review#1 と並列に起動した ci-check#1 の
@@ -411,7 +411,7 @@ const PR_B7 = {
       url: 'https://github.com/acme/skills/pull/5', head_ref: 'feature/x', base_ref: 'main',
       cwd: '/tmp/wt', epoch: 999, head_sha: 'a'.repeat(40),
     },
-    'ci-check#1': { status: 'passed', failed_checks: [], head_sha: 'b'.repeat(40) },
+    'ci-check#1': { status: 'passed', passed: 1, failed: 0, pending: 0, skipped: 0, failed_checks: [], head_sha: 'b'.repeat(40) },
   },
 };
 
