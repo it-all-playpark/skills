@@ -596,8 +596,8 @@ test('buildAbortHandoffPayload omits telemetry when none is given (phase/label a
 
 // ---- conformance: call sites use the canonical single-spawn handoff ----
 //
-// dev-flow.js（writeFailureTelemetry / Merge tier / top-level abort）と pr-iterate.js（終端 /
-// top-level abort）の 5 call site は canonical `runJournalHandoff` を通り、payload を pending/ へ
+// dev-flow.js（writeFailureTelemetry / PR phase 失敗 / Merge tier / top-level abort）と pr-iterate.js
+// （終端 / top-level abort）の 6 call site は canonical `runJournalHandoff` を通り、payload を pending/ へ
 // 直接書く 1 spawn に集約されている（issue #807）。payload の一時ファイル（.devflow-tmp/payload-*.json、
 // WT 未確定 abort 用の ~/.claude/journal/abort-payload/）とそれを書く journal-save spawn は残っていない。
 
@@ -605,7 +605,7 @@ test('workflows route every journal handoff through the canonical single-spawn r
   const devFlow = readFileSync(join(repoRoot, '.claude/workflows/dev-flow.js'), 'utf8');
   const prIterate = readFileSync(join(repoRoot, '.claude/workflows/pr-iterate.js'), 'utf8');
 
-  assert.equal((devFlow.match(/(?<!function )runJournalHandoff\(\{/g) ?? []).length, 3);
+  assert.equal((devFlow.match(/(?<!function )runJournalHandoff\(\{/g) ?? []).length, 4);
   assert.equal((prIterate.match(/(?<!function )runJournalHandoff\(\{/g) ?? []).length, 2);
   // logLabel は現行値のまま維持されている（issue #556 AC6）。
   assert.ok(devFlow.includes("logLabel: 'journal-log',"));

@@ -13,9 +13,9 @@
 //   AC-7: PR phase の pr.head_sha が workflow('dev-flow:pr-iterate') の nested.head_sha へ渡る
 //         （review#2 以降の fix delta 起点。nested 起動のみが本番経路で pr-meta probe を通らないため）。
 //         pr.head_sha が空文字・欠落のときは nested に head_sha キー自体を含めない
-//   PR fail-closed (#682): pr#<issue> の中断応答（committed:false / pr_url 空 / pr_number 非正）は
-//         closes-check・nested pr-iterate へ流さず failed_step / failure_reason を載せて throw し、
-//         abort handoff の error_msg は pr#<issue> を指す。正常系は従来どおり nested pr-iterate まで進む
+//   PR 失敗 (#682/#823): pr#<issue> の中断応答（committed:false / pr_url 空 / pr_number 非正）は
+//         closes-check・nested pr-iterate へ流さず、throw せず failed_step / failure_reason を返り値に載せて
+//         終端し、failure handoff（error_category: pr_phase_failed）を書く。正常系は従来どおり nested pr-iterate まで進む
 //   prompt: issue_body + acceptance_criteria + task_id + 配置規約を含み、AC テスト契約は含まない
 //
 // BLOCKED 再実装（reimpl-blocked#b）は blocked-replan-history.test.mjs / guard-blocked-routing.test.mjs。
@@ -338,54 +338,59 @@ test('[implementer] AC-7: pr.head_sha が空文字のとき nested に head_sha 
 });
 
 // ============================================================
-// PR phase fail-closed（issue #682）: pr#<issue> の中断応答（committed:false / pr_url 空 / pr_number 非正）
-// は closes-check・nested pr-iterate へ流さず、その場で failed_step / failure_reason を載せて throw する。
-// abort handoff の error_msg は abort@PR/pr#<issue>（pr-iterate の引数検証で落ちる従来経路では pr-iterate を指し、
-// proxy が踏んだ git / gh の stderr が transcript の外へ出なかった）
+// PR phase 失敗（issue #682 / #823）: pr#<issue> の中断応答（committed:false / pr_url 空 / pr_number 非正）
+// は closes-check・nested pr-iterate へ流さず、throw もせず、failed_step / failure_reason を返り値に載せた
+// failure 終端（error_category: pr_phase_failed）で run を終える。journal は abort entry ではなく
+// error_category=pr_phase_failed の failure entry（error_msg は pr-iterate の引数検証文でなく proxy の失敗文）。
 // ============================================================
 const PR_FAILURE_REASON = "fatal: Unable to create '.git/index.lock': Operation not permitted";
 const PR_FAILED_RESPONSE = { pr_url: '', pr_number: 0, committed: false, failed_step: 'commit', failure_reason: PR_FAILURE_REASON };
 
-test('[implementer] PR fail-closed (#682): pr#1 が committed:false / pr_number:0 を返すと run が throw し、エラー文に failed_step と failure_reason が含まれ、closes-check と workflow(pr-iterate) は呼ばれない', async () => {
-  const { calls, workflowCalls, error } = await runStandardWithWorkflowCapture({ 'pr#1': PR_FAILED_RESPONSE });
-  assert.ok(error, 'pr#1 の中断応答で run が throw していない');
-  assert.ok(error.message.includes('dev-flow: PR phase 失敗（step: commit、reason: ' + PR_FAILURE_REASON + '）'), `エラー文に failed_step / failure_reason が無い: ${error.message}`);
-  assert.ok(error.message.includes('pr_url=""') && error.message.includes('pr_number=0') && error.message.includes('committed=false'), `エラー文に proxy の生の値が無い: ${error.message}`);
-  assert.ok(!error.message.includes('正の整数が必要です'), `pr-iterate の引数検証文で落ちている（従来経路）: ${error.message}`);
+test('[implementer] PR phase 失敗 (#682/#823): pr#1 が committed:false / pr_number:0 を返すと run は throw せず、返り値に failed_step / failure_reason が載り、closes-check と workflow(pr-iterate) は呼ばれない', async () => {
+  const { calls, workflowCalls, error, result } = await runStandardWithWorkflowCapture({ 'pr#1': PR_FAILED_RESPONSE });
+  assert.equal(error, null, `pr#1 の中断応答で run が throw した: ${error?.message}`);
+  assert.equal(result.error_category, 'pr_phase_failed');
+  assert.equal(result.failed_step, 'commit');
+  assert.equal(result.failure_reason, PR_FAILURE_REASON);
+  assert.equal(result.committed, false);
   assert.equal(workflowCalls.length, 0, `workflow('dev-flow:pr-iterate') が呼ばれた: ${workflowCalls.map((w) => `${w.name}(pr=${w.opts?.pr})`).join(', ')}`);
   const closes = calls.filter((c) => c.label === 'closes-check' || c.label === 'closes-reinject' || c.label === 'closes-recheck');
   assert.equal(closes.length, 0, `closes-check 系が呼ばれた: ${closes.map((c) => c.label).join(', ')}`);
   assert.ok(calls.some((c) => c.label === 'pr#1'), 'pr#1 自体は呼ばれているはず');
 });
 
-test('[implementer] PR fail-closed (#682): abort handoff の error_phase が PR で、error_msg が pr#1 を指し PR phase 失敗文が載る', async () => {
-  const { calls, error } = await runStandardWithWorkflowCapture({ 'pr#1': PR_FAILED_RESPONSE });
-  assert.ok(error, 'pr#1 の中断応答で run が throw していない');
-  const save = calls.find((c) => c.label === 'journal-log-abort');
-  assert.ok(save, 'abort handoff の journal-log-abort が呼ばれていない');
+test('[implementer] PR phase 失敗 (#682/#823): failure handoff の error_category が pr_phase_failed・error_phase が PR で、error_msg に PR phase 失敗文と proxy の生の値が載る', async () => {
+  const { calls } = await runStandardWithWorkflowCapture({ 'pr#1': PR_FAILED_RESPONSE });
+  assert.equal(calls.filter((c) => c.label === 'journal-log-abort').length, 0, 'abort entry が書かれた');
+  const save = calls.find((c) => c.label === 'journal-log-failure');
+  assert.ok(save, 'failure handoff の journal-log-failure が呼ばれていない');
   const payload = parseJournalHandoffPayload(save.prompt);
   assert.equal(payload.outcome, 'failure');
-  assert.equal(payload.error_category, 'abort');
+  assert.equal(payload.error_category, 'pr_phase_failed');
   assert.equal(payload.error_phase, 'PR');
-  assert.ok(payload.error_msg.startsWith('abort@PR/pr#1: dev-flow: PR phase 失敗（step: commit、reason: ' + PR_FAILURE_REASON + '）'), `error_msg に PR phase 失敗文が無い: ${payload.error_msg}`);
+  assert.ok(payload.error_msg.startsWith('dev-flow: PR phase 失敗（step: commit、reason: ' + PR_FAILURE_REASON + '）'), `error_msg に PR phase 失敗文が無い: ${payload.error_msg}`);
+  assert.ok(payload.error_msg.includes('pr_url=""') && payload.error_msg.includes('pr_number=0') && payload.error_msg.includes('committed=false'), `error_msg に proxy の生の値が無い: ${payload.error_msg}`);
+  assert.ok(!payload.error_msg.includes('正の整数が必要です'), `pr-iterate の引数検証文で落ちている（従来経路）: ${payload.error_msg}`);
 });
 
-// push 失敗（issue #819）: abort のエラー文と handoff の error_msg に、pr-push が出力全文を残した
+// push 失敗（issue #819）: 返り値の push_log と handoff の error_msg に、pr-push が出力全文を残した
 // `.devflow-tmp/push-output.log` のパスが載る（人間が transcript を掘らずに失敗した段を見られる）。
-test('[implementer] PR push 失敗 (#819): pr#1 が failed_step:push を返すと、エラー文と abort handoff の error_msg に push log のパスが載り、pr#1 の prompt は同じパスを pr-push に渡す', async () => {
+test('[implementer] PR push 失敗 (#819/#823): pr#1 が failed_step:push を返すと、返り値の push_log と failure handoff の error_msg に push log のパスが載り、pr#1 の prompt は同じパスを pr-push に渡す', async () => {
   const reason = '❌ Pre-push checks failed\nerror: failed to push some refs to \'github.com:o/r.git\'';
-  const { calls, workflowCalls, error } = await runStandardWithWorkflowCapture({
+  const { calls, workflowCalls, error, result } = await runStandardWithWorkflowCapture({
     'pr#1': { pr_url: '', pr_number: 0, committed: true, failed_step: 'push', failure_reason: reason },
   });
-  assert.ok(error, 'push 失敗応答で run が throw していない');
+  assert.equal(error, null, `push 失敗応答で run が throw した: ${error?.message}`);
   const pushLog = '/tmp/wt/.devflow-tmp/push-output.log';
-  assert.ok(error.message.includes(`step: push、reason: ${reason}、push 出力全文: ${pushLog}）`), `エラー文に push log のパスが無い: ${error.message}`);
+  assert.equal(result.failed_step, 'push');
+  assert.equal(result.push_log, pushLog);
+  assert.ok(result.issue_comment.includes(pushLog), `issue_comment に push log のパスが無い:\n${result.issue_comment}`);
   assert.equal(workflowCalls.length, 0, 'push 失敗後に nested pr-iterate が呼ばれた');
   const pr = calls.find((c) => c.label === 'pr#1');
   assert.ok(pr.prompt.includes(`3. \`pr-push ${pushLog}\``), `pr#1 の prompt が同じ push log を pr-push に渡していない:\n${pr.prompt.slice(0, 400)}`);
-  const save = calls.find((c) => c.label === 'journal-log-abort');
+  const save = calls.find((c) => c.label === 'journal-log-failure');
   const payload = parseJournalHandoffPayload(save.prompt);
-  assert.ok(payload.error_msg.includes(`push 出力全文: ${pushLog}`), `abort handoff の error_msg に push log のパスが無い: ${payload.error_msg}`);
+  assert.ok(payload.error_msg.includes(`step: push、reason: ${reason}、push 出力全文: ${pushLog}）`), `failure handoff の error_msg に push log のパスが無い: ${payload.error_msg}`);
 });
 
 test('[implementer] PR fail-closed (#682): 正常系（committed:true, pr_number:1）は従来どおり closes-check → nested pr-iterate まで進む', async () => {

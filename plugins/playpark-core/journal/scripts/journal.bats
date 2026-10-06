@@ -514,6 +514,28 @@ JSON
 }
 
 # ===========================================================================
+# Tests for new error category: pr_phase_failed (issue #823)
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# dev-flow の PR phase 失敗終端（throw しない failure entry）が error.category / phase 付きで記録される
+# ---------------------------------------------------------------------------
+@test "failure with pr_phase_failed category and PR phase exits 0 and records entry" {
+    run "$SCRIPT" log dev-flow failure \
+        --error-category pr_phase_failed \
+        --error-msg 'dev-flow: PR phase 失敗（step: push、reason: remote: 403）' \
+        --error-phase PR
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    [ "$(jq -r '.outcome' "$entry_file")" = "failure" ]
+    [ "$(jq -r '.error.category' "$entry_file")" = "pr_phase_failed" ]
+    [ "$(jq -r '.error.phase' "$entry_file")" = "PR" ]
+}
+
+# ===========================================================================
 # Tests for --repo / --pr-number (issue #309)
 # ===========================================================================
 

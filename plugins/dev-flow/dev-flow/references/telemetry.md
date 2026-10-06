@@ -21,12 +21,12 @@ VM 実行の handoff の両方で pin する。キーを足すときは読み手
 | キー | entry | 経路 | 値 |
 |---|---|---|---|
 | `merge_tier` | dev-flow / pr-iterate | dev-flow: 成功、pr-iterate: 成功・abort | dev-flow は `classifyMergeTier` の tier（`AUTO` / `REVIEW` / `HOLD`）、pr-iterate は固定値 `PR_ITERATE` |
-| `shape` | dev-flow | 成功・abort（実効 shape 確定後のみ） | 実効 shape（`micro` / `standard` / `complex`） |
+| `shape` | dev-flow | 成功・PR phase 失敗・abort（実効 shape 確定後のみ） | 実効 shape（`micro` / `standard` / `complex`） |
 | `route` | dev-flow | 成功 | PR phase の経路（`lite` / `full`） |
 | `iterate_status` | dev-flow / pr-iterate | 成功 | pr-iterate の終端 status（`lgtm` / `stuck` / `fix_failed` / `max_reached` / `ci_error` / `ci_pending` 等）。nested pr-iterate が status を返さない run ではキー欠落 |
-| `eval_verdict` | dev-flow | 成功 | evaluator の最終 verdict。Evaluate を走らせない run（micro の skip）ではキー欠落 |
-| `duration_seconds` | dev-flow | 成功 | run 全体の wall-clock 秒（clock#start 〜 clock#end） |
-| `phase_durations` | dev-flow | 成功 | implement / validate / evaluate / pr / iterate / final の phase 別秒数 object |
+| `eval_verdict` | dev-flow | 成功・PR phase 失敗 | evaluator の最終 verdict。Evaluate を走らせない run（micro の skip）ではキー欠落 |
+| `duration_seconds` | dev-flow | 成功・PR phase 失敗 | run 全体の wall-clock 秒（clock#start 〜 clock#end） |
+| `phase_durations` | dev-flow | 成功・PR phase 失敗 | implement / validate / evaluate / pr / iterate / final の phase 別秒数 object |
 | `eval_model_config` | dev-flow | 成功・失敗・abort | evaluator に渡す model（`opus`） |
 | `impl_model_config` | dev-flow | 成功・失敗・abort | dev-implementer の既定 model（`opus`） |
 | `review_model_config` | dev-flow / pr-iterate | 成功・失敗・abort | pr-reviewer に渡す model（`opus`） |
@@ -52,6 +52,7 @@ nested pr-iterate を起動した dev-flow run は pr-iterate と dev-flow の e
   （fail-open）。**給電元応答の完了タイミング依存の skew を含むため、絶対値ではなく相対比較・分布用途で解釈すること。
   start〜setup_end（deps install 等の prerun 決定論処理 + wrapper turn）はどの phase にも属さない残差
   （duration_seconds − Σphase_durations）。Final reconcile skip 時（fixes_applied=0）は final キー自体が欠落する**。
+  PR phase 失敗の run は pr_end と end を PR phase proxy（`pr#<issue>`）応答の epoch から給電し、iterate / final キーを持たない。
   mark 取得失敗は当該 duration キーの欠落（全滅時は両キーとも出ない）。
 - `eval_model_config` / `review_model_config` / `impl_model_config`: 3 agent とも override を渡さず frontmatter
   （`agents/evaluator.md` / `agents/pr-reviewer.md` / `agents/dev-implementer.md` の `model`）で spawn する。agent()
@@ -82,6 +83,13 @@ telemetry とは別に、handoff の top-level に失敗の型を載せる（jou
   `outcome:'partial'` + `error_category:'cross_repo'` を記録し、dev-flow の返り値は `status:'cross_repo_artifact'`
   （`issue`/`worktree`/`branch`/`artifacts`/`note` を含む）を返す。dev-flow-health の失敗の型
   （`outcome == "failure"` のみ集計）には混ぜない。
+- PR phase 失敗（`pr#<issue>` の proxy が commit / push / `gh pr create` のどこかで中断した run）: throw せず
+  `outcome:'failure'` + `error_category:'pr_phase_failed'` + `error_phase:'PR'` + `error_msg`（`prPhaseFailure` の
+  1 文: `dev-flow: PR phase 失敗（step: <failed_step>、reason: <failure_reason>[、push 出力全文: <path>]）— proxy 応答 …`）
+  を記録する（logLabel は `journal-log-failure`）。telemetry は `shape` / `eval_verdict` / `duration_seconds` /
+  `phase_durations` と世代・model キー。dev-flow-health の失敗 signature は `dev-flow | pr_phase_failed | PR | <template>`
+  になる。abort entry は書かない（Implement〜Evaluate を終えた run の成果物・所要時間を残し、回収を wrapper の
+  issue コメントへ渡すため。返り値は `dev-flow/SKILL.md`「PR phase 失敗の扱い」）。
 - guard/hook 由来 BLOCKED（block_class:'guard_blocked'）が Implement phase で 1 件以上発生した成功 run は、
   `outcome:'success'` のまま `error_category:'guard_blocked'` が付く。
 - abort: run が journal handoff 到達前に throw した場合、dev-flow.js / pr-iterate.js の top-level try/catch が
