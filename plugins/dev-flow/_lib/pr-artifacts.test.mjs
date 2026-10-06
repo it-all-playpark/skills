@@ -29,6 +29,7 @@ import {
   PR_SECTION_HEADING_MAX,
   PR_BODY_PLAN_KEYS,
   prBodyClipReport,
+  prSectionsTrimFeedback,
   hasPrBodyClips,
   prBodyEvidenceInstr,
   planWithoutPrBodyMaterial,
@@ -286,6 +287,22 @@ test('[pr-artifacts] PR body: pr_sections を上限いっぱいに載せても�
   assert.ok(verifyPrBody(body, 815).ok, '構造検証は通る');
   assert.equal(closesVerdict({ view: { ok: true, raw: JSON.stringify({ body }) }, issue: 815 }), 'present');
   assert.equal(closesVerdict({ view: { ok: true, raw: JSON.stringify({ body: body.slice(0, body.lastIndexOf('Closes #815')) }) }, issue: 815 }), 'missing');
+});
+
+test('[pr-artifacts] prSectionsTrimFeedback: pr_sections の合計が上限以内なら null、超えたら合計・内訳・指示を 1 件返す', () => {
+  const at = [{ heading: 'a', markdown: 'x'.repeat(PR_SECTIONS_MAX_CHARS - 1) }, { heading: 'b', markdown: 'y' }];
+  assert.equal(prSectionsTrimFeedback(plan({ pr_sections: at })), null, '上限ちょうどは差し戻さない');
+  assert.equal(prSectionsTrimFeedback(plan()), null, 'pr_sections 無しは差し戻さない');
+  const over = [{ heading: 'a', markdown: 'x'.repeat(PR_SECTIONS_MAX_CHARS) }, { heading: 'b', markdown: 'yy' }];
+  const fb = prSectionsTrimFeedback(plan({ pr_sections: over }));
+  assert.equal(fb.length, 1);
+  assert.deepEqual(fb[0].pr_sections_over_limit, {
+    total_chars: PR_SECTIONS_MAX_CHARS + 2,
+    max_chars: PR_SECTIONS_MAX_CHARS,
+    sections: [{ heading: 'a', chars: PR_SECTIONS_MAX_CHARS }, { heading: 'b', chars: 2 }],
+  });
+  assert.ok(fb[0].instruction.includes('コード・テストは変更しない'), fb[0].instruction);
+  assert.ok(fb[0].instruction.includes(`${PR_SECTIONS_MAX_CHARS} 字以内`), fb[0].instruction);
 });
 
 test('[pr-artifacts] prBodyClipReport: 本文で「…」に切った note / decision / change bullet の件数と pr_sections の上限超過字数を返す', () => {

@@ -62,14 +62,30 @@ test('[pr-body-clips] (b) change bullet の clip も数える', async () => {
   assert.ok(summaryPrompt.includes('### ✂️ PR 本文で切れた項目 1 件\n\n- 変更: 1 件\n'), summaryPrompt);
 });
 
-test('[pr-body-clips] (c) pr_sections の合計が上限を超えても切らずに載せ、超過字数を journal と終端サマリーに出す', async () => {
+test('[pr-body-clips] (c) pr_sections の合計が上限を超えたら implementer へ要約を差し戻し、なお超過なら切らずに載せて超過字数を journal と終端サマリーに出す', async () => {
+  const half = 'x'.repeat(PR_SECTIONS_MAX_CHARS / 2 + 50);
+  const { prPrompt, telemetry, summaryPrompt, calls } = await run({
+    'impl:serial:issue-1': impl({ pr_sections: [{ heading: 'a', markdown: half }, { heading: 'b', markdown: half }] }),
+  });
+  const trim = calls.filter((c) => c.label === 'sections-trim:serial:issue-1');
+  assert.equal(trim.length, 1, `要約の差し戻しは 1 回だけ: ${calls.map((c) => c.label).join(', ')}`);
+  assert.ok(trim[0].prompt.includes('"pr_sections_over_limit":{"total_chars":' + (PR_SECTIONS_MAX_CHARS + 100)), trim[0].prompt);
+  assert.ok(calls.findIndex((c) => c.label === 'sections-trim:serial:issue-1') < calls.findIndex((c) => c.label.startsWith('eval')), 'Evaluate より前に差し戻す');
+  assert.equal((prPrompt.match(new RegExp(half, 'g')) ?? []).length, 2, '差し戻し後も超過なら pr_sections は切らずに本文へ載る');
+  assert.deepEqual(telemetry.pr_body_clips, { note: 0, decision: 0, change_bullet: 0, sections_over_chars: 100 }, JSON.stringify(telemetry));
+  assert.ok(summaryPrompt.includes('### ✂️ PR 本文の長文欄が上限超過\n\n- 長文欄（pr_sections）が合計上限を 100 字超過（切らずに載せた）'), summaryPrompt);
+});
+
+test('[pr-body-clips] (e) 差し戻しで implementer が要約した pr_sections が前回分を置き換え、clip 記録は出ない', async () => {
   const half = 'x'.repeat(PR_SECTIONS_MAX_CHARS / 2 + 50);
   const { prPrompt, telemetry, summaryPrompt } = await run({
     'impl:serial:issue-1': impl({ pr_sections: [{ heading: 'a', markdown: half }, { heading: 'b', markdown: half }] }),
+    'sections-trim:serial:issue-1': impl({ pr_sections: [{ heading: '対応表', markdown: TABLE }] }),
   });
-  assert.equal((prPrompt.match(new RegExp(half, 'g')) ?? []).length, 2, '上限超過でも pr_sections は切らずに本文へ載る');
-  assert.deepEqual(telemetry.pr_body_clips, { note: 0, decision: 0, change_bullet: 0, sections_over_chars: 100 }, JSON.stringify(telemetry));
-  assert.ok(summaryPrompt.includes('### ✂️ PR 本文の長文欄が上限超過\n\n- 長文欄（pr_sections）が合計上限を 100 字超過（切らずに載せた）'), summaryPrompt);
+  assert.ok(prPrompt.includes(`<details><summary>対応表</summary>\n\n${TABLE}\n\n</details>`), '要約後の対応表が載る');
+  assert.ok(!prPrompt.includes(half), '超過していた前回分は載らない');
+  assert.ok(!('pr_body_clips' in telemetry), JSON.stringify(telemetry));
+  assert.ok(!summaryPrompt.includes('✂️'), summaryPrompt);
 });
 
 test('[pr-body-clips] (d) clip が起きない run（長文は pr_sections）は telemetry キーも終端サマリーの節も出さない', async () => {

@@ -3522,11 +3522,12 @@ const IMPL = {
     },
     // 対応表など複数行の markdown（1 項目 1 つの `<details>` として改行を保ったまま clip せず PR 本文に載る）。
     // maxLength は pr-artifacts の PR_SECTION_HEADING_MAX / PR_SECTIONS_MAX_CHARS と同値（literal の理由は上と同じ）。
+    // 合計の上限は schema で表せないため、Implement / reimpl 直後の trimPrSectionsIfOver が差し戻す。
     pr_sections: {
       type: 'array',
       items: {
         type: 'object', required: ['heading', 'markdown'],
-        properties: { heading: { type: 'string', maxLength: 80 }, markdown: { type: 'string', maxLength: 8000 } },
+        properties: { heading: { type: 'string', maxLength: 80 }, markdown: { type: 'string', maxLength: 3000 } },
       },
     },
     // issue 本文が挙げたが AC 外・worktree 外として実施しなかった作業（1 項目 1 文）。PR 本文と終端サマリーの
@@ -4188,7 +4189,7 @@ const PR_BODY_HIT_PATH_MAX = 80;
 const PR_BODY_AC_MIN = 40;
 const PR_BODY_AC_SHRINK_STEP = 20;
 const PR_BODY_HEADINGS = ['## 変更', '## 受入条件', '## 設計判断', '## 検証'];
-const PR_SECTIONS_MAX_CHARS = 8000;
+const PR_SECTIONS_MAX_CHARS = 3000;
 const PR_SECTION_HEADING_MAX = 80;
 
 function changeGroups(plan) {
@@ -4338,6 +4339,19 @@ function prBodyClipReport(plan) {
     change_bullet: clipped(changeBulletTexts(plan), PR_BODY_CHANGE_BULLETS_MAX, PR_BODY_CHANGE_BULLET_MAX),
     sections_over_chars: Math.max(0, sectionsChars - PR_SECTIONS_MAX_CHARS),
   };
+}
+
+function prSectionsTrimFeedback(plan) {
+  const sections = prSections(plan).map((s) => ({ heading: s.heading, chars: Array.from(s.markdown).length }));
+  const total = sections.reduce((n, s) => n + s.chars, 0);
+  if (total <= PR_SECTIONS_MAX_CHARS) return null;
+  return [{
+    pr_sections_over_limit: { total_chars: total, max_chars: PR_SECTIONS_MAX_CHARS, sections },
+    instruction: `pr_sections の markdown 合計 ${total} 字が上限 ${PR_SECTIONS_MAX_CHARS} 字を超えた。`
+      + 'コード・テストは変更しない。AC の根拠に要る行だけを残し、pr_sections 全件を合計 '
+      + `${PR_SECTIONS_MAX_CHARS} 字以内に書き直して返せ（返した pr_sections が前回分を置き換える）。`
+      + 'design_decisions / pr_notes / out_of_scope も前回どおり全件返せ',
+  }];
 }
 
 function hasPrBodyClips(report) {
@@ -4947,6 +4961,17 @@ async function runImplement(req, plan, fixFeedback, tag, blocked) {
   return results
 }
 
+// pr_sections の合計が PR_SECTIONS_MAX_CHARS を超えたら、builder で切らずに dev-implementer へ要約を 1 回だけ差し戻す。
+// PR 本文は Evaluate / final-ac-reconcile の判定文脈に入り haiku が転写するので短く保つ。Evaluate より前に
+// 呼び、評価対象の本文を確定させる。差し戻し後も超過なら切らずに載せ、pr_body_clips.sections_over_chars で可視化する。
+async function trimPrSectionsIfOver(req, plan, tag) {
+  const feedback = prSectionsTrimFeedback(plan)
+  if (!feedback) return plan
+  log(`⚠️ pr_sections の合計が上限 ${PR_SECTIONS_MAX_CHARS} 字を超過 — dev-implementer へ要約を差し戻す（${tag}）`)
+  const results = await runImplement(req, plan, feedback, tag)
+  return adoptImplPrNotes(adoptReportedFiles(plan, results), results)
+}
+
 // implementDrops(plan, results): runImplement が落とした task 数（計画 task 数 − 返却結果数）。
 // 合成 plan は task 1 件なので、返却 null は 1 として implDroppedCount に計上される。
 function implementDrops(plan, results) {
@@ -5308,7 +5333,7 @@ async function execImplementPhase(state) {
   ]
 
   // guard_blocked で implResults から除いた結果の files も宣言に取り込む（replan・blockSeen の遮断とは独立）
-  state.plan = adoptImplPrNotes(adoptReportedFiles(plan, [...implResults, ...state.guardBlockedResults]), implResults)
+  state.plan = await trimPrSectionsIfOver(req, adoptImplPrNotes(adoptReportedFiles(plan, [...implResults, ...state.guardBlockedResults]), implResults), 'sections-trim')
   state.implResults = implResults
   state.blockedConcerns = blockedConcerns
   state.concerns = concerns
@@ -6285,7 +6310,7 @@ async function execEvaluatePhase(state) {
     reimplCount++
     if (agentAcReimpl) agentAcReimplCount++
     const reimplResults = await runImplement(req, plan, implFeedback, `reimpl#${i}`)
-    plan = adoptImplPrNotes(adoptReportedFiles(plan, reimplResults), reimplResults)
+    plan = await trimPrSectionsIfOver(req, adoptImplPrNotes(adoptReportedFiles(plan, reimplResults), reimplResults), `sections-trim#${i}`)
   }
 
   state.plan = plan

@@ -69,7 +69,7 @@ nested pr-iterate を起動した dev-flow run は pr-iterate と dev-flow の e
   単体起動の pr-iterate は prerun を経ないので `null`。12 桁 hex 以外は `normalizePluginCommit`
   （`_lib/plugin-version.mjs`）が `null` に倒し run を止めない。キー欠落は本キー導入前の entry を意味する。
 - `pr_body_clips`: `_lib/pr-artifacts.mjs` の `prBodyClipReport`。PR 本文で「…」に切った `pr_notes` / 設計判断 /
-  変更 bullet の件数と、`pr_sections` の markdown 合計が `PR_SECTIONS_MAX_CHARS` を超えた字数（切らずに載せる）。
+  変更 bullet の件数と、`pr_sections` の markdown 合計が `PR_SECTIONS_MAX_CHARS` を超えた字数（implementer への要約差し戻し後もなお超えた分。切らずに載せる）。
   どれかが非 0 の run だけ載り、同じ内容が終端サマリーの「PR 本文で切れた項目」節に出る。PR 本文の切れを
   reviewer が指摘して `fix_failed` / HOLD になった run の原因推定で、builder 側の切れかを見分けるために読む。
 

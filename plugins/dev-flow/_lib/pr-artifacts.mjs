@@ -120,11 +120,13 @@ export const PR_BODY_HIT_PATH_MAX = 80;
 export const PR_BODY_AC_MIN = 40;
 export const PR_BODY_AC_SHRINK_STEP = 20;
 export const PR_BODY_HEADINGS = ['## 変更', '## 受入条件', '## 設計判断', '## 検証'];
-// pr_sections（IMPL が返す複数行 markdown）の上限。本文は haiku proxy が verbatim 転写するため、長すぎると
-// 後半（Closes 行）が落ちる（issue #661 の症状 2）。markdown 合計がこれを超えても切らずに載せ、
-// prBodyClipReport の sections_over_chars で journal と終端サマリーに出す。
-// heading の上限は IMPL schema の maxLength と同値（inline 区間が schema 定義より後ろにあり参照できない）。
-export const PR_SECTIONS_MAX_CHARS = 8000;
+// pr_sections（IMPL が返す複数行 markdown）の合計上限。PR 本文は Evaluate / final-ac-reconcile の判定文脈に
+// そのまま入り、haiku proxy が verbatim 転写する — 長いほど判定が薄まり、転写で後半（Closes 行）が落ちうる
+// （issue #661 の症状 2）。値は「40 行の対応表 1 本」が収まる幅。超えたら builder は切らず、workflow が
+// prSectionsTrimFeedback で dev-implementer に要約を 1 回差し戻す（何を残すかは中身を知る implementer が決める）。
+// 差し戻し後も超過なら切らずに載せ、prBodyClipReport の sections_over_chars で journal と終端サマリーに出す。
+// heading と section 1 件の上限は IMPL schema の maxLength と同値（inline 区間が schema 定義より後ろにあり参照できない）。
+export const PR_SECTIONS_MAX_CHARS = 3000;
 export const PR_SECTION_HEADING_MAX = 80;
 
 // plan.serial の file_changes を component（path の dirname。無ければ '(root)'）ごとに
@@ -309,6 +311,21 @@ export function prBodyClipReport(plan) {
     change_bullet: clipped(changeBulletTexts(plan), PR_BODY_CHANGE_BULLETS_MAX, PR_BODY_CHANGE_BULLET_MAX),
     sections_over_chars: Math.max(0, sectionsChars - PR_SECTIONS_MAX_CHARS),
   };
+}
+
+// pr_sections の markdown 合計が PR_SECTIONS_MAX_CHARS を超えたときに dev-implementer へ渡す fix_feedback（1 件の配列）。
+// 超えていなければ null。builder 側で末尾を切ると AC の根拠が無差別に落ちるため、残す行の選択は implementer に返す。
+export function prSectionsTrimFeedback(plan) {
+  const sections = prSections(plan).map((s) => ({ heading: s.heading, chars: Array.from(s.markdown).length }));
+  const total = sections.reduce((n, s) => n + s.chars, 0);
+  if (total <= PR_SECTIONS_MAX_CHARS) return null;
+  return [{
+    pr_sections_over_limit: { total_chars: total, max_chars: PR_SECTIONS_MAX_CHARS, sections },
+    instruction: `pr_sections の markdown 合計 ${total} 字が上限 ${PR_SECTIONS_MAX_CHARS} 字を超えた。`
+      + 'コード・テストは変更しない。AC の根拠に要る行だけを残し、pr_sections 全件を合計 '
+      + `${PR_SECTIONS_MAX_CHARS} 字以内に書き直して返せ（返した pr_sections が前回分を置き換える）。`
+      + 'design_decisions / pr_notes / out_of_scope も前回どおり全件返せ',
+  }];
 }
 
 export function hasPrBodyClips(report) {

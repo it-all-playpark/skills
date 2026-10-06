@@ -70,9 +70,10 @@ issue の受入条件（AC）をすべて満たす変更を worktree に残し�
   `design_decisions` に入れる。コードのコメントや `summary` に書いただけでは PR 本文に載らず、AC は未達になる。
   `pr_notes` は 1 行の要約欄で、改行は 1 空白に畳まれ 240 字（`design_decisions` は 120 字）を超えると「…」で
   切られる。対応表・一覧・複数段落など長いものは `pr_sections`（`heading` 80 字以内 + `markdown`）で返す —
-  改行を保ったまま切られずに PR 本文の折りたたみ（`<details>`）に載る。`markdown` の合計は 8000 字までに収める
-  （超えても切られないが、PR 本文の転写で後半が落ちうるので終端サマリーに警告が出る）。evaluator は PR 本文
-  そのもので AC を判定する。差し戻しで再実行したときも、PR 本文に載せたい項目は毎回全件返す（空なら前回分が残る）
+  改行を保ったまま切られずに PR 本文の折りたたみ（`<details>`）に載る。`markdown` の合計は 3000 字までに収める。
+  全文転写ではなく AC の根拠に要る行だけを選んで書く（PR 本文は evaluator の判定文脈にそのまま入り、長いほど
+  判定が薄まる）。超えると要約の差し戻し（`pr_sections_over_limit`）が来る — そのときはコード・テストを変えず
+  `pr_sections` だけを書き直して返す。evaluator は PR 本文そのもので AC を判定する。差し戻しで再実行したときも、PR 本文に載せたい項目は毎回全件返す（空なら前回分が残る）
 - **範囲外にした作業は `out_of_scope` で返す。** issue 本文（背景・変更内容・削除するもの等）に挙がっているが
   AC に入っていない、または worktree の外にあるため実施しなかった作業を 1 項目 1 文で書く（上の
   `AC-<n> 未実施（worktree 外）` の作業もここに書く）。PR 本文と終端サマリーの「この PR に含めなかったもの」に
@@ -127,7 +128,7 @@ status は正直に付ける。動かないものを `DONE` にしない。曖�
   "concerns": ["自信のない箇所 / AC-<n> 未実施（worktree 外）: 理由 / 未検証の点"],
   "design_decisions": [{"title": "PR 本文「設計判断」に載せる決定", "rationale": "その理由"}],
   "pr_notes": [{"section": "measurement | verification", "text": "PR 本文「検証」に載せる計測値・検証結果（条件と数値を書く。240 字以内）"}],
-  "pr_sections": [{"heading": "PR 本文の折りたたみ見出し（80 字以内）", "markdown": "対応表など複数行の markdown（改行保持・切られない。合計 8000 字以内）"}],
+  "pr_sections": [{"heading": "PR 本文の折りたたみ見出し（80 字以内）", "markdown": "対応表など複数行の markdown（改行保持・切られない。合計 3000 字以内）"}],
   "out_of_scope": ["PR 本文・終端サマリー「この PR に含めなかったもの」に載せる、issue 本文にあるが実施しなかった作業と理由（1 項目 1 文）"],
   "blocking_reason": null,
   "missing_context": null
