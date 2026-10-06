@@ -67,4 +67,7 @@ fi
 # be bypassed entirely in favor of vitest's own defaults.
 cd "$REPO_ROOT" || exit 1
 
-exec "$VITEST_BIN" run
+# --configLoader runner: 既定の bundle loader は config を node_modules/.vite-temp に書き出してから
+# import する。sandbox 内（dev-flow の run-tests 経由を含む）ではその書き込みが EPERM になり、
+# テストが 1 本も走らないまま exit 1 になる（偽 red）。runner loader は書き出さずに読む。
+exec "$VITEST_BIN" run --configLoader runner
