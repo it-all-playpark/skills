@@ -1,6 +1,6 @@
 export const meta = {
-  name: 'pr-iterate',
-  description: 'PR を review ⇄ fix で LGTM になるまで反復（上限 10）。単体起動も dev-flow からのサブ呼びも可',
+  name: 'pr-iterate-run',
+  description: 'PR を review ⇄ fix で LGTM になるまで反復（上限 10）。単体起動は /pr-iterate（wrapper skill）経由、dev-flow からはサブ呼び',
   phases: [
     { title: 'Iterate' },
   ],
@@ -235,9 +235,9 @@ function mergeSubagentCounts(counts, byType) {
 }
 // ==== END inline: _lib/subagent-invocations.mjs ====
 
-// args 正規化: 単体 /pr-iterate <pr> でも dev-flow からの workflow('pr-iterate', {pr}) でも受ける
+// args 正規化: 単体 /pr-iterate <pr>（wrapper skill 経由）でも dev-flow からの
+// workflow('dev-flow:pr-iterate-run', {pr, nested}) でも受ける
 const PR = resolvePositiveIntArg(args, 'pr')
-const POST_TERMINAL_SUMMARY = args?.post_terminal_summary !== false
 // issue の受入条件。dev-flow が nested 起動時に渡す。単体起動（/pr-iterate <pr>）は
 // issue context を持たないため未指定になり、acceptanceCriteriaBlock が空文字を返して
 // AC 無しでレビューする（fail-open — AC 取得のために gh 呼び出しを増やさない）。
@@ -248,9 +248,12 @@ const PLUGIN_COMMIT = normalizePluginCommit(args?.plugin_commit)
 const MAX = args?.max_iterations == null
   ? 10
   : Number(resolvePositiveIntArg(args.max_iterations, 'max_iterations'))
-// NESTED: dev-flow が workflow('pr-iterate') を nested 起動する際に渡す呼び出し元情報。
-// cwd/head_ref は必須（欠落は明示 throw。legacy fallback や他形式の受理はしない）、repo/epoch/
-// head_sha は optional。単体起動（/pr-iterate <pr>）は未指定のため NESTED=null。
+// NESTED: worktree と PR head を確定済みの呼び出し元が渡す情報。渡すのは dev-flow（PR phase の後）と
+// /pr-iterate の wrapper skill（pr-iterate-prerun の出力）の 2 つで、caller で区別する。
+// cwd/head_ref/caller は必須（欠落・out-of-enum は明示 throw。legacy fallback や他形式の受理はしない）、
+// repo/epoch/head_sha/base_ref は optional。nested 無しで Workflow を直接起動した場合だけ NESTED=null
+// （pr-meta probe で取得する）。
+const NESTED_CALLERS = ['dev-flow', 'standalone']
 const NESTED = args?.nested == null
   ? null
   : (() => {
@@ -260,13 +263,23 @@ const NESTED = args?.nested == null
         || typeof n.head_ref !== 'string' || n.head_ref.trim() === '') {
         throw new Error(`pr-iterate: args.nested が不正形です（cwd/head_ref は非空文字列が必須）: ${JSON.stringify(n)}`)
       }
-      // head_sha（optional）: dev-flow の PR phase が push 直後に取った PR head の commit sha。
-      // nested 起動では pr-meta probe を起動しないため、review#1 時点の sha_prev はここから受ける。
+      if (!NESTED_CALLERS.includes(n.caller)) {
+        throw new Error(`pr-iterate: args.nested.caller は ${NESTED_CALLERS.join(' / ')} のいずれか（受信: ${JSON.stringify(n.caller)}）`)
+      }
+      // head_sha（optional）: dev-flow の PR phase が push 直後に取った / pr-iterate-prerun が gh pr view で
+      // 取った PR head の commit sha。nested 起動では pr-meta probe を起動しないため、review#1 時点の
+      // sha_prev はここから受ける。
       if (n.head_sha !== undefined && typeof n.head_sha !== 'string') {
         throw new Error(`pr-iterate: args.nested.head_sha は string（受信: ${JSON.stringify(n.head_sha)}）`)
       }
+      if (n.base_ref !== undefined && typeof n.base_ref !== 'string') {
+        throw new Error(`pr-iterate: args.nested.base_ref は string（受信: ${JSON.stringify(n.base_ref)}）`)
+      }
       return n
     })()
+// 終端サマリーの PR コメント投稿。dev-flow は自分の終端サマリーを投稿するので caller:'dev-flow' のときだけ止め、
+// 単体起動（wrapper 経由の caller:'standalone' / nested 無しの直接起動）は投稿する
+const POST_TERMINAL_SUMMARY = NESTED?.caller !== 'dev-flow'
 const REVIEW_STUCK = 2   // 同一 topic がこの回数出たら stuck と判定し人間へエスカレーション
 
 // run あたりの subagent (agent()) 起動数カウント（返り値 subagent_invocations）。agent() の代わりに全 call site を
@@ -874,19 +887,22 @@ const PR_META = {
   type: 'object', required: ['url'],
   properties: { url: { type: 'string' }, head_ref: { type: 'string' }, base_ref: { type: 'string' }, cwd: { type: 'string' }, head_sha: { type: 'string' }, epoch: { type: 'number' } },
 }
-// nested 起動（dev-flow → workflow('pr-iterate')）では pr-meta probe を起動しない。
-// 根拠: cwd/head_ref/repo/epoch は dev-flow が Setup/PR phase で既に確定済みの値として
-// args.nested に保持しており、pr-iterate 側での再取得は冗長な exec-proxy 呼び出しになる。
+// nested 起動（dev-flow → workflow('dev-flow:pr-iterate-run') / /pr-iterate wrapper skill）では pr-meta probe を
+// 起動しない。根拠: cwd/head_ref/repo/epoch/head_sha は dev-flow（Setup/PR phase）か pr-iterate-prerun（gh pr view の
+// 決定論 parse）が確定済みの値として args.nested に保持しており、haiku に gh pr view を転写させる理由が無い
+// （転写失敗で head_sha が空になると review#2 以降が full review に落ちる）。
 let prMeta
 let REPO
 if (NESTED) {
   prMeta = {
-    url: '', head_ref: NESTED.head_ref, base_ref: '', cwd: NESTED.cwd,
+    url: '', head_ref: NESTED.head_ref, base_ref: NESTED.base_ref ?? '', cwd: NESTED.cwd,
     ...(typeof NESTED.head_sha === 'string' ? { head_sha: NESTED.head_sha } : {}),
     ...(Number.isFinite(NESTED.epoch) ? { epoch: NESTED.epoch } : {}),
   }
   REPO = NESTED.repo ?? null
-  log('nested 起動 — pr-meta / isolation-cleanup を skip（dev-flow Setup 側の .devflow-tmp cleanup が run 間衛生を担保）')
+  log(NESTED.caller === 'dev-flow'
+    ? 'nested 起動（dev-flow）— pr-meta / isolation-cleanup を skip（dev-flow Setup 側の .devflow-tmp cleanup が run 間衛生を担保）'
+    : '単体起動（/pr-iterate wrapper）— pr-meta / isolation-cleanup を skip（pr-iterate-prerun が worktree を用意し probe 残置物を除去済み）')
 } else {
   prMeta = await failOpenAgent(
     `## Objective\nPR #${PR} の URL・head/base branch 名・head commit sha・現在の作業ディレクトリ絶対パスを取得する（telemetry の repo 解決 / isolation probe / review#2 以降の fix delta 起点用）。\n\n## Instructions\n次のコマンドをそのまま実行し、出力を対応するキーへ格納せよ（各コマンド失敗時は throw せず該当キーを空文字で返すこと。epoch のみコマンド失敗時は省略可）:\n- \`gh pr view ${PR} --json url -q .url\` → url\n- \`gh pr view ${PR} --json headRefName -q .headRefName\` → head_ref\n- \`gh pr view ${PR} --json baseRefName -q .baseRefName\` → base_ref\n- \`gh pr view ${PR} --json headRefOid -q .headRefOid\` → head_sha（40 桁 hex をそのまま）\n- \`pwd\` → cwd（現在の作業ディレクトリの絶対パス）\n- \`date +%s\` → epoch(現在時刻の epoch 秒整数。isolation probe 対象パスの run 毎一意化用)\n\n## Output format\n{ "url": string, "head_ref": string, "base_ref": string, "head_sha": string, "cwd": string, "epoch": number }\n\n## Tools\n使用可: Bash のみ\n\n## Boundary\nファイル変更・git 操作禁止。\n\n## Token cap\n100 語以内で完結すること。`,
@@ -976,22 +992,21 @@ const isoTargetPath = `${isoWt.replace(/\/\.claude\/worktrees\/.*$/, '')}/.claud
 // isolation cleanup: probe の直前に前 run が残した stale な probe artifact を除去する
 // （残っていると isolation が正常でも probe が written:false に倒れる）。
 // 除去範囲は ISOLATION_PROBE_CLEANUP_GLOB（`.devflow-tmp/.isolation-probe*` — probe artifact の
-// token 形・legacy 形のみ）に絞る: nested 起動（dev-flow → workflow('pr-iterate')）
-// では isoWt が実行中の dev-flow worktree 自身になり、`.devflow-tmp` 全体を消すと当該 run が既に
-// 書いた run 専用 scratch（journal payload 等の .devflow-tmp 配下生成物）を
-// run 途中で失う。`.devflow-tmp` 全体の除去は run 開始
-// 時点である dev-flow Setup 側の責務。fail-open: 失敗しても run は継続する（残っていれば直後の
-// probe が written:false で fail-closed に倒れ、復旧手順は同一）。
-// nested 起動時は skip する（skip 理由は上の pr-meta 分岐で log 済み — dev-flow
-// Setup が run 開始時に .devflow-tmp 全体を cleanup 済みのため重複起動が不要）。
+// token 形・legacy 形のみ）に絞る: isoWt が dev-flow の worktree（実行中の run 自身、または単体起動が
+// 再利用した df-<N>）のとき、`.devflow-tmp` 全体を消すと run 専用 scratch（journal payload・PR phase 失敗の
+// 回収用 commit message 等）を失う。`.devflow-tmp` 全体の除去は run 開始時点である dev-flow Setup 側の責務。
+// fail-open: 失敗しても run は継続する（残っていれば直後の probe が written:false で fail-closed に倒れ、
+// 復旧手順は同一）。
+// nested 起動時は skip する（skip 理由は上の pr-meta 分岐で log 済み — dev-flow は Setup が run 開始時に
+// .devflow-tmp 全体を、/pr-iterate wrapper は pr-iterate-prerun が同じ glob を cleanup 済み）。
 let isoClean = null
 if (!NESTED) {
   isoClean = await failOpenAgent(isolationCleanupPrompt(isoWt, ISOLATION_PROBE_CLEANUP_GLOB), { agentType: 'dev-runner-haiku', schema: ISOLATION_CLEANUP, label: 'isolation-cleanup', phase: 'Iterate' })
   if (!isoClean || isoClean.cleaned !== true) log(`⚠️ isolation cleanup が完了しなかった（fail-open で続行）: ${isoClean?.error ?? 'agent null'}`)
 }
 // isoToken: probe 対象パスを run 毎に一意にする。pr-meta probe（fail-open）が
-// 取得した epoch を使い、取得できなければ PR 番号へ fallback する。nested 起動（dev-flow →
-// workflow('pr-iterate')）時、probe ファイルは実行中 dev-flow run の worktree の
+// 取得した epoch（nested 起動は呼び出し元の epoch）を使い、取得できなければ PR 番号へ fallback する。
+// dev-flow からの nested 起動時、probe ファイルは実行中 dev-flow run の worktree の
 // `.devflow-tmp/.isolation-probe-<token>` に書かれるが一意名のため dev-flow 側の .devflow-tmp
 // 配下生成物・probe ファイルと衝突しない。
 const isoToken = String(prMeta?.epoch ?? PR)
@@ -1001,7 +1016,7 @@ if (isoProbe && isoProbe.written === false) {
     // startRef は PR の head（base ではない）— pr-iterate は既存 PR の変更を含む worktree を
     // 再現させる必要がある。base 起点だと fix 対象の diff を持たない worktree を提示してしまう。
     worktree: isoWt, branch: prMeta?.head_ref || '?', startRef: `origin/${prMeta?.head_ref || '?'}`,
-    workflowName: 'pr-iterate', workflowArgs: PR, targetPath: isoTargetPath, error: isoProbe.error,
+    workflowName: 'dev-flow:pr-iterate-run', workflowArgs: PR, targetPath: isoTargetPath, error: isoProbe.error,
   }))
 }
 if (!isoProbe) log('⚠️ isolation probe 自体が失敗 — 書き込み可否を診断できず（fail-open で続行）')

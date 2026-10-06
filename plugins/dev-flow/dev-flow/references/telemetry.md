@@ -67,7 +67,7 @@ nested pr-iterate を起動した dev-flow run は pr-iterate と dev-flow の e
 - `plugin_commit`: 「どの commit から失敗し始めたか / 修正後に再発していないか」を割り出すための値。
   `dev-flow-prerun` が `dev-flow/scripts/plugin-commit.sh` で plugin root から決め（cache mode はディレクトリ名、
   link mode は checkout の HEAD）、`args.setup.plugin_commit` → nested pr-iterate へは `args.plugin_commit` で渡る。
-  単体起動の pr-iterate は prerun を経ないので `null`。12 桁 hex 以外は `normalizePluginCommit`
+  単体起動の pr-iterate は `pr-iterate-prerun` が plugin_commit を出さないので `null`。12 桁 hex 以外は `normalizePluginCommit`
   （`_lib/plugin-version.mjs`）が `null` に倒し run を止めない。キー欠落は本キー導入前の entry を意味する。
 - `pr_body_clips`: `_lib/pr-artifacts.mjs` の `prBodyClipReport`。PR 本文で「…」に切った `pr_notes` / 設計判断 /
   変更 bullet の件数と、`pr_sections` の markdown 合計が `PR_SECTIONS_MAX_CHARS` を超えた字数（implementer への要約差し戻し後もなお超えた分。切らずに載せる）。

@@ -96,9 +96,10 @@ JS で保持し、中間 state は script 変数に持つ (外部 state JSON は
 ```
 /dev-flow <issue>   → [wrapper preflight] → Setup(末尾で決定論 analyze ゲート)
                       → Implement(dev-implementer 1 spawn) → Validate(test green)
-                      → Security floor(realized diff から shape 判定) → Evaluate → PR → workflow('dev-flow:pr-iterate')
+                      → Security floor(realized diff から shape 判定) → Evaluate → PR → workflow('dev-flow:pr-iterate-run')
                       → Final reconcile(fixes_applied>0 のみ) → Merge tier
-/pr-iterate <pr>    → Workflow('dev-flow:pr-iterate') で review ⇄ fix loop (LGTM まで, 上限10)。単体起動可
+/pr-iterate <pr>    → [wrapper preflight: pr-iterate-prerun → EnterWorktree] → Workflow('dev-flow:pr-iterate-run') で
+                      review ⇄ fix loop (LGTM まで, 上限10)。dev-flow からは nested 起動
 日次 launchd         → dev-flow-health/scripts/daily.sh: 失敗の型を決定論で集計（new / ongoing / resolved / regressed + 候補 commit）
                       → new / regressed がある日だけ /dev-flow-health が原因を推定して self-improve issue を起票
 ```

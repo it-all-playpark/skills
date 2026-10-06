@@ -1,0 +1,89 @@
+---
+name: pr-iterate
+description: |
+  Iterates review ⇄ fix on an existing GitHub PR until LGTM (max 10 rounds): performs a
+  deterministic isolation preflight (pr-iterate-prerun: gh pr view → PR head worktree
+  create/reuse → write probe; then EnterWorktree) and launches the pr-iterate-run dynamic
+  workflow, which posts the terminal summary on the PR. Merge is always human.
+  Use when: (1) /pr-iterate <pr>, (2) user asks to re-review / fix review findings on a PR,
+  (3) recovering a dev-flow run that stopped at pr-iterate (fix_failed / ci_pending / abort),
+  (4) keywords: pr-iterate, PRレビュー反復, review fix loop, LGTMまで.
+---
+
+# pr-iterate
+
+既存 PR を review ⇄ fix で LGTM まで反復する wrapper skill。orchestration の実体は dynamic workflow
+`pr-iterate-run`（`plugins/dev-flow/.claude/workflows/pr-iterate.js`）が持つ。本 skill は
+**isolation preflight**（PR head の worktree を決定論で用意してから Workflow を起動する）を行う。
+dev-flow からの nested 起動はこの skill を通らない（dev-flow が自分の worktree を `nested` で渡す）。
+
+## なぜ preflight が必要か
+
+fix stage の Write/Edit は、呼び出し元セッションの cwd が worktree へ isolate されていないと bg-isolation
+guard に拒否される。workflow は review loop の前に isolation probe（worktree 直下
+`.devflow-tmp/.isolation-probe-<epoch>` への Write）を置き、`written:false` なら fail-closed で止まる。
+preflight で PR head の worktree を作って `EnterWorktree` しておけば probe が成立し、workflow は
+haiku に `gh pr view` を転写させる pr-meta と isolation-cleanup を起動しない（値は prerun が決定論で渡す）。
+
+## Preflight 手順（1-4 を順に実行）
+
+1. **prerun 実行**: launch dir（リポジトリルートか、その worktree）で Bash 1 コマンドとして
+   `pr-iterate-prerun <PR>` を実行する（PR が cwd の repo と別なら `--repo owner/name` を付ける）。前置形
+   （`cd X && ...` / `VAR=x ...` / `bash <path>` 等）は使わず、bare 名を先頭トークンにする。stdout の
+   JSON 1 行（`{ok, pr, worktree, head_ref, base_ref, head_sha, repo, epoch, worktree_status, worktree_removed, error?}`）
+   をそのまま保持する。
+
+   `pr-iterate-prerun` は PR の url / head / base / head の commit を `gh pr view` で取り、`git fetch origin` 後の
+   `origin/<head>` が PR の head commit と一致することを確かめてから worktree を用意する:
+   - PR の head branch を checkout 済みの worktree（dev-flow の `df-<N>` 等）があれば再利用する
+   - 無ければ `<repo>/.claude/worktrees/pr-<N>`（既定）か `<repo>-wt/pr-<N>`（repo 外）に `origin/<head>` から作る。
+     候補の選び方は dev-flow と同じ（既定候補が存在すればそれ、無ければ repo 外候補が存在すればそれ、
+     どちらも無ければ既定候補）
+   - 作った worktree に書き込めなければ remove して repo 外候補で 1 回だけ作り直す（`worktree_removed:true`）。
+     wrapper 側で再実行する必要は無い
+   - 再利用した worktree の HEAD が PR head より遅れていて未コミット変更が無ければ fast-forward する。
+     PR head に無いコミットを持つ（未 push・分岐）か、遅れていて未コミット変更があれば `ok:false`
+   - 前 run の `.devflow-tmp/.isolation-probe*` を除去する（`.devflow-tmp` の他のファイルは残す）
+
+   結果に応じて分岐する:
+
+   (a) `ok:true` → 手順2 へ進む。
+
+   (b) `ok:false` → `error` を verbatim で人間に報告して停止する（fallback で worktree を自前作成しない・
+   既存 worktree を強制上書きしない）。`worktree_status:"unwritable"` で `worktree_removed:false` は
+   再利用した worktree が書けない場合で、`git worktree remove <path>` してから再実行するよう伝える。
+
+2. **EnterWorktree**: `EnterWorktree({ path: '<prerun 出力の worktree>' })` を実行する（cwd が既にその
+   worktree なら不要）。別の worktree に入っている場合は先に `ExitWorktree`（worktree は keep）で launch dir へ
+   戻ってから入る。
+
+3. **Workflow 起動**: 次の形で起動する。`nested` の値は prerun 出力をそのまま転記し、加工・要約しない:
+
+   ```
+   Workflow({ name: 'dev-flow:pr-iterate-run', args: {
+     pr: <PR>,
+     nested: { caller: 'standalone', cwd: <worktree>, head_ref: <head_ref>, head_sha: <head_sha>,
+               base_ref: <base_ref>, repo: <repo>, epoch: <epoch> },
+   } })
+   ```
+
+   - `caller: 'standalone'` が単体起動の印で、workflow は終端サマリーを PR に投稿する（dev-flow は
+     `caller: 'dev-flow'` を渡し、終端サマリーは dev-flow 自身が投稿する）。`caller` を省くと workflow は即 throw する
+   - `repo` が null ならキーごと省く。反復上限を変えるときだけ `max_iterations: <n>` を足す
+   - Workflow 名は namespaced の `dev-flow:pr-iterate-run` のみ（bare 名・旧名 `pr-iterate` は解決しない）
+
+4. **完了後**: 返り値の `status`（`lgtm` / `stuck` / `fix_failed` / `max_reached` / `ci_error` / `ci_pending` /
+   `review_contract_error`）と終端サマリーの URL を人間に報告する。merge は人間が行う。worktree は削除しない
+   （回収後も人間が中身を確認できるように残す。後片付けは人間が `worktree-teardown` で行う）。
+
+## 再実行
+
+同じ PR をもう一度回すときも手順1 からやり直す。前回の prerun 出力を使い回さない: isolation probe の token は
+`epoch` で、使い回すと前 run の probe ファイルと同名になり Write-only agent の上書きが拒否されて
+`written:false` → fail-closed で止まる。`pr-iterate-prerun` は毎回新しい `epoch` を返す。
+
+## 実行環境
+
+`pr-iterate-prerun` は gh の資格情報と repo の `.git`（worktree 登録）に触るため、sandbox の
+`excludedCommands` に `dev-flow-prerun` と同じ形で登録されている必要がある。未登録の環境では gh / git の
+失敗が `error` に載って `ok:false` で止まる — 手順1 (b) のとおり人間に報告して終える。

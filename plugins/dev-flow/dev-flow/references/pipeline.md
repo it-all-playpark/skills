@@ -40,13 +40,26 @@ handoff の `skill` キーは `'dev-flow'` のまま据え置く（集計連続�
 ```
 /dev-flow <issue>   → [wrapper preflight] → Setup(末尾で決定論 analyze ゲート)
                       → Implement(dev-implementer 1 spawn) → Validate(test green)
-                      → Security floor(realized diff から shape 判定) → Evaluate → PR → workflow('pr-iterate')
+                      → Security floor(realized diff から shape 判定) → Evaluate → PR → workflow('dev-flow:pr-iterate-run')
                       → Final reconcile(fixes_applied>0 のみ) → Merge tier
-/pr-iterate <pr>    → review ⇄ fix loop (LGTM まで, 上限10)。単体起動可
+/pr-iterate <pr>    → [wrapper preflight: pr-iterate-prerun → EnterWorktree]
+                      → workflow('dev-flow:pr-iterate-run') で review ⇄ fix loop (LGTM まで, 上限10) → 終端サマリー
 ```
 
-`/pr-iterate <pr>` を単体起動する際の Workflow 名は `dev-flow:pr-iterate`（namespaced 名。bare 名
-`pr-iterate` へのフォールバックは無い）。
+`/pr-iterate <pr>` は wrapper skill（`pr-iterate/SKILL.md`）。workflow の meta 名は skill 名と衝突しないよう
+`pr-iterate-run`（`dev-flow-run` と対称）で、起動名は namespaced の `dev-flow:pr-iterate-run`（bare 名・旧名
+`pr-iterate` へのフォールバックや alias は無い）。telemetry handoff の `skill` は `'pr-iterate'` のまま。
+
+wrapper は `pr-iterate-prerun <PR> [--repo owner/name]`（top-level Bash、bare 名）で `gh pr view` の
+url / headRefName / baseRefName / headRefOid を取り、`origin/<head>` が headRefOid と一致することを確かめてから
+PR head の worktree を用意する（head branch を checkout 済みの worktree があれば再利用、無ければ dev-flow と同じ
+置き場所の規則 — 既定 `<repo>/.claude/worktrees/pr-<N>`・repo 外 `<repo>-wt/pr-<N>` — で `origin/<head>` から作成。
+作った worktree に書けなければ remove して repo 外候補で作り直す）。出力の `{worktree, head_ref, base_ref, head_sha,
+repo, epoch}` を `args.nested`（`caller: 'standalone'`）で渡すので、workflow は dev-flow からの nested 起動と同じ
+NESTED 分岐で pr-meta と isolation-cleanup を起動しない。`nested.caller` は `dev-flow` / `standalone` の閉じた
+enum で必須（欠落・out-of-enum は throw）。終端サマリーの投稿は `caller` で決まり、`dev-flow` のときだけ止める
+（dev-flow は Merge tier の後に自分の終端サマリーを投稿する）。nested 無しで Workflow を直接起動した場合は従来どおり
+pr-meta probe で値を取る。単体起動の worktree は run 後も削除しない（人間が確認してから `worktree-teardown` で片付ける）。
 
 Merge tier を pr-iterate の後に置くのは、fix 適用後の最終 tree に対して danger-grep 再実行・danger 再
 reconcile を行い、merge 判定を最新の PR 内容に基づかせるため。pr-iterate が fix を適用した run では
@@ -171,7 +184,7 @@ LLM の事前見積もり（shape / 見込み file 数）は REQ に
 contract 準拠かつ danger clean）を満たす run は、PR phase で dev-implementer 1 spawn → targeted test →
 PR → pr-reviewer 1-pass の縮約経路（lite route、判断系 agent 呼び出し ≤10）を通る。lite の pr-reviewer
 1-pass が `review==null || blocking.length>0`（critical/major finding あり）を検出した場合のみ
-`workflow('pr-iterate')` フル loop へ自動昇格し、以降は通常の review⇄fix 経路で処理する。danger-grep
+`workflow('dev-flow:pr-iterate-run')` フル loop へ自動昇格し、以降は通常の review⇄fix 経路で処理する。danger-grep
 hit で `runEval=true` になったケースは lite ゲート条件を満たさないため lite に入らず、micro であっても
 現行の security path（Evaluate 強制実行）へ強制昇格する（軸A invariant 不変）。
 
@@ -223,9 +236,9 @@ hit で `runEval=true` になったケースは lite ゲート条件を満たさ
   不到達の保証）に probe を配置する。probe は worktree 直下 `.devflow-tmp/.isolation-probe-<token>`
   （token は run 毎に一意 — dev-flow は wrapper（dev-flow-prerun、top-level Bash）が渡す
   `args.setup.epoch`（`date +%s`、必須キーのため fallback 経路は無い）、pr-iterate は
-  単体起動時 pr-meta probe の epoch（fallback: PR 番号）、nested 起動（dev-flow →
-  `workflow('pr-iterate')`）時は dev-flow が `args.nested.epoch`（PR phase の commit+PR 応答 epoch）で
-  供給し pr-meta probe 自体を起動しない。
+  `args.nested.epoch` — dev-flow からの nested 起動は PR phase の commit+PR 応答 epoch、`/pr-iterate` wrapper
+  経由の単体起動は `pr-iterate-prerun` の epoch — で供給し pr-meta probe 自体を起動しない。nested 無しで
+  直接起動した場合だけ pr-meta probe の epoch（fallback: PR 番号）。
   `Date.now()` / `Math.random()` は canonical の generator 制約上使わない）への Write で
   isolation 成立を検証する。probe agent は
   tools を `[Write]` のみに絞った専任 agent `dev-runner-haiku-wo`
@@ -245,13 +258,14 @@ hit で `runEval=true` になったケースは lite ゲート条件を満たさ
   probe の直前の cleanup は dev-flow / pr-iterate で経路が分かれる。**dev-flow は wrapper の
   prerun が run 開始前に `.devflow-tmp` 全体を `git clean -fdx` 済み**（agent 呼び出しではなく
   決定論スクリプト内で完結する）——前 run の残置物（probe artifact / journal payload / ui-verify
-  state 等）の持ち越し防止（run 間衛生）を prerun が担う。**pr-iterate は単体起動時のみ**
-  canonical `_lib/isolation-probe.mjs` の exported 定数 `ISOLATION_PROBE_CLEANUP_GLOB`
-  （`.devflow-tmp/.isolation-probe*`。probe の token 形ファイル名 `.isolation-probe-<token>` と
-  legacy 無 token 形の両方にマッチする）を対象に isolation-cleanup subagent 呼び出しで cleanup を
-  実行する — nested 起動（dev-flow → `workflow('pr-iterate')`）では probe 対象が実行中 dev-flow
-  run の worktree 自身になり、`.devflow-tmp` 全体を消すと当該 run が既に書いた run 専用 scratch
-  （journal payload 等の `.devflow-tmp` 配下生成物）を run 途中で失うため、pr-iterate 側の
+  state 等）の持ち越し防止（run 間衛生）を prerun が担う。**pr-iterate の `/pr-iterate` wrapper 経由の
+  単体起動は `pr-iterate-prerun` が** canonical `_lib/isolation-probe.mjs` の exported 定数
+  `ISOLATION_PROBE_CLEANUP_GLOB` と同じ `.devflow-tmp/.isolation-probe*`（probe の token 形ファイル名
+  `.isolation-probe-<token>` と legacy 無 token 形の両方にマッチする）だけを `git clean -fdx` する
+  （`.devflow-tmp` 全体は消さない — 再利用した dev-flow の `df-<N>` に PR phase 失敗の回収用 commit message /
+  PR body が残っていることがある）。nested 無しの直接起動だけが isolation-cleanup subagent を呼ぶ。dev-flow からの
+  nested 起動では probe 対象が実行中 dev-flow run の worktree 自身になり、`.devflow-tmp` 全体を消すと当該 run が
+  既に書いた run 専用 scratch（journal payload 等の `.devflow-tmp` 配下生成物）を run 途中で失うため、pr-iterate 側の
   isolation-cleanup 呼び出しを skip する（dev-flow 側の prerun cleanup が同一 worktree の run 間衛生を
   既に担保済みのため、nested run でも二重に走らせる必要がない）。
   isolation-probe（Write 検証本体）は nested でも skip しない。pr-iterate 側 cleanup は fail-open

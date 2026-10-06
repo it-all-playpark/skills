@@ -120,7 +120,7 @@ async function runPrIterateCapture(source, ctx) {
 
 test('[nested] pr-meta / isolation-cleanup を skip し isolation-probe のみ実行する', async () => {
   const { ctx, labels, getIsolationProbePrompt } = makeSandbox({
-    args: { pr: '7', post_terminal_summary: false, nested: { cwd: '/wt', head_ref: 'feature/issue-1', repo: 'o/r', epoch: 1234 } },
+    args: { pr: '7', nested: { caller: 'dev-flow', cwd: '/wt', head_ref: 'feature/issue-1', repo: 'o/r', epoch: 1234 } },
   });
 
   const { result, error } = await runPrIterateCapture(src, ctx);
@@ -139,7 +139,7 @@ test('[nested] pr-meta / isolation-cleanup を skip し isolation-probe のみ�
 
 test('[nested] nested.epoch 省略時は isoToken が PR 番号へ fallback する', async () => {
   const { ctx, getIsolationProbePrompt } = makeSandbox({
-    args: { pr: '7', post_terminal_summary: false, nested: { cwd: '/wt', head_ref: 'feature/issue-1' } },
+    args: { pr: '7', nested: { caller: 'dev-flow', cwd: '/wt', head_ref: 'feature/issue-1' } },
   });
 
   const { error } = await runPrIterateCapture(src, ctx);
@@ -166,7 +166,7 @@ test('[単体起動] pr-meta / isolation-cleanup / isolation-probe の 3 つが�
 
 test('[nested] 不正形（cwd 欠落）は明示 throw する', async () => {
   const { ctx } = makeSandbox({
-    args: { pr: '7', post_terminal_summary: false, nested: { head_ref: 'feature/issue-1' } },
+    args: { pr: '7', nested: { caller: 'dev-flow', head_ref: 'feature/issue-1' } },
   });
 
   const { error } = await runPrIterateCapture(src, ctx);
@@ -176,7 +176,7 @@ test('[nested] 不正形（cwd 欠落）は明示 throw する', async () => {
 
 test('[nested] 不正形（非 object）は明示 throw する', async () => {
   const { ctx } = makeSandbox({
-    args: { pr: '7', post_terminal_summary: false, nested: 'not-an-object' },
+    args: { pr: '7', nested: 'not-an-object' },
   });
 
   const { error } = await runPrIterateCapture(src, ctx);
