@@ -451,6 +451,22 @@ test('[pr-artifacts] prompt: 手順 2〜4 の失敗で failed_step / failure_rea
   assert.ok(p.includes('成功時は空文字'), '成功時に failed_step / failure_reason を空文字にする指示が無い');
 });
 
+// ---- prPhasePrompt の push timeout / 再発行禁止（issue #804） ----
+
+test('[pr-artifacts] prompt: 手順 3 の push は Bash timeout: 600000 指定・run_in_background 禁止・完了前の gh pr create と再発行を禁じ、timeout はリトライせず failed_step:"push" で中断する', () => {
+  const p = prPhasePrompt({ wt: '/w', base: 'main', branch: 'b', repo: 'o/r', issue: 1, commitMessage: 'x (#1)\n', prBody: 'y' });
+  const step3 = p.split('\n').find((l) => l.startsWith('3. `git push -u origin HEAD`'));
+  assert.ok(step3, `手順 3 の push 行が無い: ${p}`);
+  assert.ok(step3.includes('Bash tool の `timeout: 600000` を指定して実行'), `手順 3 に timeout: 600000 指定が無い: ${step3}`);
+  assert.ok(step3.includes('`run_in_background` は使わない（禁止）'), `手順 3 に run_in_background 禁止が無い: ${step3}`);
+  assert.ok(step3.includes('push の結果が返るまで手順 4（`gh pr create`）を実行しない'), `push 完了前の gh pr create 禁止が無い: ${step3}`);
+  assert.ok(step3.includes('push を再発行しない（timeout・background 化した場合も含む）'), `push 再発行禁止が無い: ${step3}`);
+  assert.ok(step3.includes('600 秒の timeout に達した場合はリトライせず、failed_step:"push"'), `timeout 到達時の中断（リトライしない）が無い: ${step3}`);
+  assert.ok(step3.includes('"push timed out after 600s: <stderr 末尾 1〜3 行>"'), `failure_reason に timeout の旨と stderr 末尾を入れる指示が無い: ${step3}`);
+  // timeout 指定は push の手順に付く（手順 4 の gh pr create より前）
+  assert.ok(p.indexOf('timeout: 600000') < p.indexOf('4. `gh pr create'), 'timeout 指定が手順 4 より前（手順 3）に無い');
+});
+
 // ---- prPhasePrompt の cwd branch 照合（issue #700） ----
 
 test('[pr-artifacts] prompt: 手順 0 で git rev-parse --abbrev-ref HEAD を branch と照合し、不一致なら git add 等を実行せず failed_step:"commit" で中断する', () => {

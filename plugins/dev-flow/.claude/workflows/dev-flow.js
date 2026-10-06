@@ -4485,7 +4485,10 @@ function prPhasePrompt({ wt, base, branch, repo, issue, commitMessage, prBody })
     + `一致したら以下を順に bare 単文で実行せよ${bare}。手順 1〜4 のいずれかが失敗（exit 非0）したら**そこで中断**し、後続の手順を実行せず、failed_step にその手順名（1〜2 → "commit"、3 → "push"、4 → "pr-create"）、failure_reason に失敗したコマンドの stderr 末尾 1〜3 行を**一字一句そのまま**（要約・言い換え禁止）入れて返す。中断時は pr_url は空文字、pr_number は 0、committed は手順 2 が成功済みなら true・それ以外は false、head_sha は空文字:\n`
     + `1. \`git add -A\`（失敗は failed_step:"commit" で中断）\n`
     + `2. \`git commit -F ${msgFile}\`（exit 非0 かつ stdout/stderr に "nothing to commit" があれば commit 済みとして続行。それ以外の失敗は failed_step:"commit" で中断）\n`
-    + `3. \`git push -u origin HEAD\`（失敗は failed_step:"push" で中断）\n`
+    + `3. \`git push -u origin HEAD\`（Bash tool の \`timeout: 600000\` を指定して実行し、\`run_in_background\` は使わない（禁止）。`
+    + `push の結果が返るまで手順 4（\`gh pr create\`）を実行しない。push を再発行しない（timeout・background 化した場合も含む）。`
+    + `600 秒の timeout に達した場合はリトライせず、failed_step:"push"、failure_reason に \`"push timed out after 600s: <stderr 末尾 1〜3 行>"\`（timeout に達した旨と stderr 末尾）を入れて中断する。`
+    + `それ以外の失敗は failed_step:"push" で中断）\n`
     + `4. \`gh pr create${repoArg} --draft --base ${base} --head ${branch} --title "${title}" --body-file ${bodyFile}\`（失敗は failed_step:"pr-create" で中断）\n`
     + `5. 手順 4 の stdout の PR URL を pr_url、その末尾の数字を pr_number として返す。\n`
     + `6. \`git rev-parse HEAD\` の stdout（40 桁 hex）をそのまま head_sha として返す（失敗時は空文字）。\n\n`
