@@ -120,7 +120,7 @@ const src = readFileSync(prIteratePath, 'utf8');
 
 test('[end-epoch] ci-check が epoch を返す run では返り値に end_epoch が数値で含まれる', async () => {
   const { ctx } = makeSandbox({
-    ciResponses: [{ status: 'passed', failed_checks: [], waited_seconds: 0, poll_attempts: 1, epoch: 1753900000 }],
+    ciResponses: [{ status: 'passed', passed: 1, failed: 0, pending: 0, skipped: 0, failed_checks: [], waited_seconds: 0, poll_attempts: 1, epoch: 1753900000 }],
   });
 
   const { result, error } = await runPrIterateCapture(src, ctx);
@@ -138,7 +138,7 @@ test('[end-epoch] ci-check が epoch を返す run では返り値に end_epoch 
 
 test('[end-epoch] ci-check が epoch を返さない run では返り値に end_epoch キーが無い', async () => {
   const { ctx } = makeSandbox({
-    ciResponses: [{ status: 'passed', failed_checks: [], waited_seconds: 0, poll_attempts: 1 }],
+    ciResponses: [{ status: 'passed', passed: 1, failed: 0, pending: 0, skipped: 0, failed_checks: [], waited_seconds: 0, poll_attempts: 1 }],
   });
 
   const { result, error } = await runPrIterateCapture(src, ctx);
@@ -155,10 +155,10 @@ test('[end-epoch] ci-check が epoch を返さない run では返り値に end_
 
 test('[end-epoch] 返り値の既存キー（status/fixes_applied/subagent_invocations）は epoch 追加の有無に関わらず不変', async () => {
   const withEpoch = makeSandbox({
-    ciResponses: [{ status: 'passed', failed_checks: [], waited_seconds: 0, poll_attempts: 1, epoch: 1753900000 }],
+    ciResponses: [{ status: 'passed', passed: 1, failed: 0, pending: 0, skipped: 0, failed_checks: [], waited_seconds: 0, poll_attempts: 1, epoch: 1753900000 }],
   });
   const withoutEpoch = makeSandbox({
-    ciResponses: [{ status: 'passed', failed_checks: [], waited_seconds: 0, poll_attempts: 1 }],
+    ciResponses: [{ status: 'passed', passed: 1, failed: 0, pending: 0, skipped: 0, failed_checks: [], waited_seconds: 0, poll_attempts: 1 }],
   });
 
   const { result: r1, error: e1 } = await runPrIterateCapture(src, withEpoch.ctx);

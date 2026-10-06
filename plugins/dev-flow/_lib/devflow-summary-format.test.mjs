@@ -2664,6 +2664,29 @@ test('issue #661: pr_closes_missing 単独 HOLD で現状/対応表示と gh pr 
   assert.ok(!body.includes('修正作業は不要'), '結論行は「修正作業は不要」ではない');
 });
 
+test('issue #834: ci_checks_failed 単独 HOLD で現状/対応に CI 失敗と gh pr checks の確認手順が出る（結論行は修正作業が必要）', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    mergeTier: 'HOLD',
+    mergeTierReasons: ['CI checks 失敗（Bats Tests）'],
+    holdReasons: [{ code: 'ci_checks_failed', reason: 'CI checks 失敗（Bats Tests）', kind: 'human_judgment' }],
+    holdKind: 'human_judgment',
+  });
+  assert.ok(body.includes('| CI checks 失敗（Bats Tests） | PR head の CI checks が失敗（fail / cancel） | `gh pr checks 42` で失敗した check を確認し、修正して push する |'), body);
+  assert.ok(body.includes('修正作業が必要です'), '結論行は修正作業が必要');
+});
+
+test('issue #834: 「CI 未完了」の開示（disclosures）は REVIEW の終端サマリの参考に出る', () => {
+  const line = 'CI 未完了（pending: Bats Tests）— Merge tier は CI の完了を待たない（fail-open。HOLD 理由にしない）。merge 前に gh pr checks で結果を確認する';
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    mergeTier: 'REVIEW',
+    mergeTierReasons: ['標準 — 人間が LGTM して merge', line],
+    disclosures: [line],
+  });
+  assert.ok(body.includes(`- ${line}`), body);
+});
+
 test('issue #662: changedFiles に .github/workflows/ 配下のファイルが含まれる場合、あなたがやること に workflow 初回実行確認行が出る（finalReconcile 非依存）', () => {
   const body = buildDevflowSummaryBody({
     ...BASE_INPUT,

@@ -670,8 +670,23 @@ const HOLD_REASON_CODES = [
   'ledger_unconverged', 'danger_unresolved', 'breaking_structured', 'escalate',
   'ac_agent_unsatisfied', 'ac_human_pending', 'danger_fail_closed', 'final_reconcile_unavailable', 'final_test_red',
   'final_ac_unavailable', 'iterate_non_lgtm', 'hash_mismatch', 'testsurf_uncleared',
-  'mergeable_conflicting', 'pr_closes_missing', 'merge_facts_dropped',
+  'mergeable_conflicting', 'pr_closes_missing', 'merge_facts_dropped', 'ci_checks_failed',
 ];
+
+function classifyCiChecks(ciChecks) {
+  if (!ciChecks || ciChecks.ok !== true || !Array.isArray(ciChecks.checks)) {
+    return { state: 'unavailable', failedNames: [], pendingNames: [], error: ciChecks?.error ?? null };
+  }
+  const bucketOf = (c) => String(c?.bucket ?? '');
+  const nameOf = (c) => String(c?.name ?? 'unknown');
+  const isFailed = (c) => !['pass', 'pending', 'skipping'].includes(bucketOf(c));
+  const failedNames = ciChecks.checks.filter(isFailed).map(nameOf);
+  const pendingNames = ciChecks.checks.filter((c) => bucketOf(c) === 'pending').map(nameOf);
+  const state = failedNames.length > 0 ? 'failed'
+    : pendingNames.length > 0 ? 'pending'
+      : ciChecks.checks.length > 0 ? 'passed' : 'no_checks';
+  return { state, failedNames, pendingNames, error: null };
+}
 
 function isValidPrClosesStatus(v) {
   return ['verified', 'reinjected', 'missing', 'unverified'].includes(v);
@@ -734,6 +749,11 @@ function classifyMergeTier(s) {
   if (s.prClosesStatus != null && !isValidPrClosesStatus(s.prClosesStatus)) {
     throw new Error('classifyMergeTier: invalid prClosesStatus: ' + s.prClosesStatus);
   }
+  if (s.ciChecks != null && (typeof s.ciChecks !== 'object' || typeof s.ciChecks.ok !== 'boolean'
+    || (s.ciChecks.ok === true && !Array.isArray(s.ciChecks.checks)))) {
+    throw new Error('classifyMergeTier: invalid ciChecks');
+  }
+  const ci = s.ciChecks != null ? classifyCiChecks(s.ciChecks) : null;
   const blockingReasons = [];
   const pushBlocking = (code, reason, kind) => blockingReasons.push({ code, reason, kind });
   if (!s.converged) pushBlocking('ledger_unconverged', 'ledger 未収束（未 checked blocking 残）', 'human_judgment');
@@ -801,12 +821,19 @@ function classifyMergeTier(s) {
   }
   if (s.mergeableState === 'conflicting') pushBlocking('mergeable_conflicting', 'base branch と conflict（mergeStateStatus=DIRTY / mergeable=CONFLICTING）— merge 前に conflict 解消が必要（人間確認必須。gate_policy に依らず不変）', 'human_judgment');
   if (s.prClosesStatus === 'missing') pushBlocking('pr_closes_missing', 'PR body に `Closes #<issue>` 行が無い（PR 作成後の決定論検証で欠落を検出し、本文の再投入も失敗）— merge しても issue が自動 close されないため本文の再投入が必要（決定論再チェックで解消しうる）', 'deterministic_recheck');
-  const disclosures = [keywordAloneDisclosure, evalFailDisclosure, ciVerifiedDisclosure].filter(Boolean);
+  if (ci?.state === 'failed') pushBlocking('ci_checks_failed', `CI checks 失敗（${ci.failedNames.join(', ')}）— PR head の CI が red（bucket が fail / cancel / 未知値）。pr-iterate の lgtm は CI の真偽を保証しないため人間確認必須（gate_policy に依らず不変）`, 'human_judgment');
+  const ciIncompleteDisclosure = ci?.state === 'pending'
+    ? `CI 未完了（pending: ${ci.pendingNames.join(', ')}）— Merge tier は CI の完了を待たない（fail-open。HOLD 理由にしない）。merge 前に gh pr checks で結果を確認する`
+    : ci?.state === 'unavailable'
+      ? `CI 未完了（checks を取得できず: ${ci.error ?? 'unknown'}）— CI 結果は未確認（fail-open。HOLD 理由にしない）。merge 前に gh pr checks で結果を確認する`
+      : null;
+  const disclosures = [keywordAloneDisclosure, evalFailDisclosure, ciVerifiedDisclosure, ciIncompleteDisclosure].filter(Boolean);
   if (blockingReasons.length) {
     const reasons = blockingReasons.map((r) => r.reason);
     if (keywordAloneDisclosure) reasons.push(keywordAloneDisclosure);
     if (evalFailDisclosure) reasons.push(evalFailDisclosure);
     if (ciVerifiedDisclosure) reasons.push(ciVerifiedDisclosure);
+    if (ciIncompleteDisclosure) reasons.push(ciIncompleteDisclosure);
     return { tier: 'HOLD', reasons, holdReasons: blockingReasons, holdKind: aggregateHoldKind(blockingReasons), disclosures };
   }
   if (s.shape === 'micro' && s.docsOrTestOnly) {
@@ -815,12 +842,14 @@ function classifyMergeTier(s) {
     if (keywordAloneDisclosure) autoReasons.push(keywordAloneDisclosure);
     if (evalFailDisclosure) autoReasons.push(evalFailDisclosure);
     if (ciVerifiedDisclosure) autoReasons.push(ciVerifiedDisclosure);
+    if (ciIncompleteDisclosure) autoReasons.push(ciIncompleteDisclosure);
     return { tier: 'AUTO', reasons: autoReasons, holdReasons: [], holdKind: null, disclosures };
   }
   const reviewReasons = ['標準 — 人間が LGTM して merge'];
   if (keywordAloneDisclosure) reviewReasons.push(keywordAloneDisclosure);
   if (evalFailDisclosure) reviewReasons.push(evalFailDisclosure);
   if (ciVerifiedDisclosure) reviewReasons.push(ciVerifiedDisclosure);
+  if (ciIncompleteDisclosure) reviewReasons.push(ciIncompleteDisclosure);
   return { tier: 'REVIEW', reasons: reviewReasons, holdReasons: [], holdKind: null, disclosures };
 }
 // ==== END inline: _lib/merge-tier.mjs ====
@@ -2358,7 +2387,7 @@ function buildDevflowSummaryBody({
 
   const uncleared = securityClearance.filter(sc => sc.cleared !== true);
 
-  const FIX_REQUIRED_HOLD_CODES = ['mergeable_conflicting', 'final_test_red', 'iterate_non_lgtm', 'pr_closes_missing'];
+  const FIX_REQUIRED_HOLD_CODES = ['mergeable_conflicting', 'final_test_red', 'iterate_non_lgtm', 'pr_closes_missing', 'ci_checks_failed'];
   const testsurfUncleared = testsurfClearance.some(tc => !tc.cleared);
   const fixRequiredHold = Array.isArray(holdReasons) && holdReasons.some(hr => FIX_REQUIRED_HOLD_CODES.includes(hr && hr.code));
   const fixRequired = uncheckedBlocking.length > 0
@@ -2994,6 +3023,11 @@ function holdReasonDisplay(code, kind, ctx) {
         current: 'PR body に Closes 行が無い（merge しても issue が自動 close されない）',
         action: `\`gh pr edit ${ctx.pr} --body-file <本文ファイル>\` で Closes 行を含む本文を再投入する`,
       };
+    case 'ci_checks_failed':
+      return {
+        current: 'PR head の CI checks が失敗（fail / cancel）',
+        action: `\`gh pr checks ${ctx.pr}\` で失敗した check を確認し、修正して push する`,
+      };
     default:
       return { current: '—', action: '人が確認する' };
   }
@@ -3278,9 +3312,13 @@ const CI_TURN_MARGIN = 3;
 
 const CI_STATUS = {
   type: 'object',
-  required: ['status'],
+  required: ['status', 'passed', 'failed', 'pending', 'skipped'],
   properties: {
     status: { type: 'string', enum: ['passed', 'failed', 'pending', 'no_checks', 'error'] },
+    passed: { type: 'integer', minimum: 0 },
+    failed: { type: 'integer', minimum: 0 },
+    pending: { type: 'integer', minimum: 0 },
+    skipped: { type: 'integer', minimum: 0 },
     failed_checks: {
       type: 'array',
       items: {
@@ -3298,6 +3336,9 @@ const CI_STATUS = {
     epoch: { type: 'number' },
   },
 };
+
+const CI_COUNTS_NOTE = '`passed` / `failed` / `pending` / `skipped` の件数は stdout の値を一字一句そのまま写せ'
+  + '（stdout に件数キーが無い場合 — status が error のとき — だけ各 0 を入れよ）。';
 
 function ciFetchSteps({ pr, repo, n }) {
   return `${n}. \`gh pr checks ${pr}${repo ? ' --repo ' + repo : ''} --json name,state,bucket\` を gh を先頭トークンとする bare 単文で実行せよ`
@@ -3320,11 +3361,11 @@ function ciCheckPrompt({ pr, repo }) {
     + `1. \`gh pr view ${pr}${repo ? ' --repo ' + repo : ''} --json headRefOid -q .headRefOid\` を gh を先頭トークンとする bare 単文で実行せよ`
     + `（リダイレクト・パイプ・複合コマンドは使わない）。stdout の 40 桁 hex を一字一句そのまま head_sha とする（失敗・空なら head_sha は省略）。\n`
     + ciFetchSteps({ pr, repo, n: 2 })
-    + `4. 手順 3 の stdout JSON（{status, failed_checks, waited_seconds, poll_attempts, ...}）に手順 1 の \`"head_sha"\` を加えて返せ。`
-    + `それ以外のキーは要約・加工するな。1 回の取得で判定を確定させ、待機や再取得は行うな。\n\n`
+    + `4. 手順 3 の stdout JSON（{status, passed, failed, pending, skipped, failed_checks, waited_seconds, poll_attempts, ...}）に手順 1 の \`"head_sha"\` を加えて返せ。`
+    + `それ以外のキーは要約・加工するな。${CI_COUNTS_NOTE}1 回の取得で判定を確定させ、待機や再取得は行うな。\n\n`
     + `## Output format\n`
-    + `{ "status": "passed"|"failed"|"pending"|"no_checks"|"error", "failed_checks": [{name, bucket, state}, ...], `
-    + `"waited_seconds": number, "poll_attempts": number, "head_sha": string }\n`
+    + `{ "status": "passed"|"failed"|"pending"|"no_checks"|"error", "passed": number, "failed": number, "pending": number, "skipped": number, `
+    + `"failed_checks": [{name, bucket, state}, ...], "waited_seconds": number, "poll_attempts": number, "head_sha": string }\n`
     + `prose 禁止。JSON のみ返せ。\n\n`
     + `## Token cap\n`
     + `JSON のみ。1 行以内。`;
@@ -3332,7 +3373,7 @@ function ciCheckPrompt({ pr, repo }) {
 
 const CI_WAIT_CHECK = {
   type: 'object',
-  required: ['slept', 'status'],
+  required: ['slept', ...CI_STATUS.required],
   properties: {
     slept: { type: 'boolean' },
     ...CI_STATUS.properties,
@@ -3350,16 +3391,33 @@ function ciWaitCheckPrompt({ pr, repo, seconds }) {
     + `## Steps\n`
     + `1. \`ci-wait ${seconds}\` を ci-wait を先頭トークンとする bare 単文で実行せよ（リダイレクト・パイプ・複合コマンドは使わない）。`
     + `stdout の JSON が \`"slept": true\` でなければ（stdout が空・exit 非0 を含む）手順 2〜4 を実行せず、`
-    + `\`{ "slept": false, "status": "pending" }\` を返して終了せよ。\n`
+    + `\`{ "slept": false, "status": "pending", "passed": 0, "failed": 0, "pending": 0, "skipped": 0 }\` を返して終了せよ。\n`
     + ciFetchSteps({ pr, repo, n: 2 })
-    + `4. 手順 3 の stdout JSON（{status, failed_checks, waited_seconds, poll_attempts, ...}）に \`"slept": true\` を加えて返せ。`
-    + `それ以外のキーは要約・加工するな。ci-wait と取得は各 1 回だけ実行し、再待機や再取得は行うな。\n\n`
+    + `4. 手順 3 の stdout JSON（{status, passed, failed, pending, skipped, failed_checks, waited_seconds, poll_attempts, ...}）に \`"slept": true\` を加えて返せ。`
+    + `それ以外のキーは要約・加工するな。${CI_COUNTS_NOTE}ci-wait と取得は各 1 回だけ実行し、再待機や再取得は行うな。\n\n`
     + `## Output format\n`
-    + `{ "slept": boolean, "status": "passed"|"failed"|"pending"|"no_checks"|"error", "failed_checks": [{name, bucket, state}, ...], `
-    + `"waited_seconds": number, "poll_attempts": number }\n`
+    + `{ "slept": boolean, "status": "passed"|"failed"|"pending"|"no_checks"|"error", "passed": number, "failed": number, "pending": number, "skipped": number, `
+    + `"failed_checks": [{name, bucket, state}, ...], "waited_seconds": number, "poll_attempts": number }\n`
     + `prose 禁止。JSON のみ返せ。\n\n`
     + `## Token cap\n`
     + `JSON のみ。1 行以内。`;
+}
+
+function ciStatusFromCounts(ci) {
+  const keys = ['passed', 'failed', 'pending', 'skipped'];
+  if (ci == null || !keys.every((k) => Number.isInteger(ci[k]) && ci[k] >= 0)) return null;
+  if (ci.failed > 0) return 'failed';
+  if (ci.pending > 0) return 'pending';
+  if (ci.passed + ci.failed + ci.pending + ci.skipped === 0) return 'no_checks';
+  return 'passed';
+}
+
+function ciEffectiveStatus(ci) {
+  if (ci == null) return { status: 'error', failed_checks: [] };
+  if (ci.status === 'error') return ci;
+  const derived = ciStatusFromCounts(ci);
+  if (derived !== null && derived === ci.status) return ci;
+  return { ...ci, status: 'error', count_mismatch: { reported: ci.status ?? null, derived } };
 }
 
 const CI_HEAD_SHA_RE = /^[0-9a-f]{40}$/i;
@@ -6795,10 +6853,13 @@ if (LITE) {
     route = 'full'
     iterateEpochRes = epochResOf({ epoch: iterate?.end_epoch })
   } else {
-    const ciLite = await failOpenAgent(
+    const ciLiteRaw = await failOpenAgent(
       ciCheckPrompt({ pr: pr.pr_number, repo: REPO }),
       { agentType: 'dev-runner-haiku-ro', schema: CI_STATUS, label: 'ci-check-lite', phase: 'PR' },
     )
+    // proxy の status は件数から導いた値と一致するときだけ採る（食い違いは error → full pr-iterate へ委譲）
+    const ciLite = ciLiteRaw == null ? null : ciEffectiveStatus(ciLiteRaw)
+    if (ciLite?.count_mismatch) log(`⚠️ ci-check-lite: proxy の status=${ciLite.count_mismatch.reported} が件数から導いた status=${ciLite.count_mismatch.derived ?? '導出不能'} と食い違う — status=error として扱う`)
     if (ciLite != null && (ciLite.status === 'passed' || ciLite.status === 'no_checks')) {
       state.liteReview = { decision: reviewLite?.decision ?? null, ci: ciLite.status, summary: reviewLite?.summary ?? null }
       iterate = { status: 'lgtm', fixes_applied: 0 }
@@ -7325,6 +7386,9 @@ const mergeTier = classifyMergeTier({
   evalVerdictFail: state.evalResult?.verdict === 'fail',
   finalCi,
   prClosesStatus,
+  // PR head の CI checks（merge-tier-facts の checks サブ結果）。fail / cancel / 未知 bucket が 1 件でもあれば
+  // HOLD（ci_checks_failed）、pending / 取得失敗は「CI 未完了」の開示のみ（fail-open）
+  ciChecks: facts.checks,
 })
 log(`merge tier: ${mergeTier.tier} — ${mergeTier.reasons.join(' / ')}`)
 

@@ -164,7 +164,7 @@ const SHAPES = {
     overrides: {
       'impl:serial:issue-1': IMPL_DONE(MICRO_FILES),
       'danger-grep': { risk: { ok: true, hits: [] }, files: [...MICRO_FILES], struct: null, diffhash: { hash: 'AAA', empty: false } },
-      'ci-check-lite': { status: 'passed', failed_checks: [], waited_seconds: 0, poll_attempts: 0 },
+      'ci-check-lite': { status: 'passed', passed: 1, failed: 0, pending: 0, skipped: 0, failed_checks: [], waited_seconds: 0, poll_attempts: 0 },
     },
     total: 11,
     evals: 0,

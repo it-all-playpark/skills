@@ -199,7 +199,7 @@ export const DEV_FLOW_SCENARIOS = {
   lite: {
     overrides: {
       'danger-grep': { risk: { ok: true, hits: [] }, files: [], struct: null, diffhash: null },
-      'ci-check-lite': { status: 'passed', failed_checks: [], waited_seconds: 0, poll_attempts: 0 },
+      'ci-check-lite': { status: 'passed', passed: 1, failed: 0, pending: 0, skipped: 0, failed_checks: [], waited_seconds: 0, poll_attempts: 0 },
     },
   },
   // Analyze のゲート（comment_conflicts 非空）→ analyze-clarify#1（dev-runner）1 spawn → needs_clarification

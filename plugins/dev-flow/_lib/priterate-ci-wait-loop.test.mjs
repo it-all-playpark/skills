@@ -29,12 +29,12 @@ async function run(overrides) {
   return { result, error, calls };
 }
 
-const waitedPending = { slept: true, status: 'pending', failed_checks: [] };
+const waitedPending = { slept: true, status: 'pending', passed: 0, failed: 0, pending: 1, skipped: 0, failed_checks: [] };
 
 test('[ci-wait-loop] pending → passed: ci-check#1 が pending、ci-wait-check#1.2（待機 + 判定の 1 spawn）が passed → lgtm、ci_wait_seconds=45 / ci_poll_attempts=2', async () => {
   const { result, error, calls } = await run({
-    'ci-check#1': { status: 'pending', failed_checks: [] },
-    'ci-wait-check#1.2': { slept: true, status: 'passed', failed_checks: [] },
+    'ci-check#1': { status: 'pending', passed: 0, failed: 0, pending: 1, skipped: 0, failed_checks: [] },
+    'ci-wait-check#1.2': { slept: true, status: 'passed', passed: 1, failed: 0, pending: 0, skipped: 0, failed_checks: [] },
   });
 
   assert.equal(error, null, `run が throw した: ${error?.message}`);
@@ -60,7 +60,7 @@ test('[ci-wait-loop] pending → passed: ci-check#1 が pending、ci-wait-check#
 });
 
 test('[ci-wait-loop] ceiling: 常に pending なら ci-check 1 回 + ci-wait-check 6 回で ci_pending 終端（ci_error にならない）、ci_wait_seconds=270 / ci_poll_attempts=7', async () => {
-  const overrides = { 'ci-check#1': { status: 'pending', failed_checks: [] } };
+  const overrides = { 'ci-check#1': { status: 'pending', passed: 0, failed: 0, pending: 1, skipped: 0, failed_checks: [] } };
   for (let k = 2; k <= 7; k++) overrides[`ci-wait-check#1.${k}`] = waitedPending;
 
   const { result, error, calls } = await run(overrides);
@@ -82,11 +82,11 @@ for (const [name, response] of [
   ['throw', () => { throw new Error('injected'); }],
   ['null', null],
   ['slept:false', { slept: false, status: 'pending' }],
-  ['slept:false なのに status=passed', { slept: false, status: 'passed', failed_checks: [] }],
+  ['slept:false なのに status=passed', { slept: false, status: 'passed', passed: 1, failed: 0, pending: 0, skipped: 0, failed_checks: [] }],
 ]) {
   test(`[ci-wait-loop] ci-wait-check が ${name} なら nominal 加算せず、その判定も採らずに即 ci_pending 終端する`, async () => {
     const { result, error, calls } = await run({
-      'ci-check#1': { status: 'pending', failed_checks: [] },
+      'ci-check#1': { status: 'pending', passed: 0, failed: 0, pending: 1, skipped: 0, failed_checks: [] },
       'ci-wait-check#1.2': response,
     });
 
@@ -102,7 +102,7 @@ for (const [name, response] of [
 
 test('[ci-wait-loop] ci-wait-check が slept:true かつ error なら従来どおり ci_error で終端し、待機は積算する', async () => {
   const { result, error } = await run({
-    'ci-check#1': { status: 'pending', failed_checks: [] },
+    'ci-check#1': { status: 'pending', passed: 0, failed: 0, pending: 1, skipped: 0, failed_checks: [] },
     'ci-wait-check#1.2': { slept: true, status: 'error', failed_checks: [] },
   });
 
@@ -114,8 +114,8 @@ test('[ci-wait-loop] ci-wait-check が slept:true かつ error なら従来ど�
 
 test('[ci-wait-loop] failed は待たずに即 fix loop へ（ci-wait-check 0 回）', async () => {
   const { result, error, calls } = await run({
-    'ci-check#1': { status: 'failed', failed_checks: [{ name: 'bats', bucket: 'fail', state: 'FAILURE' }] },
-    'ci-check#2': { status: 'passed', failed_checks: [] },
+    'ci-check#1': { status: 'failed', passed: 0, failed: 1, pending: 0, skipped: 0, failed_checks: [{ name: 'bats', bucket: 'fail', state: 'FAILURE' }] },
+    'ci-check#2': { status: 'passed', passed: 1, failed: 0, pending: 0, skipped: 0, failed_checks: [] },
   });
 
   assert.equal(error, null, `run が throw した: ${error?.message}`);
@@ -130,8 +130,8 @@ test('[ci-wait-loop] failed は待たずに即 fix loop へ（ci-wait-check 0 �
 
 test('[ci-wait-loop] agent 報告値 waited_seconds/poll_attempts は積算に使われない（script 側積算）', async () => {
   const { result, error } = await run({
-    'ci-check#1': { status: 'pending', failed_checks: [], waited_seconds: 999, poll_attempts: 99 },
-    'ci-wait-check#1.2': { slept: true, status: 'passed', failed_checks: [], waited_seconds: 888, poll_attempts: 88 },
+    'ci-check#1': { status: 'pending', passed: 0, failed: 0, pending: 1, skipped: 0, failed_checks: [], waited_seconds: 999, poll_attempts: 99 },
+    'ci-wait-check#1.2': { slept: true, status: 'passed', passed: 1, failed: 0, pending: 0, skipped: 0, failed_checks: [], waited_seconds: 888, poll_attempts: 88 },
   });
 
   assert.equal(error, null, `run が throw した: ${error?.message}`);

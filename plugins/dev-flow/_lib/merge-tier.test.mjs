@@ -12,8 +12,10 @@ import {
   HOLD_REASON_CODES,
   aggregateHoldKind,
   EVAL_STALENESS_VALUES,
+  classifyCiChecks,
 } from './merge-tier.mjs';
 import { PR_CLOSES_STATUS_VALUES } from './pr-artifacts.mjs';
+import { parseMergeTierFacts } from './merge-tier-facts.mjs';
 
 // ---- Task 1: DANGER_CLASSES + seedSecurityLedger ----
 
@@ -1261,12 +1263,12 @@ test('classifyMergeTier: evalStaleness:undefined/null → throw しない(従来
 
 // ---- issue #658: HOLD_REASON_CODES + holdReasons[].code + disclosures ----
 
-test('HOLD_REASON_CODES は 16 の閉じた enum と一致', () => {
+test('HOLD_REASON_CODES は 17 の閉じた enum と一致', () => {
   assert.deepEqual(HOLD_REASON_CODES, [
     'ledger_unconverged', 'danger_unresolved', 'breaking_structured', 'escalate',
     'ac_agent_unsatisfied', 'ac_human_pending', 'danger_fail_closed', 'final_reconcile_unavailable', 'final_test_red',
     'final_ac_unavailable', 'iterate_non_lgtm', 'hash_mismatch', 'testsurf_uncleared',
-    'mergeable_conflicting', 'pr_closes_missing', 'merge_facts_dropped',
+    'mergeable_conflicting', 'pr_closes_missing', 'merge_facts_dropped', 'ci_checks_failed',
   ]);
 });
 
@@ -1487,4 +1489,92 @@ test('disclosures: 開示ゼロなら disclosures は []（HOLD/AUTO/REVIEW と�
   const review = classifyMergeTier({ ...standardBase(), iterateStatus: 'lgtm', evalStaleness: 'none' });
   assert.equal(review.tier, 'REVIEW');
   assert.deepEqual(review.disclosures, []);
+});
+
+// ---- issue #834: CI checks の fail を Merge tier が HOLD にする（ci_checks_failed） ----
+
+// merge-tier-facts の stdout（checks サブ結果）→ parseMergeTierFacts → facts.checks を classifyMergeTier に渡す実経路と同じ形。
+function factsChecks(checks) {
+  return parseMergeTierFacts({ checks: checks === null ? { ok: false, error: 'checks data not provided' } : { ok: true, value: { checks } } }).checks;
+}
+
+test('classifyCiChecks: bucket を check-ci と同じ規則で分類する（fail / cancel / 未知値は failed、pending は pending）', () => {
+  assert.equal(classifyCiChecks(factsChecks([{ name: 'a', bucket: 'pass' }, { name: 'b', bucket: 'skipping' }])).state, 'passed');
+  assert.equal(classifyCiChecks(factsChecks([])).state, 'no_checks');
+  assert.equal(classifyCiChecks(factsChecks([{ name: 'a', bucket: 'pass' }, { name: 'b', bucket: 'pending' }])).state, 'pending');
+  for (const bucket of ['fail', 'cancel', 'weird', undefined]) {
+    const r = classifyCiChecks(factsChecks([{ name: 'ok', bucket: 'pass' }, { name: 'x', bucket: 'pending' }, { name: 'bad', bucket }]));
+    assert.equal(r.state, 'failed', `bucket=${bucket} は failed（pending より優先）になるべき`);
+    assert.deepEqual(r.failedNames, ['bad']);
+  }
+  assert.equal(classifyCiChecks(factsChecks(null)).state, 'unavailable');
+  assert.equal(classifyCiChecks(null).state, 'unavailable');
+});
+
+test('classifyMergeTier: checks に fail を含む facts → HOLD、holdReasons に ci_checks_failed（kind=human_judgment）', () => {
+  const r = classifyMergeTier(baseCleanInput({
+    ciChecks: factsChecks([{ name: 'Bats Tests', bucket: 'fail' }, { name: 'Vitest', bucket: 'pass' }]),
+  }));
+  assert.equal(r.tier, 'HOLD');
+  const item = r.holdReasons.find((x) => x.code === 'ci_checks_failed');
+  assert.ok(item, `holdReasons に ci_checks_failed を含むべきだが: ${JSON.stringify(r.holdReasons)}`);
+  assert.equal(item.kind, 'human_judgment');
+  assert.ok(item.reason.includes('Bats Tests'), item.reason);
+  assert.ok(!item.reason.includes('Vitest'), 'pass の check 名は載せない');
+  assert.equal(r.holdKind, 'human_judgment');
+});
+
+test('classifyMergeTier: cancel / 既知 5 値以外の bucket も ci_checks_failed で HOLD', () => {
+  for (const bucket of ['cancel', 'stale']) {
+    const r = classifyMergeTier(baseCleanInput({ ciChecks: factsChecks([{ name: 'build', bucket }]) }));
+    assert.equal(r.tier, 'HOLD', `bucket=${bucket}`);
+    assert.ok(r.holdReasons.some((x) => x.code === 'ci_checks_failed'), `bucket=${bucket}: ${JSON.stringify(r.holdReasons)}`);
+  }
+});
+
+test('classifyMergeTier: ci_checks_failed は AUTO 適格（micro + docs/test-only）でも HOLD（軸A 不変）', () => {
+  const r = classifyMergeTier({ ...autoBase(), iterateStatus: 'lgtm', evalStaleness: 'none', ciChecks: factsChecks([{ name: 'bats', bucket: 'fail' }]) });
+  assert.equal(r.tier, 'HOLD');
+  assert.ok(r.holdReasons.some((x) => x.code === 'ci_checks_failed'));
+});
+
+test('classifyMergeTier: checks が全 pass / no_checks なら HOLD にならず、未指定時と完全一致', () => {
+  const baseline = classifyMergeTier(baseCleanInput({}));
+  for (const checks of [[{ name: 'a', bucket: 'pass' }, { name: 'b', bucket: 'skipping' }], []]) {
+    const r = classifyMergeTier(baseCleanInput({ ciChecks: factsChecks(checks) }));
+    assert.deepEqual(r, baseline, `checks=${JSON.stringify(checks)}: ${JSON.stringify(r)}`);
+  }
+});
+
+test('classifyMergeTier: checks が pending / 取得失敗なら HOLD にせず「CI 未完了」を disclosures に出す（fail-open）', () => {
+  const pending = classifyMergeTier(baseCleanInput({ ciChecks: factsChecks([{ name: 'a', bucket: 'pass' }, { name: 'Bats Tests', bucket: 'pending' }]) }));
+  assert.equal(pending.tier, 'REVIEW');
+  assert.deepEqual(pending.holdReasons, []);
+  assert.equal(pending.disclosures.length, 1);
+  assert.ok(pending.disclosures[0].startsWith('CI 未完了'), pending.disclosures[0]);
+  assert.ok(pending.disclosures[0].includes('Bats Tests'));
+
+  const unavailable = classifyMergeTier(baseCleanInput({ ciChecks: factsChecks(null) }));
+  assert.equal(unavailable.tier, 'REVIEW');
+  assert.deepEqual(unavailable.holdReasons, []);
+  assert.equal(unavailable.disclosures.length, 1);
+  assert.ok(unavailable.disclosures[0].startsWith('CI 未完了'), unavailable.disclosures[0]);
+
+  // AUTO 適格でも tier は変えない（開示のみ）
+  const auto = classifyMergeTier({ ...autoBase(), iterateStatus: 'lgtm', evalStaleness: 'none', ciChecks: factsChecks(null) });
+  assert.equal(auto.tier, 'AUTO');
+  assert.ok(auto.disclosures.some((d) => d.startsWith('CI 未完了')));
+});
+
+test('classifyMergeTier: mergeStateStatus=UNSTABLE 単独では HOLD にしない（判定は checks の bucket だけ）', () => {
+  const mergeableState = classifyMergeableState({ ok: true, mergeable: 'MERGEABLE', mergeStateStatus: 'UNSTABLE' });
+  const r = classifyMergeTier(baseCleanInput({ mergeableState, ciChecks: factsChecks([{ name: 'a', bucket: 'pass' }]) }));
+  assert.equal(r.tier, 'REVIEW');
+  assert.deepEqual(r.holdReasons, []);
+});
+
+test('classifyMergeTier: ciChecks の契約外形状は明示 error', () => {
+  assert.throws(() => classifyMergeTier(baseCleanInput({ ciChecks: 'failed' })), /invalid ciChecks/);
+  assert.throws(() => classifyMergeTier(baseCleanInput({ ciChecks: { checks: [] } })), /invalid ciChecks/);
+  assert.throws(() => classifyMergeTier(baseCleanInput({ ciChecks: { ok: true } })), /invalid ciChecks/);
 });

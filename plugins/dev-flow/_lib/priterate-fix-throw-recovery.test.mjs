@@ -24,7 +24,7 @@ const prIteratePath = join(repoRoot, '.claude/workflows/pr-iterate.js');
  * @param {object} opts
  * @param {Function} opts.reviewerStub - (round: number) => reviewResult  ラウンドごとの pr-reviewer 返り値
  * @param {Function} [opts.ciStub]     - (round: number) => ciResult  ラウンドごとの CI チェック返り値
- *                                        （省略時は常に { status: 'passed', failed_checks: [] }）
+ *                                        （省略時は常に { status: 'passed', passed: 1, failed: 0, pending: 0, skipped: 0, failed_checks: [] }）
  * @param {Array}    [opts.fixSequence] - fix agent（'fix#' で始まる label）呼び出し順の返り値配列。
  *                                        要素が文字列 '__THROW__' なら stub が throw する。
  *                                        呼び出し回数が配列長を超えたら { applied: true, summary: 'fixed' } を返す。
@@ -50,7 +50,7 @@ function makeSandbox({ reviewerStub, ciStub, fixSequence = [] }) {
     if (agentType === 'dev-flow:dev-runner-haiku-ro' && typeof prompt === 'string' && prompt.includes('check-ci --checks-data')) {
       ciRound += 1;
       if (ciStub) return ciStub(ciRound);
-      return { status: 'passed', failed_checks: [] };
+      return { status: 'passed', passed: 1, failed: 0, pending: 0, skipped: 0, failed_checks: [] };
     }
 
     // fix stub: label が 'fix#' で始まる（初回呼び出しも retry 呼び出しも同じ接頭辞にマッチする）

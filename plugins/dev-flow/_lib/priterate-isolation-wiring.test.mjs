@@ -58,7 +58,7 @@ function makeSandbox({ isolationProbeResult, journalResult, isolationCleanupResu
     }
 
     if (agentType === 'dev-flow:dev-runner-haiku-ro' && typeof prompt === 'string' && prompt.includes('check-ci --checks-data')) {
-      return { status: 'passed', failed_checks: [] };
+      return { status: 'passed', passed: 1, failed: 0, pending: 0, skipped: 0, failed_checks: [] };
     }
 
     if (label.startsWith('post-')) {

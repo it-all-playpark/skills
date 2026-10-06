@@ -63,7 +63,7 @@ test('[fix-prompt-contract] (a) fix_loop の fix#1 prompt は必須 5 要素を�
 
 test('[fix-prompt-contract] (b) ci_gate の fix#1 prompt も同じ 5 要素と Boundary を持つ', async () => {
   const prompt = await fixPromptOf({
-    'ci-check#1': { status: 'failed', failed_checks: [{ name: 'bats', bucket: 'fail', state: 'FAILURE' }] },
+    'ci-check#1': { status: 'failed', passed: 0, failed: 1, pending: 0, skipped: 0, failed_checks: [{ name: 'bats', bucket: 'fail', state: 'FAILURE' }] },
     'fix#1': { applied: false, files: [], summary: 'stop' },
   });
   assertFiveElements(prompt, 'ci_gate');
@@ -87,7 +87,7 @@ test('[fix-prompt-contract] (d) fix_loop / ci_gate の fix#1 prompt は push に
       'fix#1': { applied: false, files: [], summary: 'stop' },
     }),
     ci_gate: await fixPromptOf({
-      'ci-check#1': { status: 'failed', failed_checks: [{ name: 'bats', bucket: 'fail', state: 'FAILURE' }] },
+      'ci-check#1': { status: 'failed', passed: 0, failed: 1, pending: 0, skipped: 0, failed_checks: [{ name: 'bats', bucket: 'fail', state: 'FAILURE' }] },
       'fix#1': { applied: false, files: [], summary: 'stop' },
     }),
   };

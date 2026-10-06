@@ -30,7 +30,7 @@ function makeSandbox(journalResult) {
 
     // CI チェック: agentType 'dev-runner-haiku-ro' かつ prompt に 'check-ci.sh' を含む
     if (agentType === 'dev-flow:dev-runner-haiku-ro' && typeof prompt === 'string' && prompt.includes('check-ci --checks-data')) {
-      return { status: 'passed', failed_checks: [] };
+      return { status: 'passed', passed: 1, failed: 0, pending: 0, skipped: 0, failed_checks: [] };
     }
 
     // 投稿系: label が 'post-' で始まる

@@ -40,12 +40,20 @@ export const CI_TURN_MARGIN = 3;
 // 持ってはならないため（issue #488）。
 // failed_checks の要素は script 出力と一致する {name, bucket, state}
 // （conclusion は bucket-field migration で削除。issue #133 / ci::bats-fabricated-schema）。
-// status:'error' は check-ci が gh fetch 失敗を分類した値。workflow 側は proxy の空応答（turn 上限到達等）も fail-open で同じ 'error' に合成するため、受け手は原因を 1 つに断定できない（issue #621）。即座に人間へエスカレーションする。
+// status:'error' は check-ci が gh fetch 失敗を分類した値。workflow 側は proxy の空応答（turn 上限到達等）と、件数から導いた status との食い違い（ciEffectiveStatus）も同じ 'error' に合成するため、受け手は原因を 1 つに断定できない（issue #621）。即座に人間へエスカレーションする。
+// 件数（passed / failed / pending / skipped）は check-ci が status と一緒に出す値で、required にする。
+// workflow は proxy の status をそのまま採らず、件数から導き直した status と一致するときだけ採る
+// （ciEffectiveStatus）。proxy が pending:2 の出力を status:'passed' と転記した実例があり（issue #834）、
+// status 1 語の転記だけに CI の真偽を預けない。
 export const CI_STATUS = {
   type: 'object',
-  required: ['status'],
+  required: ['status', 'passed', 'failed', 'pending', 'skipped'],
   properties: {
     status: { type: 'string', enum: ['passed', 'failed', 'pending', 'no_checks', 'error'] },
+    passed: { type: 'integer', minimum: 0 },
+    failed: { type: 'integer', minimum: 0 },
+    pending: { type: 'integer', minimum: 0 },
+    skipped: { type: 'integer', minimum: 0 },
     failed_checks: {
       type: 'array',
       items: {
@@ -72,6 +80,11 @@ export const CI_STATUS = {
 
 // gh fetch → check-ci の 2 単文（ci-check / ci-wait-check で共通の手順本文）。
 // n は最初の手順番号。両 prompt で転写契約の文言を食い違わせないために 1 箇所に置く。
+// 件数キーの転記指示（ci-check / ci-wait-check 共通）。check-ci は status:'error' のとき件数を出さないので
+// そのときだけ 0 を入れさせる（workflow 側は error を件数と照合せずそのまま error として扱う）。
+const CI_COUNTS_NOTE = '`passed` / `failed` / `pending` / `skipped` の件数は stdout の値を一字一句そのまま写せ'
+  + '（stdout に件数キーが無い場合 — status が error のとき — だけ各 0 を入れよ）。';
+
 export function ciFetchSteps({ pr, repo, n }) {
   return `${n}. \`gh pr checks ${pr}${repo ? ' --repo ' + repo : ''} --json name,state,bucket\` を gh を先頭トークンとする bare 単文で実行せよ`
     + `（リダイレクト・パイプ・複合コマンドは使わない）。`
@@ -101,11 +114,11 @@ export function ciCheckPrompt({ pr, repo }) {
     + `1. \`gh pr view ${pr}${repo ? ' --repo ' + repo : ''} --json headRefOid -q .headRefOid\` を gh を先頭トークンとする bare 単文で実行せよ`
     + `（リダイレクト・パイプ・複合コマンドは使わない）。stdout の 40 桁 hex を一字一句そのまま head_sha とする（失敗・空なら head_sha は省略）。\n`
     + ciFetchSteps({ pr, repo, n: 2 })
-    + `4. 手順 3 の stdout JSON（{status, failed_checks, waited_seconds, poll_attempts, ...}）に手順 1 の \`"head_sha"\` を加えて返せ。`
-    + `それ以外のキーは要約・加工するな。1 回の取得で判定を確定させ、待機や再取得は行うな。\n\n`
+    + `4. 手順 3 の stdout JSON（{status, passed, failed, pending, skipped, failed_checks, waited_seconds, poll_attempts, ...}）に手順 1 の \`"head_sha"\` を加えて返せ。`
+    + `それ以外のキーは要約・加工するな。${CI_COUNTS_NOTE}1 回の取得で判定を確定させ、待機や再取得は行うな。\n\n`
     + `## Output format\n`
-    + `{ "status": "passed"|"failed"|"pending"|"no_checks"|"error", "failed_checks": [{name, bucket, state}, ...], `
-    + `"waited_seconds": number, "poll_attempts": number, "head_sha": string }\n`
+    + `{ "status": "passed"|"failed"|"pending"|"no_checks"|"error", "passed": number, "failed": number, "pending": number, "skipped": number, `
+    + `"failed_checks": [{name, bucket, state}, ...], "waited_seconds": number, "poll_attempts": number, "head_sha": string }\n`
     + `prose 禁止。JSON のみ返せ。\n\n`
     + `## Token cap\n`
     + `JSON のみ。1 行以内。`;
@@ -115,7 +128,7 @@ export function ciCheckPrompt({ pr, repo }) {
 // （待機 + 1 回判定）。slept は ci-wait の stdout 由来で、true 以外なら workflow は status を採らない。
 export const CI_WAIT_CHECK = {
   type: 'object',
-  required: ['slept', 'status'],
+  required: ['slept', ...CI_STATUS.required],
   properties: {
     slept: { type: 'boolean' },
     ...CI_STATUS.properties,
@@ -142,16 +155,46 @@ export function ciWaitCheckPrompt({ pr, repo, seconds }) {
     + `## Steps\n`
     + `1. \`ci-wait ${seconds}\` を ci-wait を先頭トークンとする bare 単文で実行せよ（リダイレクト・パイプ・複合コマンドは使わない）。`
     + `stdout の JSON が \`"slept": true\` でなければ（stdout が空・exit 非0 を含む）手順 2〜4 を実行せず、`
-    + `\`{ "slept": false, "status": "pending" }\` を返して終了せよ。\n`
+    + `\`{ "slept": false, "status": "pending", "passed": 0, "failed": 0, "pending": 0, "skipped": 0 }\` を返して終了せよ。\n`
     + ciFetchSteps({ pr, repo, n: 2 })
-    + `4. 手順 3 の stdout JSON（{status, failed_checks, waited_seconds, poll_attempts, ...}）に \`"slept": true\` を加えて返せ。`
-    + `それ以外のキーは要約・加工するな。ci-wait と取得は各 1 回だけ実行し、再待機や再取得は行うな。\n\n`
+    + `4. 手順 3 の stdout JSON（{status, passed, failed, pending, skipped, failed_checks, waited_seconds, poll_attempts, ...}）に \`"slept": true\` を加えて返せ。`
+    + `それ以外のキーは要約・加工するな。${CI_COUNTS_NOTE}ci-wait と取得は各 1 回だけ実行し、再待機や再取得は行うな。\n\n`
     + `## Output format\n`
-    + `{ "slept": boolean, "status": "passed"|"failed"|"pending"|"no_checks"|"error", "failed_checks": [{name, bucket, state}, ...], `
-    + `"waited_seconds": number, "poll_attempts": number }\n`
+    + `{ "slept": boolean, "status": "passed"|"failed"|"pending"|"no_checks"|"error", "passed": number, "failed": number, "pending": number, "skipped": number, `
+    + `"failed_checks": [{name, bucket, state}, ...], "waited_seconds": number, "poll_attempts": number }\n`
     + `prose 禁止。JSON のみ返せ。\n\n`
     + `## Token cap\n`
     + `JSON のみ。1 行以内。`;
+}
+
+// check-ci の件数から status を導き直す（check-ci.sh の compute_verdict と同じ優先順）。
+// failed>0 → failed、pending>0 → pending、件数 0 → no_checks、それ以外 → passed。
+// 件数のどれかが非負整数でなければ null（導けない）。skipped は passed に含まれる内訳なので判定に使わない。
+export function ciStatusFromCounts(ci) {
+  const keys = ['passed', 'failed', 'pending', 'skipped'];
+  if (ci == null || !keys.every((k) => Number.isInteger(ci[k]) && ci[k] >= 0)) return null;
+  if (ci.failed > 0) return 'failed';
+  if (ci.pending > 0) return 'pending';
+  if (ci.passed + ci.failed + ci.pending + ci.skipped === 0) return 'no_checks';
+  return 'passed';
+}
+
+/**
+ * ci-check / ci-wait-check / ci-check-lite の proxy 応答を workflow が採る形に直す純関数。
+ * proxy の status は件数から導いた status と一致するときだけ採り、食い違い・件数欠落は error にする
+ * （fail-closed。転記の食い違いを passed に倒さない — issue #834）。proxy が error を返したときは
+ * check-ci が件数を出さない分類なので照合せず error のまま。null（agent の null / throw）も error。
+ * error にした応答には count_mismatch: { reported, derived } を付け、呼び出し側が理由を log に出す。
+ *
+ * @param {object|null} ci - proxy の応答
+ * @returns {object} status が 5 値 enum のいずれかで確定した応答
+ */
+export function ciEffectiveStatus(ci) {
+  if (ci == null) return { status: 'error', failed_checks: [] };
+  if (ci.status === 'error') return ci;
+  const derived = ciStatusFromCounts(ci);
+  if (derived !== null && derived === ci.status) return ci;
+  return { ...ci, status: 'error', count_mismatch: { reported: ci.status ?? null, derived } };
 }
 
 // 並列 ci-check の採否判定。pr-iterate は review#i と ci-check#i を parallel() で同時に起動し、

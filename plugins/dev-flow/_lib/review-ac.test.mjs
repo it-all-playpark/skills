@@ -176,7 +176,7 @@ test('[review-ac] dev-flow lite route: pr-review-lite prompt に analyze の AC 
 const NESTED_LAUNCH_SCENARIOS = {
   'full route': {},
   'lite review escalate': { ...LITE_OVERRIDES, 'pr-review-lite': BLOCKING_REVIEW },
-  'lite CI 非 green': { ...LITE_OVERRIDES, 'ci-check-lite': { status: 'failed', failed_checks: ['build'], waited_seconds: 0, poll_attempts: 1 } },
+  'lite CI 非 green': { ...LITE_OVERRIDES, 'ci-check-lite': { status: 'failed', passed: 0, failed: 1, pending: 0, skipped: 0, failed_checks: ['build'], waited_seconds: 0, poll_attempts: 1 } },
 };
 
 for (const [name, overrides] of Object.entries(NESTED_LAUNCH_SCENARIOS)) {

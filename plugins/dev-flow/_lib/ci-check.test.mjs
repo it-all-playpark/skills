@@ -7,6 +7,8 @@
 //   - CI_WAIT_CEILING_SECONDS=300, CI_POLL_SECONDS=45, CI_MAX_POLLS=7（script 側 poll ループの定数）
 //   - prompt にループ指示が無い（1 spawn = 1 判定。ci-check は待機もしない。issue #663）
 //   - CI_STATUS の status enum は closed（'error' が欠けると gh fetch 失敗を green と誤認しうる）
+//   - CI_STATUS は check-ci の件数を required に持ち、ciEffectiveStatus は件数から導いた status と食い違う
+//     proxy の status を error に倒す（pending:2 を passed と転記した実例。issue #834）
 //   - CI_WAIT_CHECK は slept を required に持つ（実待機不成立の判別に使う。issue #805）
 //   - prompt が決定論的で、repo 指定の有無で --repo フラグが正しく出し分けられる
 //   - ci-check は head sha を checks より先に取り、応答に head_sha を含める。並列 ci-check の採否
@@ -19,7 +21,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { CI_POLL_SECONDS, CI_WAIT_CEILING_SECONDS, CI_MAX_POLLS, CI_TURN_MARGIN, CI_STATUS, CI_WAIT_CHECK, ciCheckPrompt, ciWaitCheckPrompt, ciFetchSteps, ciHeadRejectReason, isFullCommitSha } from './ci-check.mjs';
+import { CI_POLL_SECONDS, CI_WAIT_CEILING_SECONDS, CI_MAX_POLLS, CI_TURN_MARGIN, CI_STATUS, CI_WAIT_CHECK, ciCheckPrompt, ciWaitCheckPrompt, ciFetchSteps, ciHeadRejectReason, isFullCommitSha, ciStatusFromCounts, ciEffectiveStatus } from './ci-check.mjs';
 import * as mod from './ci-check.mjs';
 
 // ============================================================
@@ -101,7 +103,71 @@ test('[ci-check] CI_STATUS の status enum は 5 値の closed enum', () => {
     CI_STATUS.properties.status.enum,
     ['passed', 'failed', 'pending', 'no_checks', 'error'],
   );
-  assert.deepEqual(CI_STATUS.required, ['status']);
+});
+
+test('[ci-check] CI_STATUS は status と check-ci の件数（passed / failed / pending / skipped）を required に持つ（issue #834）', () => {
+  assert.deepEqual(CI_STATUS.required, ['status', 'passed', 'failed', 'pending', 'skipped']);
+  for (const k of ['passed', 'failed', 'pending', 'skipped']) {
+    assert.equal(CI_STATUS.properties[k].type, 'integer', `${k} は整数`);
+    assert.equal(CI_STATUS.properties[k].minimum, 0, `${k} は非負`);
+  }
+  for (const k of ['slept', 'status', 'passed', 'failed', 'pending', 'skipped']) {
+    assert.ok(CI_WAIT_CHECK.required.includes(k), `CI_WAIT_CHECK は ${k} を required に持つべき`);
+  }
+});
+
+test('[ci-check] ci-check / ci-wait-check の prompt は件数を一字一句転記させ、Output format に件数キーを含む', () => {
+  for (const p of [ciCheckPrompt({ pr: 1, repo: 'o/n' }), ciWaitCheckPrompt({ pr: 1, repo: 'o/n', seconds: 45 })]) {
+    assert.ok(p.includes('"passed": number, "failed": number, "pending": number, "skipped": number'), p);
+    assert.ok(p.includes('`passed` / `failed` / `pending` / `skipped` の件数は stdout の値を一字一句そのまま写せ'), p);
+  }
+});
+
+// ============================================================
+// 件数からの status 導出（issue #834）
+// ============================================================
+
+const counts = (passed, failed, pending, skipped) => ({ passed, failed, pending, skipped });
+
+test('[ci-check] ciStatusFromCounts: failed>0 → failed、pending>0 → pending、件数 0 → no_checks、それ以外 → passed', () => {
+  assert.equal(ciStatusFromCounts(counts(3, 1, 2, 0)), 'failed');
+  assert.equal(ciStatusFromCounts(counts(3, 0, 2, 0)), 'pending');
+  assert.equal(ciStatusFromCounts(counts(0, 0, 0, 0)), 'no_checks');
+  assert.equal(ciStatusFromCounts(counts(3, 0, 0, 1)), 'passed');
+});
+
+test('[ci-check] ciStatusFromCounts: 件数の欠落・非整数・負数は導出不能（null）', () => {
+  assert.equal(ciStatusFromCounts({ passed: 1, failed: 0, pending: 0 }), null);
+  assert.equal(ciStatusFromCounts(counts(1, 0, '0', 0)), null);
+  assert.equal(ciStatusFromCounts(counts(1.5, 0, 0, 0)), null);
+  assert.equal(ciStatusFromCounts(counts(1, -1, 0, 0)), null);
+  assert.equal(ciStatusFromCounts(null), null);
+});
+
+test('[ci-check] ciEffectiveStatus: 件数 pending:2 と status:"passed" の食い違いは passed を採らず error（fail-closed）', () => {
+  const r = ciEffectiveStatus({ status: 'passed', ...counts(5, 0, 2, 0), failed_checks: [] });
+  assert.equal(r.status, 'error');
+  assert.deepEqual(r.count_mismatch, { reported: 'passed', derived: 'pending' });
+});
+
+test('[ci-check] ciEffectiveStatus: 件数と一致する status はそのまま採る（応答の他キーも保持）', () => {
+  for (const [status, c] of [['passed', counts(2, 0, 0, 1)], ['failed', counts(1, 1, 0, 0)], ['pending', counts(1, 0, 1, 0)], ['no_checks', counts(0, 0, 0, 0)]]) {
+    const ci = { status, ...c, failed_checks: [], head_sha: 'a'.repeat(40), epoch: 1 };
+    assert.equal(ciEffectiveStatus(ci), ci, `status=${status} は採るべき`);
+  }
+});
+
+test('[ci-check] ciEffectiveStatus: 件数欠落・件数と食い違う status（failed 件数ありの passed 等）はすべて error', () => {
+  assert.equal(ciEffectiveStatus({ status: 'passed', failed_checks: [] }).status, 'error');
+  assert.equal(ciEffectiveStatus({ status: 'passed', ...counts(1, 1, 0, 0) }).status, 'error');
+  assert.equal(ciEffectiveStatus({ status: 'no_checks', ...counts(1, 0, 0, 0) }).status, 'error');
+  assert.equal(ciEffectiveStatus({ status: 'pending', ...counts(1, 0, 0, 0) }).status, 'error');
+});
+
+test('[ci-check] ciEffectiveStatus: proxy の error は件数と照合せず error のまま、null は error を合成', () => {
+  const e = { status: 'error', ...counts(0, 0, 0, 0), message: 'x' };
+  assert.equal(ciEffectiveStatus(e), e);
+  assert.deepEqual(ciEffectiveStatus(null), { status: 'error', failed_checks: [] });
 });
 
 test('[ci-check] CI_STATUS の failed_checks 要素は {name, bucket, state}', () => {
@@ -194,7 +260,7 @@ test('[ci-check] ciWaitCheckPrompt は ci-wait → gh pr checks → check-ci の
 
 test('[ci-check] ciWaitCheckPrompt は slept:true でなければ取得へ進ませず、ループ・再取得を指示しない', () => {
   const w = ciWaitCheckPrompt({ pr: 1, repo: null, seconds: 45 });
-  assert.ok(w.includes('`{ "slept": false, "status": "pending" }`'), '実待機不成立時の応答形を含む');
+  assert.ok(w.includes('`{ "slept": false, "status": "pending", "passed": 0, "failed": 0, "pending": 0, "skipped": 0 }`'), '実待機不成立時の応答形を含む（件数は required なので 0 を入れる）');
   assert.ok(!w.includes('--repo'), 'repo null なら --repo を出さない');
   assert.ok(!/\battempt\b/i.test(w), 'attempt という語を含んではならない');
   assert.ok(!w.includes('繰り返'), '繰り返し指示を含んではならない');

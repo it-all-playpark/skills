@@ -258,6 +258,26 @@ export function assertNoCrash(error, name) {
 }
 
 // ============================================================
+// ciCounts: ci-check / ci-wait-check / ci-check-lite stub に載せる check-ci の件数
+// ============================================================
+
+/**
+ * status と整合する check-ci の件数（passed / failed / pending / skipped）を返す。workflow は proxy の status を
+ * 件数から導き直した値と照合し、食い違い・件数欠落を error にする（ciEffectiveStatus。issue #834）ため、
+ * status を採らせたい stub はこの件数を一緒に返す。'error' は check-ci が件数を出さないので 0 件。
+ *
+ * @param {'passed'|'failed'|'pending'|'no_checks'|'error'} status
+ */
+export function ciCounts(status) {
+  return {
+    passed: status === 'passed' ? 1 : 0,
+    failed: status === 'failed' ? 1 : 0,
+    pending: status === 'pending' ? 1 : 0,
+    skipped: 0,
+  };
+}
+
+// ============================================================
 // mergeTierFacts: Merge tier 統合 exec-proxy（label 'merge-tier-facts'）の応答を組み立てる
 // ============================================================
 
@@ -321,7 +341,7 @@ export function shapeOverrides(shape, { issue = 1 } = {}) {
     [`reimpl#1:serial:issue-${issue}`]: impl,
     [`reimpl#2:serial:issue-${issue}`]: impl,
     'danger-grep': { risk: { ok: true, hits: [] }, files: [...files], struct: null, diffhash: { hash: 'AAA', empty: false } },
-    ...(shape === 'micro' ? { 'ci-check-lite': { status: 'passed', failed_checks: [], waited_seconds: 0, poll_attempts: 0 } } : {}),
+    ...(shape === 'micro' ? { 'ci-check-lite': { status: 'passed', passed: 1, failed: 0, pending: 0, skipped: 0, failed_checks: [], waited_seconds: 0, poll_attempts: 0 } } : {}),
   };
 }
 
@@ -417,7 +437,7 @@ export function prIterateResponder(overrides = {}) {
     if (agentType === 'dev-flow:pr-reviewer') return { decision: 'approve', issues: [], summary: 'ok' };
     if (label.startsWith('fix#')) return { applied: true, files: [], summary: 'fixed' };
     if (label.startsWith('commit-ensure#')) return { committed: true, pushed: true, dirty: false };
-    if (label.startsWith('ci-check')) return { status: 'passed', failed_checks: [] };
+    if (label.startsWith('ci-check')) return { status: 'passed', passed: 1, failed: 0, pending: 0, skipped: 0, failed_checks: [] };
     if (label.startsWith('post-')) return { posted: true, method: 'gh', url: 'http://x', epoch: 3000 };
     if (label === 'worktree-dirty') return { dirty: false };
     if (label.startsWith('journal-log')) return { saved: true, logged: true };

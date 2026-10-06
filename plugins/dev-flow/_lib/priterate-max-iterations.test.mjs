@@ -82,7 +82,7 @@ test('[max-iterations] max_iterations="abc" を渡すと /正の整数/ エラ�
       return { decision: 'approve', issues: [], summary: 'ok' };
     }
     if ((opts?.agentType ?? '') === 'dev-runner-haiku-ro' && typeof prompt === 'string' && prompt.includes('check-ci --checks-data')) {
-      return { status: 'passed', failed_checks: [] };
+      return { status: 'passed', passed: 1, failed: 0, pending: 0, skipped: 0, failed_checks: [] };
     }
     if ((opts?.label ?? '').startsWith('post-')) {
       return { posted: true, method: 'gh', url: 'http://x' };
@@ -183,7 +183,7 @@ test('[max-iterations] args={pr:"5"}（max_iterations 未指定）で approve �
       return { decision: 'approve', issues: [], summary: 'ok' };
     }
     if (agentType === 'dev-flow:dev-runner-haiku-ro' && typeof prompt === 'string' && prompt.includes('check-ci --checks-data')) {
-      return { status: 'passed', failed_checks: [] };
+      return { status: 'passed', passed: 1, failed: 0, pending: 0, skipped: 0, failed_checks: [] };
     }
     if (label.startsWith('post-')) {
       return { posted: true, method: 'gh', url: 'http://x' };
@@ -224,7 +224,7 @@ test('[max-iterations] args="5"（bare string、max_iterations なし）で appr
       return { decision: 'approve', issues: [], summary: 'ok' };
     }
     if (agentType === 'dev-flow:dev-runner-haiku-ro' && typeof prompt === 'string' && prompt.includes('check-ci --checks-data')) {
-      return { status: 'passed', failed_checks: [] };
+      return { status: 'passed', passed: 1, failed: 0, pending: 0, skipped: 0, failed_checks: [] };
     }
     if (label.startsWith('post-')) {
       return { posted: true, method: 'gh', url: 'http://x' };
