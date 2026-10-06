@@ -91,9 +91,11 @@ for (const name of Object.keys(RUNS)) {
 
 // ---- (c) 負の対照（誤爆防止）: 対象 repo 自身のファイルを指す WT 相対パスは修正対象外 ----
 
-test('[skills-script-path-routing] (c) test 実行 prompt は対象 repo のテストランナーを WT 絶対パスで指示する', async () => {
+test('[skills-script-path-routing] (c) test 実行 prompt は対象 repo の worktree を WT 絶対パスで run-tests に渡す', async () => {
   const calls = await run('success');
   const t = calls.find((c) => c.label === 'test#1');
   assert.ok(t, 'test#1 が無い');
-  assert.ok(t.prompt.includes('/tmp/wt/tests/run-tests.sh'), 'test#1 prompt に `${WT}/tests/run-tests.sh` が無い（修正対象外の WT 相対パスまで書き換えた可能性）');
+  // 対象 repo の tests/run-*.sh の列挙・実行は exec-proxy run-tests が <WT>/tests から行う。
+  // prompt には WT 絶対パスだけを渡す（WT 相対にすると exec-proxy が別 cwd で探してしまう）。
+  assert.ok(t.prompt.includes('\nrun-tests /tmp/wt'), 'test#1 prompt に `run-tests ${WT}`（WT 絶対パス）が無い（修正対象外の WT 相対パスまで書き換えた可能性）');
 });

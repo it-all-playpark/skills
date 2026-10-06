@@ -264,7 +264,9 @@ test('[epoch-instruction] 既定 run: 給電対象 call の prompt が date +%s 
   const error = await runDevFlowInSandbox(src, ctx);
   assert.equal(error, null, `既定 run はエラーなく完走するべき: ${error?.message}`);
 
-  const epochFedLabels = ['test#1', 'impl:serial:issue-1', 'post-summary'];
+  // test#1 は対象外: 転写 agent は date を実行せず、epoch は exec-proxy run-tests が JSON に含めて返す
+  // （run-tests.bats が epoch の存在を pin）。
+  const epochFedLabels = ['impl:serial:issue-1', 'post-summary'];
   for (const label of epochFedLabels) {
     const call = calls.find((c) => c.label === label);
     assert.ok(call, `label '${label}' の call が見つからない`);

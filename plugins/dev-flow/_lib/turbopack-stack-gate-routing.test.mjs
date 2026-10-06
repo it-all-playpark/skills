@@ -1,6 +1,6 @@
 // Setup(stack) routing test: dev-flow.js の Setup phase が読む args.setup.stack.frameworks
 // （dev-flow-prerun の detect-stack 出力）に基づき、Turbopack fallback 規約（TURBOPACK_NOTE 経由）が
-// implementer / evaluator / test prompt へ注入されるか否かを VM sandbox で pin する。
+// implementer / evaluator prompt へ注入されるか否か（test prompt へは常に注入しない）を VM sandbox で pin する。
 // green-fix-concerns-routing.test.mjs の makeRecordingSandbox / runDevFlowInSandbox パターンをコピーし、
 // args.setup.stack.frameworks だけをテストケースごとに差し替える。
 
@@ -83,7 +83,9 @@ function groupPrompts(calls) {
 }
 
 // (a) frameworks: ['next'] → 注入あり
-test('[turbopack-stack-gate] (a) frameworks:["next"] → run 完走 & implementer/evaluator/test prompt に Turbopack 規約が注入される', async () => {
+// test prompt は exec-proxy run-tests の stdout 転写だけで、転写 agent はテストを実行し直さないため
+// Next.js でも規約を注入しない（issue #821）。
+test('[turbopack-stack-gate] (a) frameworks:["next"] → run 完走 & implementer/evaluator prompt に Turbopack 規約が注入され、test prompt には注入されない', async () => {
   const { error, calls } = await run(['next']);
   assertNoCrash(error);
   assert.equal(error, null, `run が完走しない: ${error?.message}`);
@@ -93,10 +95,13 @@ test('[turbopack-stack-gate] (a) frameworks:["next"] → run 完走 & implemente
   assert.ok(evalCalls.length >= 1, 'evaluator が呼ばれていない');
   assert.ok(testCalls.length >= 1, 'test runner が呼ばれていない');
 
-  for (const c of [...implCalls, ...evalCalls, ...testCalls]) {
+  for (const c of [...implCalls, ...evalCalls]) {
     assert.ok(c.prompt.includes('Turbopack'), `prompt (label=${c.label}) に 'Turbopack' が含まれない`);
     assert.ok(c.prompt.includes('next build --webpack'), `prompt (label=${c.label}) に 'next build --webpack' が含まれない`);
     assert.ok(!/context7/i.test(c.prompt), `prompt (label=${c.label}) に 'context7' が含まれてはいけない`);
+  }
+  for (const c of testCalls) {
+    assert.ok(!c.prompt.includes('Turbopack'), `test prompt (label=${c.label}) に 'Turbopack' が含まれてはいけない`);
   }
 });
 

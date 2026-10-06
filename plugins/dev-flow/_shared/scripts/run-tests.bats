@@ -1,0 +1,224 @@
+#!/usr/bin/env bats
+bats_require_minimum_version 1.5.0
+
+# Tests for _shared/scripts/run-tests.sh (issue #821)
+#
+# Strategy: mktemp -d に tests/run-*.sh の fixture（exit 0 / 1 / 126 を返す script、bats / vitest 形式の
+# 失敗出力を吐く script）を置き、status / tests / green / scripts / failed_files を stdout の JSON 1 行で検査する。
+# tests/run-*.sh が無い repo のフォールバックは npm / pnpm を stub（PATH 先頭）に差し替えて実 install なしで回す。
+
+setup() {
+    SCRIPT="$BATS_TEST_DIRNAME/run-tests.sh"
+    TMP_DIR="$(mktemp -d)"
+    WT="$(cd "$TMP_DIR" && pwd)/wt"
+    mkdir -p "$WT/tests"
+    STUB_DIR="$TMP_DIR/.stubbin"
+    mkdir -p "$STUB_DIR"
+}
+
+teardown() {
+    rm -rf "$TMP_DIR"
+}
+
+# $1 = tests/ 配下のファイル名、$2 = 本文（#!/usr/bin/env bash の後に続く）。実行ビットを付ける
+make_script() {
+    printf '#!/usr/bin/env bash\n%s\n' "$2" > "$WT/tests/$1"
+    chmod +x "$WT/tests/$1"
+}
+
+# stdout（stderr は分ける）が JSON 1 行であることを確かめ、その行を $JSON に入れる。
+# 追加の環境変数（PATH の stub 差し替え等）は呼び出し側で export する
+run_tests() {
+    run --separate-stderr bash "$SCRIPT" "$WT"
+    [ "${#lines[@]}" -eq 1 ]
+    JSON="$output"
+}
+
+@test "exit 0: 全本 exit 0 なら passed / tests passed / green true、全本を絶対パスで実行する" {
+    make_script run-a.sh 'echo "1..1"; echo "ok 1 a"'
+    make_script run-b.sh 'echo b-ran > "$(dirname "$0")/b.marker"; exit 0'
+    run_tests
+    [ "$status" -eq 0 ]
+    echo "$JSON" | jq -e '.status == "passed" and .tests == "passed" and .green == true'
+    echo "$JSON" | jq -e --arg a "$WT/tests/run-a.sh" --arg b "$WT/tests/run-b.sh" \
+        '.scripts == [{path: $a, exit: 0, launch_failed: false}, {path: $b, exit: 0, launch_failed: false}]'
+    echo "$JSON" | jq -e '.failed_files == [] and (.epoch | type == "number")'
+    [ -f "$WT/tests/b.marker" ]
+}
+
+@test "exit 1: 1 本でも exit 1 なら failed / green false、残りの script も実行する" {
+    make_script run-a.sh 'exit 1'
+    make_script run-b.sh 'echo b-ran > "$(dirname "$0")/b.marker"'
+    run_tests
+    [ "$status" -eq 0 ]
+    echo "$JSON" | jq -e '.status == "failed" and .tests == "failed" and .green == false'
+    echo "$JSON" | jq -e '[.scripts[] | [.exit, .launch_failed]] == [[1, false], [0, false]]'
+    [ -f "$WT/tests/b.marker" ]
+}
+
+@test "exit 126（起動失敗）: 1 本でも起動失敗があれば error（他の script の exit 1 より優先）、failed_files は空" {
+    make_script run-a.sh 'echo "not ok 1 x"; echo "# (in test file '"$WT"'/a.bats, line 2)"; exit 1'
+    make_script run-b.sh 'echo "Permission denied" >&2; exit 126'
+    run_tests
+    echo "$JSON" | jq -e '.status == "error" and .tests == "error" and .green == false'
+    echo "$JSON" | jq -e '[.scripts[] | [.exit, .launch_failed]] == [[1, false], [126, true]]'
+    echo "$JSON" | jq -e '.failed_files == []'
+    echo "$JSON" | jq -e '.summary | contains("launch failed") and contains("run-b.sh")'
+}
+
+@test "exit 126（起動失敗）: script 自体を exec できない（interpreter が実行不能）ものも launch_failed" {
+    : > "$TMP_DIR/not-an-interpreter"
+    printf '#!%s\n' "$TMP_DIR/not-an-interpreter" > "$WT/tests/run-broken.sh"
+    chmod +x "$WT/tests/run-broken.sh"
+    run_tests
+    echo "$JSON" | jq -e '.status == "error" and (.scripts[0].launch_failed == true) and (.scripts[0].exit == 126)'
+}
+
+@test "exit 127（command not found）も launch_failed として error" {
+    make_script run-a.sh 'exit 127'
+    run_tests
+    echo "$JSON" | jq -e '.status == "error" and .scripts[0].launch_failed == true'
+}
+
+@test "実行ビットの無い run-*.sh は実行しない" {
+    make_script run-a.sh 'exit 0'
+    printf '#!/usr/bin/env bash\nexit 1\n' > "$WT/tests/run-noexec.sh"
+    run_tests
+    echo "$JSON" | jq -e --arg a "$WT/tests/run-a.sh" '.status == "passed" and ([.scripts[].path] == [$a])'
+}
+
+@test "failed_files: bats の not ok 行（直後の in test file 診断行）から WT 相対パスを重複なく抽出する" {
+    make_script run-bats.sh "$(cat <<EOF
+echo "1..3"
+echo "not ok 1 first"
+echo "# (in test file $WT/plugins/foo/a.bats, line 10)"
+echo "#   \\\`[ 1 -eq 2 ]' failed"
+echo "ok 2 second"
+echo "not ok 3 setup failed"
+echo "# (from function \\\`setup' in test file $WT/plugins/foo/a.bats, line 3)"
+echo "not ok 1 other"
+echo "# (in test file $(cd "$WT" && pwd -P)/plugins/bar/b.bats, line 4)"
+exit 1
+EOF
+)"
+    run_tests
+    echo "$JSON" | jq -e '.status == "failed"'
+    echo "$JSON" | jq -e '.failed_files == ["plugins/foo/a.bats", "plugins/bar/b.bats"]'
+    echo "$JSON" | jq -e '.summary | contains("not ok 1 first")'
+}
+
+@test "failed_files: vitest の FAIL 行（ANSI 色付き・project 名付き）からパスを抽出する" {
+    make_script run-node.sh "$(cat <<'EOF'
+printf ' \033[31mFAIL\033[39m  plugins/x/_lib/a.test.mjs > suite > case\n'
+printf ' FAIL  |unit| plugins/x/_lib/b.test.mjs > case\n'
+printf ' FAIL  plugins/x/_lib/a.test.mjs > suite > case2\n'
+printf ' Test Files  2 failed (2)\n'
+exit 1
+EOF
+)"
+    run_tests
+    echo "$JSON" | jq -e '.failed_files == ["plugins/x/_lib/a.test.mjs", "plugins/x/_lib/b.test.mjs"]'
+}
+
+@test "summary: 失敗 script の not ok / FAIL 行を出力末尾より優先して載せる（stderr に grep の usage を出さない）" {
+    make_script run-a.sh "$(cat <<'EOF'
+echo "not ok 1 early failure"
+printf ' FAIL  plugins/x/_lib/a.test.mjs > case\n'
+for i in $(seq 1 40); do echo "noise line $i"; done
+exit 1
+EOF
+)"
+    run_tests
+    echo "$JSON" | jq -e '.status == "failed"'
+    echo "$JSON" | jq -e '.summary | contains("not ok 1 early failure") and contains("FAIL  plugins/x/_lib/a.test.mjs")'
+    echo "$JSON" | jq -e '.summary | contains("noise line 40") | not'
+    [[ "$stderr" != *"invalid option"* ]]
+}
+
+@test "failed_files: テストファイルに結び付かない失敗が 1 件でもあれば空配列" {
+    make_script run-a.sh 'echo "not ok 1 x"; echo "# (in test file '"$WT"'/a.bats, line 2)"; exit 1'
+    make_script run-b.sh 'echo "build crashed"; exit 1'
+    run_tests
+    echo "$JSON" | jq -e '.status == "failed" and .failed_files == []'
+}
+
+@test "failed_files: in test file 行の無い not ok があれば空配列" {
+    make_script run-a.sh 'echo "not ok 1 x"; echo "not ok 2 y"; echo "# (in test file '"$WT"'/a.bats, line 2)"; exit 1'
+    run_tests
+    echo "$JSON" | jq -e '.status == "failed" and .failed_files == []'
+}
+
+@test "stdout は script の出力が多くても JSON 1 行だけ" {
+    make_script run-a.sh 'for i in $(seq 1 500); do echo "ok $i t"; done; echo "noise" >&2'
+    run_tests
+    echo "$JSON" | jq -e '.status == "passed"'
+    [[ "$stderr" != *"ok 500 t"* ]]
+}
+
+@test "run-*.sh 無し: package.json の scripts.test があれば npm test を同じ規則で実行する（exit 0 → passed）" {
+    echo '{"name":"x","scripts":{"test":"node t.js"}}' > "$WT/package.json"
+    printf '#!/usr/bin/env bash\necho "$PWD $*" > "%s/npm.log"\nexit 0\n' "$TMP_DIR" > "$STUB_DIR/npm"
+    chmod +x "$STUB_DIR/npm"
+    export PATH="$STUB_DIR:$PATH"
+    run_tests
+    echo "$JSON" | jq -e '.status == "passed" and .tests == "passed" and .green == true'
+    echo "$JSON" | jq -e '.scripts == [{path: "npm test", exit: 0, launch_failed: false}]'
+    [ "$(cat "$TMP_DIR/npm.log")" = "$WT test" ]
+}
+
+@test "run-*.sh 無し: pnpm-lock.yaml があれば pnpm test、exit 1 → failed" {
+    echo '{"name":"x","scripts":{"test":"vitest run"}}' > "$WT/package.json"
+    : > "$WT/pnpm-lock.yaml"
+    printf '#!/usr/bin/env bash\necho " FAIL  src/a.test.ts > x"\nexit 1\n' > "$STUB_DIR/pnpm"
+    chmod +x "$STUB_DIR/pnpm"
+    export PATH="$STUB_DIR:$PATH"
+    run_tests
+    echo "$JSON" | jq -e '.status == "failed" and .scripts == [{path: "pnpm test", exit: 1, launch_failed: false}]'
+    echo "$JSON" | jq -e '.failed_files == ["src/a.test.ts"]'
+}
+
+@test "run-*.sh 無し: フォールバックの exit 126 も起動失敗として error" {
+    echo '{"name":"x","scripts":{"test":"node t.js"}}' > "$WT/package.json"
+    printf '#!/usr/bin/env bash\nexit 126\n' > "$STUB_DIR/npm"
+    chmod +x "$STUB_DIR/npm"
+    export PATH="$STUB_DIR:$PATH"
+    run_tests
+    echo "$JSON" | jq -e '.status == "error" and .scripts[0].launch_failed == true'
+}
+
+@test "run-*.sh もフォールバックも無ければ tests no_tests（scripts 空・green false）" {
+    rmdir "$WT/tests"
+    run_tests
+    [ "$status" -eq 0 ]
+    echo "$JSON" | jq -e '.status == "passed" and .tests == "no_tests" and .green == false and .scripts == [] and .failed_files == []'
+}
+
+@test "workspace-prebuild が failed ならテストを 1 本も実行せず failed、reason を summary の先頭に置く" {
+    git -C "$WT" init -q
+    echo '{"name":"root","private":true,"devDependencies":{"@fx/shared":"workspace:*"}}' > "$WT/package.json"
+    printf 'packages:\n  - "packages/*"\n' > "$WT/pnpm-workspace.yaml"
+    printf 'dist/\n' > "$WT/.gitignore"
+    mkdir -p "$WT/packages/shared"
+    echo '{"name":"@fx/shared","main":"./dist/index.js","scripts":{"build":"exit 1"}}' > "$WT/packages/shared/package.json"
+    printf '#!/usr/bin/env bash\necho "build error" >&2\nexit 1\n' > "$STUB_DIR/pnpm"
+    chmod +x "$STUB_DIR/pnpm"
+    make_script run-a.sh 'echo ran > "$(dirname "$0")/a.marker"'
+    export PATH="$STUB_DIR:$PATH"
+    run_tests
+    echo "$JSON" | jq -e '.status == "failed" and .tests == "failed" and .green == false and .scripts == [] and .failed_files == []'
+    echo "$JSON" | jq -e '.summary | startswith("workspace build failed: @fx/shared")'
+    [ ! -f "$WT/tests/a.marker" ]
+}
+
+@test "workspace-prebuild が skipped（pnpm ワークスペースでない）ならそのままテストへ進む" {
+    make_script run-a.sh 'echo ran > "$(dirname "$0")/a.marker"'
+    run_tests
+    echo "$JSON" | jq -e '.status == "passed"'
+    [ -f "$WT/tests/a.marker" ]
+}
+
+@test "引数不正は exit 2 で status error の JSON を出す" {
+    run bash "$SCRIPT"
+    [ "$status" -eq 2 ]
+    echo "$output" | jq -e '.status == "error" and .green == false'
+}

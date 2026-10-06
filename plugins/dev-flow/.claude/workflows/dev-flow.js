@@ -4806,6 +4806,18 @@ function crossRepoReturnNote(artifacts) {
   return `${header}\n${lines.join('\n')}\n列挙されたファイルのみを stage すること（git add -A は使わない）。`;
 }
 // ==== END inline: _lib/cross-repo-gate.mjs ====
+// ==== BEGIN inline: _lib/run-tests-prompt.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
+
+function runTestsPrompt(wt) {
+  return `cd ${wt} で作業。次のコマンドを **先頭トークンが run-tests の bare 単文** で 1 回だけ実行し、`
+    + `**stdout の JSON 1 行だけ** を verbatim で返せ（判定や脚色をしない。キーの追加・削除・値の書き換えをしない）。`
+    + `argv は一字一句そのまま実行する — which による絶対パス解決・絶対パスへの書き換え・cd 前置・\`bash\` 前置・環境変数代入前置・&& 連結は禁止。`
+    + `Bash tool の \`timeout: 600000\` を指定して実行し、\`run_in_background\` は使わない（禁止）。再実行しない（timeout に達した場合も含む）。`
+    + `timeout に達した・stdout に JSON 1 行が無い場合だけは、`
+    + `{"tests":"error","green":false,"summary":"run-tests did not return JSON"} を一字一句そのまま返せ:\n`
+    + `run-tests ${wt}`;
+}
+// ==== END inline: _lib/run-tests-prompt.mjs ====
 
 // ---- helpers ----
 
@@ -5045,55 +5057,24 @@ DEPS_NOTE = deps.implNote ?? ''
 log(deps.logLine)
 TURBOPACK_NOTE = hasNextJs(PRERUN.frameworks) ? TURBOPACK_FALLBACK_CONVENTION : ''
 log(hasNextJs(PRERUN.frameworks)
-  ? 'Setup(stack): Next.js 検出 — Turbopack fallback 規約を implementer / evaluator / test prompt へ注入'
+  ? 'Setup(stack): Next.js 検出 — Turbopack fallback 規約を implementer / evaluator prompt へ注入'
   : `Setup(stack): Next.js 非検出（frameworks=${JSON.stringify(PRERUN.frameworks)}）— Turbopack fallback 規約は注入しない`)
 const branch = PRERUN.branch
 const setup = PRERUN
 // isolation probe は Setup 末尾の analyze ゲート判定の後（Implement 直前）で spawn する — needs_clarification は
 // probe / 実装 agent より前に確定させ、人間へ返す run に spawn を 1 つも使わない。
 
-// Validate / Final reconcile 共有の test 実行 prompt。WT 確定後（Setup 完了後）に
-// 配置し、runValidateLoop・Final reconcile の test#final が同一 byte 列を共有する（drift 防止）。
-// sandbox 除外は先頭トークン一致のため、bare 形（絶対パス先頭トークン・前置禁止）優先実行 +
-// EPERM 起動失敗時は原因調査せず即時報告する文言へ更新。
-// 実行されたテストの失敗は tests:"failed"、テスト失敗が無く起動失敗だけがある（一部のスクリプトだけでも）は
-// tests:"error" に分離する（Final reconcile で error → unavailable → CI 委譲）。起動失敗は環境要因でコード修正では
-// 直らないため、一部起動失敗を failed に入れると green-fix が空回りし CI 委譲にも入らない。
-// tests/run-*.sh が複数あるときは全本を実行させ、全本 green のときだけ green:true にする。1 本だけ選ばせると
-// 残りのランナー（例: bats だけ走って vitest が走らない）の回帰が CI まで検出されないため。
-// テストの直前に workspace-prebuild で pnpm ワークスペースのビルド成果物（git 管理外）を作り直す。
-// Setup で 1 回ビルドするだけでは Implement / green-fix / pr-iterate の fix が依存先のソースを変えた時点で成果物が
-// 古くなるため、テストを実行するたびに呼ぶ。ビルド失敗は起動失敗（環境要因）ではなくソース起因でありうるので
-// tests:'failed' 側に入れて green-fix に回し、summary に対象パッケージ名を残す。
-const VALIDATE_TEST_PROMPT = `cd ${WT} で作業。テストスイートを実行し green かどうか判定せよ。\n`
-  + `テストを実行する前に \`workspace-prebuild ${WT}\` を bare 単文で 1 回だけ実行せよ（pnpm ワークスペースで、ほかのパッケージが import するビルド成果物を現在のソースからビルドする。対象が無い repo では何もしない）。`
-  + `出力 JSON の status が "failed" のときはテストを 1 本も実行せず、tests は "failed"、green は false とし、出力の reason（ビルド失敗と対象パッケージ名）を summary の先頭に verbatim で入れて報告せよ。`
-  + `status がそれ以外（"built" / "skipped"）のとき、および出力が JSON でないときは、ビルドを再試行せず下記のテスト実行へ進め。\n`
-  + `test 実行コマンドの規約: repo に実行可能な test スクリプト（tests/run-*.sh 等）があればそれを優先する。`
-  + `\`ls -l ${WT}/tests\` を bare 単文で実行して一覧を取り、ファイル名が tests/run-*.sh に一致し実行ビットを持つものを**すべて**対象とせよ。`
-  + `対象が複数あれば 1 本ずつ**すべて**実行せよ（1 本だけ選んで残りを省略してはならない）。`
-  + `各スクリプトは \`${WT}/tests/run-tests.sh\` のように**絶対パスを先頭トークンとする bare 形**で実行せよ。`
-  + `cd 前置（\`cd X && script\`）・\`bash script\` 前置・環境変数代入（\`VAR=x script\`）等の前置は禁止`
-  + `（理由: 先頭トークン一致で sandbox 除外が外れるため）。`
-  + `実行可能な test スクリプトが repo に無い場合のみ npm test / pytest / cargo test 等へフォールバックせよ。\n`
-  + `EPERM / permission denied 等の起動失敗が出た場合は原因調査をするな。この起動失敗ルールは tests/run-*.sh とフォールバック（npm test / pnpm test / pytest / cargo test 等）の両経路に適用する: `
-  + `tests/run-*.sh は bare 形の実行経路を 1 回だけ試し、それでも失敗するなら起動失敗として記録して残りのスクリプトへ進め。`
-  + `フォールバックの test コマンドも 1 回だけ実行し、起動失敗ならそれ以上試さず起動失敗として記録せよ（下記の起動失敗の分岐で即報告する）。`
-  + `起動失敗時は次をすべて禁止する: 環境変数前置（PNPM_HOME=... 等）での実行・別のパッケージマネージャ / test runner への切替（pnpm → npm 等）・`
-  + `ロック / キャッシュ / store の削除や移動・同一コマンドの再試行`
-  + `（理由: 起動失敗は環境要因でこれらでは直らず、共有の store / ロックを壊すため）。全対象を実行し終えたら StructuredOutput で報告せよ。報告時の tests / green の値は次の 3 分岐で決める:\n`
-  + `- 実行したすべてのスクリプトが green → tests:"passed"、green:true（green:true はこの分岐でのみ返せ）\n`
-  + `- 実行されたテストが 1 件以上失敗したスクリプトが 1 本でもある → tests:"failed"、green:false、失敗したスクリプトごとの要約を summary に入れる\n`
-  + `- 失敗したテストは無いが、1 本以上のスクリプトが起動失敗した（全本起動失敗も一部だけ起動失敗も含む。EPERM / permission denied / パッケージマネージャや test runner が起動不能 / 依存未解決）→ tests:"error"、green:false、起動失敗したスクリプト名と失敗要約を summary に入れる\n`
-  + `tests が failed のときは、失敗したテストを含むテストファイルの repo 相対パス（例: plugins/foo/scripts/bar.bats）を出力から読み取り failed_files に重複なく列挙せよ。`
-  + `失敗をテストファイルに結び付けられないもの（ビルド失敗・ランナー全体の失敗等）が 1 件でもあれば failed_files は返すな。\n`
-  + `format/lint はこの phase の責務外。test の結果のみ報告せよ。`
-  + '\n' + TURBOPACK_NOTE
-  + EPOCH_INSTRUCTION
+// Validate（test#i / test#retry-i）・post-eval（test#post-eval-i）・Final reconcile（test#final）共有の test 実行 prompt。
+// WT 確定後（Setup 完了後）に 1 回だけ組み、全 test spawn が同一 byte 列を共有する（drift 防止）。
+// 中身は exec-proxy `run-tests <WT>` の stdout 転写だけ（_lib/run-tests-prompt.mjs）。workspace-prebuild・
+// tests/run-*.sh 全本の実行・起動失敗（exit 126 / 127）の error 分類・failed_files の抽出・epoch は run-tests が行い、
+// 出力は GREEN schema の必須キー（tests / green）を含む。Turbopack fallback 規約は渡さない — 転写 agent は
+// テストを実行し直さないので、渡しても判断の余地を持ち込むだけになる。
+const TEST_RUN_PROMPT = runTestsPrompt(WT)
 
 // Security floor（ui-verify-config）と Final reconcile（ui-verify-config-final）が共有する
 // ui_verify config 読み取り prompt。WT 確定後（Setup 完了後）に配置し、
-// 両 phase が同一 byte 列を共有する（VALIDATE_TEST_PROMPT と同じ drift 防止の意図）。
+// 両 phase が同一 byte 列を共有する（TEST_RUN_PROMPT と同じ drift 防止の意図）。
 const UI_VERIFY_CONFIG_PROMPT = `cd ${WT} で作業。${WT}/skill-config.json と ${WT}/.claude/skill-config.json を Read で確認し（前者優先）、`
   + `"dev-flow" キー配下の "ui_verify" object を探せ。見つかれば {"found":true,"config":<その object を verbatim>}、`
   + `どちらにも無ければ {"found":false,"config":null} を返せ。値の解釈・補完・生成はするな。`
@@ -5448,7 +5429,7 @@ async function runValidateLoop(kind, { concerns, greenFixIterations, phaseName, 
     let raw
     try {
       raw = await trackedAgent(
-        VALIDATE_TEST_PROMPT,
+        TEST_RUN_PROMPT,
         { agentType: 'dev-runner-haiku', schema: GREEN, label: testLabel, phase: phaseName },
       )
     } catch (e) {
@@ -6755,7 +6736,7 @@ if ((iterate?.fixes_applied ?? 0) > 0) {
     // Step2 test 一発再実行（fail-safe。green-fix ループなし — red は修正せず HOLD）
     let ft = null
     try {
-      ft = await trackedAgent(VALIDATE_TEST_PROMPT, { agentType: 'dev-runner-haiku', schema: GREEN, label: 'test#final', phase: 'Final reconcile' })
+      ft = await trackedAgent(TEST_RUN_PROMPT, { agentType: 'dev-runner-haiku', schema: GREEN, label: 'test#final', phase: 'Final reconcile' })
     } catch (e) {
       log(`⚠️ Final reconcile: test#final が throw（${e && e.message ? e.message : e}）— null 扱い（fail-safe → unavailable。issue #359）`)
     }
