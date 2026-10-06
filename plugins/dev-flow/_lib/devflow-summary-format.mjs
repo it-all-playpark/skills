@@ -18,6 +18,15 @@ const POST_MERGE_CHECK = {
   'test-weakening': 'テスト弱体化の疑いを含む — マージ後の CI で当該テストが実行されていること（skip / only が残っていないこと）を確認する',
 };
 
+// classifyMergeTier（merge-tier.mjs）が REVIEW / AUTO で必ず先頭に積む既定の理由文。tier を言い換えた
+// だけで情報が無いため、理由がこれだけなら「Merge tier 理由」の節を出さない。canonical は merge-tier.mjs
+// で、import できないため重複定義する（同値性は devflow-summary-format.test.mjs が classifyMergeTier の
+// 返り値と突き合わせて pin する）。
+const DEFAULT_TIER_REASONS = [
+  '標準 — 人間が LGTM して merge',
+  'micro + docs/test-only + danger clean + 収束済 — 推奨ラベル（merge は人間）',
+];
+
 // 解消済み証跡の折りたたみ表の上限（issue #707）。GitHub のコメント本文上限（65536 文字）を
 // 解消済み項目の件数・evidence 長で超えないよう、行数とセル長の両方を決定論で切る。
 // セルは空白・改行を 1 空白に畳んでから code point 単位で切るので、1 セルは escape 後も
@@ -39,7 +48,7 @@ function resolvedCell(v) {
  * @param {number|string} opts.pr - PR 番号
  * @param {string} opts.mergeTier - 'HOLD'|'REVIEW'|'AUTO'
  * @param {string[]} opts.mergeTierReasons - 理由文字列の配列
- * @param {string} opts.gatePolicy - gate policy 文字列（例 'llm-major-advisory'）
+ * @param {string} opts.gatePolicy - gate policy 文字列（例 'llm-major-advisory'）。本文には出さず末尾の HTML コメントに置く
  * @param {Array<{id,text,severity,checked,dimension,evidence,source,floor,danger_class,fail_closed}>} opts.blockingItems - blocking items。
  *   SEC seed item（source:'seed' && dimension:'security'）は danger-grep 由来の決定論 floor item で、
  *   floor:true が付いた item から Security clearance セクションを導出する（checked/evidence/danger_class を使用）。
@@ -185,9 +194,14 @@ export function buildDevflowSummaryBody({
   // から導出する（evalResult.security_clearance は使わない — PR #16 型の表示矛盾を防ぐため）。
   // SEC seed item は check.kind:'deterministic' のため全 gate_policy で blocking lane（軸A invariant）
   // であり、blockingItems からの導出は gate_policy に依存せず成立する。
-  const secLedgerItems = (blockingItems || []).filter(
-    (it) => it.source === 'seed' && it.dimension === 'security' && it.floor === true
-  );
+  // danger-grep が clean と判定して自動 check した SEC seed（evidence が reconcileDanger の clean 文言と
+  // 完全一致）はクラスごとの行を出さず、Security の 1 行に件数でまとめる。LLM の evidence で clear した
+  // SEC は従来どおり 1 行ずつ出す（clearance の根拠が人間の確認対象になるため）。
+  const isDangerGrepCleanSec = (it) => it.source === 'seed' && it.dimension === 'security'
+    && it.checked === true && it.evidence === 'danger-grep clean';
+  const secSeedItems = (blockingItems || []).filter((it) => it.source === 'seed' && it.dimension === 'security');
+  const cleanSecItems = secSeedItems.filter(isDangerGrepCleanSec);
+  const secLedgerItems = secSeedItems.filter((it) => it.floor === true && !isDangerGrepCleanSec(it));
   const securityClearance = secLedgerItems.map((it) => ({
     danger_class: it.danger_class,
     cleared: it.checked === true,
@@ -239,10 +253,11 @@ export function buildDevflowSummaryBody({
     const m = /^AC-(?:FINAL-)?(\d+)$/.exec(it.id);
     return m != null && unsatisfiedAcIndexes.has(Number(m[1]) - 1);
   };
-  // 非 escalate advisory の表示候補は checked（solved 状態）基準のみで選ぶ（従来と同一の選別）。
+  // 非 escalate advisory の表示候補。fix 後 tree で解消確認済み（isResolved）のものは折りたたみの
+  // 「解消済み」表にだけ出し、「要対応」・「任意の確認事項」の表には出さない（同じ項目の二重掲載を防ぐ）。
   const nonEscalateUnchecked = advArr.filter(
     it => it.checked !== true && it.dimension !== 'environment' && it.escalate !== true && !isTriagedAdvisory(it)
-      && !isUnsatisfiedAcItem(it)
+      && !isUnsatisfiedAcItem(it) && !isResolved(it)
   );
   // hasActionItems（見出し判定）には isResolved で解消済みのものを含めない。
   const unresolvedEscalate = escalateAll.filter(it => !isResolved(it));
@@ -355,17 +370,7 @@ export function buildDevflowSummaryBody({
   if (fixRequired) fixPhrase = unresolvedAdvisory.length > 0 ? `修正作業が必要です（助言 ${unresolvedAdvisory.length} 件は任意）` : '修正作業が必要です';
   else if (unresolvedAdvisory.length > 0) fixPhrase = `必須の修正作業はありません（助言 ${unresolvedAdvisory.length} 件は任意）`;
   else fixPhrase = '修正作業は不要です';
-
-  let actionPhrase;
-  if (mergeTier === 'HOLD') {
-    if (fixRequired) actionPhrase = '「要対応」の ❌ 項目を修正してから再 review してください';
-    else if (holdKind === 'deterministic_recheck') actionPhrase = 'CI 完了 / 再取得後に再確認してください';
-    else actionPhrase = '人がマージ可否を判断してください';
-  } else if (mergeTier === 'REVIEW') {
-    actionPhrase = '人が diff を review し LGTM 後にマージしてください';
-  } else {
-    actionPhrase = '人が diff を一読してマージしてください';
-  }
+  // 行動指示は直下の「あなたがやること」にだけ書く（結論行で同じ指示を繰り返さない）。
 
   // at-a-glance は最終状態を出す（issue #625）。Final reconcile が最終 tree の test 状態を確定させた
   // 場合はそれを優先し、Validate 時点の testGreen は finalReconcile が 'skipped'/'unavailable'/null
@@ -393,7 +398,7 @@ export function buildDevflowSummaryBody({
   }
 
   const testPhrase = testUnverified ? 'テストはローカル未実行・CI 未確認のため、CI の test 結果を確認してからマージ。' : '';
-  lines.push(`**結論: ${tierPhrase}。${fixPhrase}。${testPhrase}${actionPhrase}**`);
+  lines.push(`**結論: ${tierPhrase}。${fixPhrase}。${testPhrase}**`);
   lines.push('');
 
   // 3. at-a-glance テーブル
@@ -463,14 +468,16 @@ export function buildDevflowSummaryBody({
     lines.push('');
   } else if (evalStaleness === 'iterate_fixed') {
     const fixCount = (typeof iterateFixesApplied === 'number' && iterateFixesApplied >= 0) ? String(iterateFixesApplied) : '不明';
-    lines.push('> ℹ️ **pr-iterate が ' + fixCount + ' 件の fix を適用して LGTM 終端**（fix 内容は pr-reviewer の再レビューで担保済み。下記の eval/AC テーブル・security clearance は fix 前 tree 基準）');
+    // Final AC reconcile が最終 tree で AC を再検証したときは AC テーブルが final snapshot（参考の注記と同じ）
+    // なので、「AC も fix 前 tree 基準」とは書かない — 同じコメント内で基準が食い違わないようにする。
+    const basis = finalAcReconcile === 'reverified'
+      ? 'AC は最終 tree で再検証済み。security clearance は fix 前 tree 基準'
+      : '下記の eval/AC テーブル・security clearance は fix 前 tree 基準';
+    lines.push('> ℹ️ **pr-iterate が ' + fixCount + ' 件の fix を適用して LGTM 終端**（fix 内容は pr-reviewer の再レビューで担保済み。' + basis + '）');
     lines.push('');
   }
 
-  // 3. gate_policy 行
-  lines.push(`gate_policy: \`${gatePolicy}\``);
-
-  // 4. dangerHits 検出クラス行（1件以上のとき）
+  // 4. dangerHits 検出クラス行（1件以上のとき）。gate_policy は本文に出さず末尾の HTML コメントに置く。
   if (dangerArr) {
     lines.push(`検出クラス: ${dangerArr.join(', ')}`);
   }
@@ -481,7 +488,7 @@ export function buildDevflowSummaryBody({
   }
 
   // 4c. あなたがやること（issue #658 AC-4）。全 tier で出す。
-  lines.push('');
+  if (dangerArr || testsurfArr) lines.push('');
   lines.push('### あなたがやること');
   lines.push('');
   const youDoLines = [];
@@ -525,7 +532,12 @@ export function buildDevflowSummaryBody({
   for (const l of youDoLines) lines.push(l);
 
   // 5. HOLD になった理由と現状 / Merge tier 理由（常時可視。issue #658 AC-3）
-  lines.push('');
+  // HOLD 以外: 可視化のみの理由（disclosures）は箇条書きから除外し「参考」セクションへ回す。残りが
+  // classifyMergeTier の既定文（tier そのものの言い換え）だけなら理由の節自体を出さない。
+  const disclosureSet = new Set(Array.isArray(disclosures) ? disclosures : []);
+  const nonHoldReasons = (mergeTierReasons || []).filter((r) => !disclosureSet.has(r));
+  const showNonHoldReasons = nonHoldReasons.some((r) => !DEFAULT_TIER_REASONS.includes(r));
+  if (mergeTier === 'HOLD' || showNonHoldReasons) lines.push('');
   if (mergeTier === 'HOLD' && Array.isArray(holdReasons) && holdReasons.length > 0) {
     lines.push('### HOLD になった理由と現状');
     lines.push('');
@@ -591,17 +603,10 @@ export function buildDevflowSummaryBody({
         lines.push(`- ${reason}`);
       }
     }
-  } else {
-    // HOLD 以外: 可視化のみの理由（disclosures）は箇条書きから除外し「参考」セクションへ回す。
-    const disclosureSet = new Set(Array.isArray(disclosures) ? disclosures : []);
-    const filteredReasons = (mergeTierReasons || []).filter((r) => !disclosureSet.has(r));
+  } else if (showNonHoldReasons) {
     lines.push('**Merge tier 理由**:');
-    if (filteredReasons.length === 0) {
-      lines.push('- 理由記載なし');
-    } else {
-      for (const reason of filteredReasons) {
-        lines.push(`- ${reason}`);
-      }
+    for (const reason of nonHoldReasons) {
+      lines.push(`- ${reason}`);
     }
   }
 
@@ -640,10 +645,16 @@ export function buildDevflowSummaryBody({
   // 必須があるときは助言を「⚠️ 要対応」の表に混ぜず、後段の「ℹ️ 任意の確認事項」節に分ける（issue #738）。
   // 必須が無いときは見出しが既に任意 / 要対応なしなので、従来どおり 1 表にまとめる（issue #707）。
   // 同じ AC にまとめた行（issue #794）は先頭に置き、まとめた blocking / escalate 行と未達 AC 表の行は出さない。
+  // 現状列の「未解消」は blocking（必須）の項目にだけ使う。ESCALATE は人間の判断待ちなので「未判断」、
+  // 助言（advisory）は対応が任意なので「未対応（任意）」と書き、必須の未解消と読み違えさせない。
   const escalateCurrent = (item) => {
     if (isResolved(item)) return (item.final_resolution === 'ci_delegated' ? 'CI 委譲: ' : 'fix 後 tree で確認: ') + mdCell(item.final_evidence);
-    if (item.final_resolution === 'unresolved' && nonEmpty(item.final_evidence)) return 'fix 後 tree でも未解消: ' + mdCell(item.final_evidence);
-    return item.evidence ? mdCell(item.evidence) : '未解消';
+    if (item.final_resolution === 'unresolved' && nonEmpty(item.final_evidence)) return 'fix 後 tree でも残る: ' + mdCell(item.final_evidence);
+    return item.evidence ? mdCell(item.evidence) : '未判断';
+  };
+  const advisoryCurrent = (item) => {
+    if (item.final_resolution === 'unresolved' && nonEmpty(item.final_evidence)) return '未対応（任意）— fix 後 tree でも残る: ' + mdCell(item.final_evidence);
+    return item.evidence ? '未対応（任意）: ' + mdCell(item.evidence) : '未対応（任意）';
   };
   const acGroupRows = acGroups.map((g) => {
     const count = g.blocking.length + g.escalate.length + (g.ac != null ? 1 : 0);
@@ -695,12 +706,10 @@ export function buildDevflowSummaryBody({
       let current;
       if (item._kind === 'blocking') {
         current = item.evidence ? mdCell(item.evidence) : '未解消';
-      } else if (resolved) {
-        current = (item.final_resolution === 'ci_delegated' ? 'CI 委譲: ' : 'fix 後 tree で確認: ') + mdCell(item.final_evidence);
-      } else if (item.final_resolution === 'unresolved' && nonEmpty(item.final_evidence)) {
-        current = 'fix 後 tree でも未解消: ' + mdCell(item.final_evidence);
+      } else if (item._kind === 'escalate') {
+        current = escalateCurrent(item);
       } else {
-        current = item.evidence ? mdCell(item.evidence) : '未解消';
+        current = advisoryCurrent(item);
       }
       let action;
       if (resolved) {
@@ -865,21 +874,26 @@ export function buildDevflowSummaryBody({
   if (!acResults || acResults.length === 0) {
     lines.push('Acceptance Criteria: AC 判定なし（evaluator 未実行 or AC 欠落）');
   }
-  if (securityClearance.length === 0) {
-    if (secFailClosed && (holdReasons || []).some((r) => r?.code === 'merge_facts_dropped')) {
+  if (securityClearance.length === 0 && secFailClosed) {
+    if ((holdReasons || []).some((r) => r?.code === 'merge_facts_dropped')) {
       lines.push('Security clearance: merge-tier-facts の転記欠落（fail-closed — danger-grep 結果を受け取れず security 未検証）');
-    } else if (secFailClosed) {
-      lines.push('Security clearance: danger-grep 実行不能（fail-closed — security 未検証）');
     } else {
-      lines.push('Security clearance: danger-grep clean（clearance 不要）');
+      lines.push('Security clearance: danger-grep 実行不能（fail-closed — security 未検証）');
     }
+  } else if (cleanSecItems.length > 0) {
+    lines.push(cleanSecItems.length === secSeedItems.length
+      ? `Security: ${cleanSecItems.length} クラスとも danger-grep clean`
+      : `Security: ${cleanSecItems.length} クラス（${cleanSecItems.map((it) => it.danger_class).join(', ')}）は danger-grep clean`);
+  } else if (securityClearance.length === 0) {
+    lines.push('Security clearance: danger-grep clean（clearance 不要）');
   }
 
   // 7. 解消済み証跡（issue #603, #707）。件数行を <details> のサマリ行にし、折りたたみの中に
   // Goal Ledger の解消済み項目を 1 行ずつ 区分 / 内容 / 解消根拠 で出す（PR 上で何が指摘され何が
   // 直ったかを追えるようにする）。未解消・未 clear の item は上記「要対応」セクションに全文で出る。
+  // danger-grep clean の SEC seed は上の Security の 1 行に集約済みなので、ここでは数えず行も出さない。
   const resolvedItems = [
-    ...blockArr.filter(it => it.checked === true).map(it => ({ ...it, _lane: 'blocking' })),
+    ...blockArr.filter(it => it.checked === true && !isDangerGrepCleanSec(it)).map(it => ({ ...it, _lane: 'blocking' })),
     ...advArr.filter(it => it.checked === true && it.escalate !== true && it.dimension !== 'environment').map(it => ({ ...it, _lane: 'advisory' })),
   ];
   const countLines = [];
@@ -985,6 +999,8 @@ export function buildDevflowSummaryBody({
   lines.push('');
   lines.push('---');
   lines.push('*このコメントは dev-flow により自動生成されました。*');
+  // gate_policy は人間の判断に使わない機構側の情報なので、本文ではなく HTML コメントに残す。
+  if (typeof gatePolicy === 'string' && gatePolicy.length > 0) lines.push(`<!-- gate_policy: ${gatePolicy} -->`);
   lines.push(`<!-- dev-flow:${mergeTier} -->`);
 
   return lines.join('\n');

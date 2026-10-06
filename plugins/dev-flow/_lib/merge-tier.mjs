@@ -420,6 +420,8 @@ export function classifyMergeTier(s) {
     if (ciVerifiedDisclosure) autoReasons.push(ciVerifiedDisclosure);
     return { tier: 'AUTO', reasons: autoReasons, holdReasons: [], holdKind: null, disclosures };
   }
+  // REVIEW / AUTO の既定文は終端サマリーが「理由の節を出さない」判定に使う（devflow-summary-format.mjs の
+  // DEFAULT_TIER_REASONS）。文言を変えるときは両方を揃える（不一致は summary 側のテストが落とす）。
   const reviewReasons = ['標準 — 人間が LGTM して merge'];
   if (keywordAloneDisclosure) reviewReasons.push(keywordAloneDisclosure);
   if (evalFailDisclosure) reviewReasons.push(evalFailDisclosure);

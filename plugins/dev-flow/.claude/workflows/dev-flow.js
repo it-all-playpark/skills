@@ -2170,6 +2170,11 @@ const POST_MERGE_CHECK = {
   'test-weakening': 'テスト弱体化の疑いを含む — マージ後の CI で当該テストが実行されていること（skip / only が残っていないこと）を確認する',
 };
 
+const DEFAULT_TIER_REASONS = [
+  '標準 — 人間が LGTM して merge',
+  'micro + docs/test-only + danger clean + 収束済 — 推奨ラベル（merge は人間）',
+];
+
 const RESOLVED_ROWS_MAX = 30;
 const RESOLVED_CELL_MAX = 200;
 
@@ -2250,9 +2255,11 @@ function buildDevflowSummaryBody({
     return false;
   };
 
-  const secLedgerItems = (blockingItems || []).filter(
-    (it) => it.source === 'seed' && it.dimension === 'security' && it.floor === true
-  );
+  const isDangerGrepCleanSec = (it) => it.source === 'seed' && it.dimension === 'security'
+    && it.checked === true && it.evidence === 'danger-grep clean';
+  const secSeedItems = (blockingItems || []).filter((it) => it.source === 'seed' && it.dimension === 'security');
+  const cleanSecItems = secSeedItems.filter(isDangerGrepCleanSec);
+  const secLedgerItems = secSeedItems.filter((it) => it.floor === true && !isDangerGrepCleanSec(it));
   const securityClearance = secLedgerItems.map((it) => ({
     danger_class: it.danger_class,
     cleared: it.checked === true,
@@ -2292,7 +2299,7 @@ function buildDevflowSummaryBody({
   };
   const nonEscalateUnchecked = advArr.filter(
     it => it.checked !== true && it.dimension !== 'environment' && it.escalate !== true && !isTriagedAdvisory(it)
-      && !isUnsatisfiedAcItem(it)
+      && !isUnsatisfiedAcItem(it) && !isResolved(it)
   );
   const unresolvedEscalate = escalateAll.filter(it => !isResolved(it));
   const unresolvedAdvisory = nonEscalateUnchecked.filter(it => !isResolved(it));
@@ -2386,17 +2393,6 @@ function buildDevflowSummaryBody({
   else if (unresolvedAdvisory.length > 0) fixPhrase = `必須の修正作業はありません（助言 ${unresolvedAdvisory.length} 件は任意）`;
   else fixPhrase = '修正作業は不要です';
 
-  let actionPhrase;
-  if (mergeTier === 'HOLD') {
-    if (fixRequired) actionPhrase = '「要対応」の ❌ 項目を修正してから再 review してください';
-    else if (holdKind === 'deterministic_recheck') actionPhrase = 'CI 完了 / 再取得後に再確認してください';
-    else actionPhrase = '人がマージ可否を判断してください';
-  } else if (mergeTier === 'REVIEW') {
-    actionPhrase = '人が diff を review し LGTM 後にマージしてください';
-  } else {
-    actionPhrase = '人が diff を一読してマージしてください';
-  }
-
   const baseFailing = Array.isArray(baseFailingTests) ? baseFailingTests.filter((f) => typeof f === 'string' && f.length > 0) : [];
   let testCell;
   let testUnverified = false;
@@ -2418,7 +2414,7 @@ function buildDevflowSummaryBody({
   }
 
   const testPhrase = testUnverified ? 'テストはローカル未実行・CI 未確認のため、CI の test 結果を確認してからマージ。' : '';
-  lines.push(`**結論: ${tierPhrase}。${fixPhrase}。${testPhrase}${actionPhrase}**`);
+  lines.push(`**結論: ${tierPhrase}。${fixPhrase}。${testPhrase}**`);
   lines.push('');
 
   const tierCell = `${TIER_EMOJI[mergeTier] ?? ''} **${mergeTier}**`;
@@ -2483,11 +2479,12 @@ function buildDevflowSummaryBody({
     lines.push('');
   } else if (evalStaleness === 'iterate_fixed') {
     const fixCount = (typeof iterateFixesApplied === 'number' && iterateFixesApplied >= 0) ? String(iterateFixesApplied) : '不明';
-    lines.push('> ℹ️ **pr-iterate が ' + fixCount + ' 件の fix を適用して LGTM 終端**（fix 内容は pr-reviewer の再レビューで担保済み。下記の eval/AC テーブル・security clearance は fix 前 tree 基準）');
+    const basis = finalAcReconcile === 'reverified'
+      ? 'AC は最終 tree で再検証済み。security clearance は fix 前 tree 基準'
+      : '下記の eval/AC テーブル・security clearance は fix 前 tree 基準';
+    lines.push('> ℹ️ **pr-iterate が ' + fixCount + ' 件の fix を適用して LGTM 終端**（fix 内容は pr-reviewer の再レビューで担保済み。' + basis + '）');
     lines.push('');
   }
-
-  lines.push(`gate_policy: \`${gatePolicy}\``);
 
   if (dangerArr) {
     lines.push(`検出クラス: ${dangerArr.join(', ')}`);
@@ -2497,7 +2494,7 @@ function buildDevflowSummaryBody({
     lines.push(`検出パターン (test-weakening): ${testsurfArr.join(', ')}`);
   }
 
-  lines.push('');
+  if (dangerArr || testsurfArr) lines.push('');
   lines.push('### あなたがやること');
   lines.push('');
   const youDoLines = [];
@@ -2537,7 +2534,10 @@ function buildDevflowSummaryBody({
   }
   for (const l of youDoLines) lines.push(l);
 
-  lines.push('');
+  const disclosureSet = new Set(Array.isArray(disclosures) ? disclosures : []);
+  const nonHoldReasons = (mergeTierReasons || []).filter((r) => !disclosureSet.has(r));
+  const showNonHoldReasons = nonHoldReasons.some((r) => !DEFAULT_TIER_REASONS.includes(r));
+  if (mergeTier === 'HOLD' || showNonHoldReasons) lines.push('');
   if (mergeTier === 'HOLD' && Array.isArray(holdReasons) && holdReasons.length > 0) {
     lines.push('### HOLD になった理由と現状');
     lines.push('');
@@ -2599,16 +2599,10 @@ function buildDevflowSummaryBody({
         lines.push(`- ${reason}`);
       }
     }
-  } else {
-    const disclosureSet = new Set(Array.isArray(disclosures) ? disclosures : []);
-    const filteredReasons = (mergeTierReasons || []).filter((r) => !disclosureSet.has(r));
+  } else if (showNonHoldReasons) {
     lines.push('**Merge tier 理由**:');
-    if (filteredReasons.length === 0) {
-      lines.push('- 理由記載なし');
-    } else {
-      for (const reason of filteredReasons) {
-        lines.push(`- ${reason}`);
-      }
+    for (const reason of nonHoldReasons) {
+      lines.push(`- ${reason}`);
     }
   }
 
@@ -2641,8 +2635,12 @@ function buildDevflowSummaryBody({
 
   const escalateCurrent = (item) => {
     if (isResolved(item)) return (item.final_resolution === 'ci_delegated' ? 'CI 委譲: ' : 'fix 後 tree で確認: ') + mdCell(item.final_evidence);
-    if (item.final_resolution === 'unresolved' && nonEmpty(item.final_evidence)) return 'fix 後 tree でも未解消: ' + mdCell(item.final_evidence);
-    return item.evidence ? mdCell(item.evidence) : '未解消';
+    if (item.final_resolution === 'unresolved' && nonEmpty(item.final_evidence)) return 'fix 後 tree でも残る: ' + mdCell(item.final_evidence);
+    return item.evidence ? mdCell(item.evidence) : '未判断';
+  };
+  const advisoryCurrent = (item) => {
+    if (item.final_resolution === 'unresolved' && nonEmpty(item.final_evidence)) return '未対応（任意）— fix 後 tree でも残る: ' + mdCell(item.final_evidence);
+    return item.evidence ? '未対応（任意）: ' + mdCell(item.evidence) : '未対応（任意）';
   };
   const acGroupRows = acGroups.map((g) => {
     const count = g.blocking.length + g.escalate.length + (g.ac != null ? 1 : 0);
@@ -2692,12 +2690,10 @@ function buildDevflowSummaryBody({
       let current;
       if (item._kind === 'blocking') {
         current = item.evidence ? mdCell(item.evidence) : '未解消';
-      } else if (resolved) {
-        current = (item.final_resolution === 'ci_delegated' ? 'CI 委譲: ' : 'fix 後 tree で確認: ') + mdCell(item.final_evidence);
-      } else if (item.final_resolution === 'unresolved' && nonEmpty(item.final_evidence)) {
-        current = 'fix 後 tree でも未解消: ' + mdCell(item.final_evidence);
+      } else if (item._kind === 'escalate') {
+        current = escalateCurrent(item);
       } else {
-        current = item.evidence ? mdCell(item.evidence) : '未解消';
+        current = advisoryCurrent(item);
       }
       let action;
       if (resolved) {
@@ -2839,18 +2835,22 @@ function buildDevflowSummaryBody({
   if (!acResults || acResults.length === 0) {
     lines.push('Acceptance Criteria: AC 判定なし（evaluator 未実行 or AC 欠落）');
   }
-  if (securityClearance.length === 0) {
-    if (secFailClosed && (holdReasons || []).some((r) => r?.code === 'merge_facts_dropped')) {
+  if (securityClearance.length === 0 && secFailClosed) {
+    if ((holdReasons || []).some((r) => r?.code === 'merge_facts_dropped')) {
       lines.push('Security clearance: merge-tier-facts の転記欠落（fail-closed — danger-grep 結果を受け取れず security 未検証）');
-    } else if (secFailClosed) {
-      lines.push('Security clearance: danger-grep 実行不能（fail-closed — security 未検証）');
     } else {
-      lines.push('Security clearance: danger-grep clean（clearance 不要）');
+      lines.push('Security clearance: danger-grep 実行不能（fail-closed — security 未検証）');
     }
+  } else if (cleanSecItems.length > 0) {
+    lines.push(cleanSecItems.length === secSeedItems.length
+      ? `Security: ${cleanSecItems.length} クラスとも danger-grep clean`
+      : `Security: ${cleanSecItems.length} クラス（${cleanSecItems.map((it) => it.danger_class).join(', ')}）は danger-grep clean`);
+  } else if (securityClearance.length === 0) {
+    lines.push('Security clearance: danger-grep clean（clearance 不要）');
   }
 
   const resolvedItems = [
-    ...blockArr.filter(it => it.checked === true).map(it => ({ ...it, _lane: 'blocking' })),
+    ...blockArr.filter(it => it.checked === true && !isDangerGrepCleanSec(it)).map(it => ({ ...it, _lane: 'blocking' })),
     ...advArr.filter(it => it.checked === true && it.escalate !== true && it.dimension !== 'environment').map(it => ({ ...it, _lane: 'advisory' })),
   ];
   const countLines = [];
@@ -2944,6 +2944,7 @@ function buildDevflowSummaryBody({
   lines.push('');
   lines.push('---');
   lines.push('*このコメントは dev-flow により自動生成されました。*');
+  if (typeof gatePolicy === 'string' && gatePolicy.length > 0) lines.push(`<!-- gate_policy: ${gatePolicy} -->`);
   lines.push(`<!-- dev-flow:${mergeTier} -->`);
 
   return lines.join('\n');

@@ -91,6 +91,6 @@ test('[hold-reason-ac-grouping] (B) ac_index の無い / 範囲外の escalate �
     assert.equal(hold.length, 2);
 
     const required = tableRows(body, '### ⚠️ 要対応');
-    assert.ok(required.includes('| ⚠️ 要判断 | 要判断（advisory ESCALATE） | ac | limit-overflow-behavior — 上限超過時に待たせるか落とすかは issue に指定がない | 未解消 | 要判断（preference） |'), `escalate 行は従来どおり: ${required.join('\n')}`);
+    assert.ok(required.includes('| ⚠️ 要判断 | 要判断（advisory ESCALATE） | ac | limit-overflow-behavior — 上限超過時に待たせるか落とすかは issue に指定がない | 未判断 | 要判断（preference） |'), `escalate 行は従来どおり（現状の既定は「未判断」— issue #829）: ${required.join('\n')}`);
   }
 });
