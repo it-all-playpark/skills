@@ -9,6 +9,7 @@
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { makePrIterateSandbox, runWorkflowCapture, assertNoCrash } from './test-helpers/vm-sandbox.mjs';
@@ -90,6 +91,33 @@ test('[ci-verify] 上限超過: wait_ceiling_seconds まで pending → lgtm の
   // 0s → 90s → 180s で判定し、次の 90s を足すと 200s を超えるので打ち切る
   assert.equal(verifyCalls(calls).length, 3);
   assert.equal(result.ci_verify.waited_seconds, 180);
+  assert.equal(calls.filter((c) => c.label.startsWith('fix#')).length, 0);
+});
+
+// label が無い event の run で skipped になった e2e（`if: contains(labels,'full-ci')`）は success の根拠にならない。
+// 実物の check-ci --only の出力をそのまま ci-verify の応答に使い、passed / URL 採取に倒れないことを pin する。
+function checkCiOnly(snapshot, name) {
+  const coreBin = join(here, '..', '..', 'playpark-core', 'bin');
+  const out = execFileSync('bash', [join(here, '..', 'pr-iterate', 'scripts', 'check-ci.sh'), '--checks-data', JSON.stringify(snapshot), '--only', name], {
+    encoding: 'utf8',
+    env: { ...process.env, PATH: `${coreBin}:${process.env.PATH}` },
+  });
+  return JSON.parse(out);
+}
+
+test('[ci-verify] skipped の e2e は passed にならない: check-ci --only の実出力で pending のまま上限 → ci_verify.status=pending・URL なし', async () => {
+  const skipped = checkCiOnly([
+    { name: 'lint', state: 'SUCCESS', bucket: 'pass' },
+    { name: 'e2e', state: 'SKIPPED', bucket: 'skipping', link: E2E_LINK },
+  ], 'e2e');
+  assert.equal(skipped.status, 'pending');
+  assert.deepEqual(skipped.passed_checks, []);
+  const overrides = { 'ci-verify#1.1': skipped };
+  for (let k = 2; k <= 10; k++) overrides[`ci-verify#1.${k}`] = { ...skipped, slept: true };
+  const { result, calls } = await run(overrides, { pr: 5, ci_verify: { ...CI_VERIFY, wait_ceiling_seconds: 200 } });
+  assert.equal(result.status, 'lgtm');
+  assert.equal(result.ci_verify.status, 'pending');
+  assert.deepEqual(JSON.parse(JSON.stringify(result.ci_verify.urls ?? [])), []);
   assert.equal(calls.filter((c) => c.label.startsWith('fix#')).length, 0);
 });
 

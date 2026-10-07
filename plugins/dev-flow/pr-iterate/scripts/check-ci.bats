@@ -184,6 +184,22 @@ SNAPSHOT_WITH_E2E='[{"name":"lint","state":"SUCCESS","bucket":"pass","link":"htt
     echo "$output" | jq -e '.failed_checks[0].link == "https://github.com/o/r/actions/runs/2/job/22"'
 }
 
+@test "filter: --only never counts a skipped check as passed (label-gated e2e skipped on this run -> pending, not in passed_checks)" {
+    run bash "$SCRIPT" --checks-data '[{"name":"lint","state":"SUCCESS","bucket":"pass"},{"name":"e2e","state":"SKIPPED","bucket":"skipping","link":"https://github.com/o/r/actions/runs/2/job/22"}]' --only e2e
+    [ "$status" -eq 0 ]
+    [ "$(echo "$output" | jq -r '.status')" = "pending" ]
+    [ "$(echo "$output" | jq -r '.passed')" = "0" ]
+    [ "$(echo "$output" | jq -r '.pending')" = "1" ]
+    [ "$(echo "$output" | jq -r '.skipped')" = "1" ]
+    echo "$output" | jq -e '.passed_checks == []'
+    echo "$output" | jq -e '.pending_checks == [{"name":"e2e","state":"SKIPPED","link":"https://github.com/o/r/actions/runs/2/job/22"}]'
+
+    # without --only a skipped check still folds into passed (round gate behaviour unchanged)
+    run bash "$SCRIPT" --checks-data '[{"name":"lint","state":"SUCCESS","bucket":"pass"},{"name":"e2e","state":"SKIPPED","bucket":"skipping"}]'
+    [ "$(echo "$output" | jq -r '.status')" = "passed" ]
+    [ "$(echo "$output" | jq -r '.passed')" = "2" ]
+}
+
 @test "filter: --only on a check that is not registered yet -> no_checks" {
     run bash "$SCRIPT" --checks-data '[{"name":"lint","state":"SUCCESS","bucket":"pass"}]' --only e2e
     [ "$status" -eq 0 ]

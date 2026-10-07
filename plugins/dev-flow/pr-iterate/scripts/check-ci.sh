@@ -59,7 +59,8 @@
 # Verdict derivation is a pure function of the `bucket` field in
 # `gh pr checks --json ...`'s output (pass/fail/pending/skipping/cancel);
 # `cancel` is folded into "failed" (fail-closed) and `skipping` is folded
-# into "passed" (+ a separate skipped count). Any bucket value outside this
+# into "passed" (+ a separate skipped count; with --only it is folded into
+# "pending" instead — see compute_verdict). Any bucket value outside this
 # known 5-value vocabulary is also folded into "failed" (fail-closed): if
 # `gh` ever emits a new bucket, an unrecognized value must never fall
 # through the passed/failed/pending partition uncounted and let the
@@ -189,7 +190,9 @@ read_snapshot() {
 # compute_verdict - reduces $CHECKS_JSON to $result_json / $status.
 # bucket field values: pass | fail | pending | skipping | cancel
 # is_passed:  bucket IN("pass", "skipping")   — completed successfully or intentionally skipped
+#             (with --only: bucket == "pass" only)
 # is_pending: bucket == "pending"             — still running
+#             (with --only: bucket IN("pending", "skipping"))
 # is_failed:  bucket IN("fail", "cancel") OR bucket outside the known
 #             5-value vocabulary — failed, cancelled, or unrecognized
 #             (fail-closed: an unknown bucket must count as failed, not
@@ -200,15 +203,20 @@ read_snapshot() {
 # named checks, --exclude drops them); the verdict is then derived from what
 # is left, so a filter that leaves nothing reads as no_checks. `link` is kept
 # on each reported check only when the snapshot carries it.
+# With --only a skipped check is pending, never passed: --only waits on checks
+# whose success is AC evidence, and a check skipped on this run (e.g. an E2E
+# job gated on a label the triggering event did not carry) verified nothing.
+# passed_checks therefore holds bucket "pass" only.
 compute_verdict() {
     result_json=$(printf '%s' "$CHECKS_JSON" | jq -c --argjson only "$ONLY_JSON" --argjson exclude "$EXCLUDE_JSON" '
-      def is_passed:  .bucket | IN("pass", "skipping");
-      def is_pending: .bucket == "pending";
+      def only_mode:  ($only | length) > 0;
+      def is_passed:  if only_mode then .bucket == "pass" else .bucket | IN("pass", "skipping") end;
+      def is_pending: if only_mode then .bucket | IN("pending", "skipping") else .bucket == "pending" end;
       def is_known:   .bucket | IN("pass", "fail", "pending", "skipping", "cancel");
       def is_failed:  (.bucket | IN("fail", "cancel")) or (is_known | not);
       def with_link:  if (.link | type) == "string" and .link != "" then {link} else {} end;
       def passed_checks_field:
-        if ($only | length) > 0 then {passed_checks: [.[] | select(is_passed) | {name, bucket, state} + with_link]} else {} end;
+        if only_mode then {passed_checks: [.[] | select(is_passed) | {name, bucket, state} + with_link]} else {} end;
 
       [.[] | . as $c
            | select((($only | length) == 0) or ($only | any(. == $c.name)))
