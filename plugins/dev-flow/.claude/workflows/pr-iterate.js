@@ -281,14 +281,17 @@ const NESTED = args?.nested == null
 // 持つ run でだけ渡す { label, checks, wait_ceiling_seconds }。checks は review ⇄ fix の各 round の CI 判定から外し
 // （CI_EXCLUDE — E2E 等は round の待機上限 CI_WAIT_CEILING_SECONDS に収まらず ci_pending で終端するため）、LGTM 後に
 // 別ループ（waitCiVerify）で wait_ceiling_seconds まで完了を待つ。単体起動（/pr-iterate）は渡さない。不正形は明示 throw。
+// wait:false は dev-flow が ci の AC を PR 前のローカル実行（local-verify）で決着させた run。checks は round の
+// CI 判定から外したまま、LGTM 後の完了待ちに入らない（返り値 ci_verify.status は 'not_run'）。
 const CI_VERIFY = args?.ci_verify == null
   ? null
   : (() => {
       const v = args.ci_verify
       const validChecks = Array.isArray(v?.checks) && v.checks.length > 0 && v.checks.every((c) => typeof c === 'string' && c.trim() !== '')
       if (typeof v !== 'object' || v === null || typeof v.label !== 'string' || !validChecks
-        || !(Number.isInteger(v.wait_ceiling_seconds) && v.wait_ceiling_seconds > 0)) {
-        throw new Error(`pr-iterate: args.ci_verify が不正形です（label: string / checks: 非空の string[] / wait_ceiling_seconds: 正の整数）: ${JSON.stringify(v)}`)
+        || !(Number.isInteger(v.wait_ceiling_seconds) && v.wait_ceiling_seconds > 0)
+        || (v.wait !== undefined && typeof v.wait !== 'boolean')) {
+        throw new Error(`pr-iterate: args.ci_verify が不正形です（label: string / checks: 非空の string[] / wait_ceiling_seconds: 正の整数 / wait: boolean（省略可））: ${JSON.stringify(v)}`)
       }
       return v
     })()
@@ -1587,7 +1590,7 @@ for (i = 1; i <= MAX; i++) {
       // failure は失敗した job のログを fix に渡して直させ、次 iteration（再 review → round の CI → ここ）でもう一度待つ
       // （再修正は MAX に含める）。success / 上限超過（pending）/ 取得不能（error）は LGTM のまま結果を返り値 ci_verify に載せ、
       // ci の AC の判定（satisfied / ac_ci_pending）は dev-flow が行う。
-      if (CI_VERIFY) {
+      if (CI_VERIFY && CI_VERIFY.wait !== false) {
         const verify = await waitCiVerify(i)
         ciVerifyWaitSeconds += verify.waited
         ciVerifyPolls += verify.polls

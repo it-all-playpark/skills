@@ -114,6 +114,18 @@ test('[ac-actor] ci の AC: CI の結果で ac_results を置き換え、success
   assert.equal(applyCiAcResults(null, actors, null), null);
 });
 
+test('[ac-actor] ci の AC: local-verify の結果（source:local）なら verified_by:local、根拠は log_path と exit code', () => {
+  const actors = ['agent', 'ci'];
+  const evalResults = [{ ac_index: 0, satisfied: true, verified_by: 'inspection', evidence: 'ok' }];
+  const local = { source: 'local', command: 'pnpm test:e2e:local', log_path: '/wt/.devflow-tmp/local-verify/logs/command.log' };
+  const passed = applyCiAcResults(evalResults, actors, { ...local, status: 'passed', exit_code: 0 });
+  assert.deepEqual({ ...passed[1], evidence: undefined }, { ac_index: 1, satisfied: true, verified_by: 'local', ci: true, evidence: undefined });
+  assert.equal(passed[1].evidence, 'ローカル実行（pnpm test:e2e:local）が exit 0: /wt/.devflow-tmp/local-verify/logs/command.log');
+  const failed = applyCiAcResults(evalResults, actors, { ...local, status: 'failed', exit_code: 1 });
+  assert.equal(failed[1].satisfied, false);
+  assert.match(failed[1].evidence, /exit 1（差し戻し上限まで直らなかった）: \/wt\//);
+});
+
 test('[ac-actor] dropCiAcFeedback: ci の AC に結び付いた evaluator feedback を差し戻しから外す', () => {
   const fb = [{ topic: 'a', ac_index: 1 }, { topic: 'b', ac_index: 0 }, { topic: 'c' }];
   assert.deepEqual(dropCiAcFeedback(fb, ['agent', 'ci']).map((f) => f.topic), ['b', 'c']);

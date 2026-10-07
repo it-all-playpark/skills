@@ -13,7 +13,7 @@
  *   expectError — run が throw で終端することを期待する scenario（abort / empty-diff）
  */
 
-import { mergeTierFacts, STANDARD_FILES, shapeOverrides, analyzeArgs } from './vm-sandbox.mjs';
+import { mergeTierFacts, STANDARD_FILES, shapeOverrides, analyzeArgs, devFlowArgs, prerunAnalyze } from './vm-sandbox.mjs';
 
 const UI_FILE = 'src/components/Foo.tsx';
 const VALID_UI_CFG = { base_port: 4100, up: [{ name: 'app', serve: 'npm run dev -- --port {port}', ready: { http: 'http://127.0.0.1:{port}/' } }], env_files: [] };
@@ -211,6 +211,21 @@ export const DEV_FLOW_SCENARIOS = {
   'ac-observational': {
     overrides: { 'ac-observational#1': { results: [{ ac_index: 1, observational: false }] } },
     extra: { args: analyzeArgs(1, { ac_observational: [false, null], ac_observational_evidence: ['正規表現の絞り込みに当たらない', 'Jev が低確信（観測型 p=0.5）'] }) },
+  },
+  // ci の AC + repo の local_verify 宣言 → Validate green 後に local-verify start / wait / stop（dev-runner-haiku。issue #863）
+  'local-verify': {
+    overrides: {
+      'local-verify-start#1': { ok: true, status: 'running', log_path: '/tmp/wt/.devflow-tmp/local-verify/logs/command.log' },
+      'local-verify-wait#1.1': { ok: true, status: 'passed', exit_code: 0, log_path: '/tmp/wt/.devflow-tmp/local-verify/logs/command.log', log_tail: 'ok', db_deleted: true },
+      'local-verify-stop#1': { ok: true, stopped: false, was_running: false, db_deleted: true },
+    },
+    extra: {
+      args: devFlowArgs(1, {
+        analyze: prerunAnalyze({ acceptance_criteria: ['tenant ID を持たない query を拒否する', '`pnpm test:e2e:local` で tenant-isolation.spec.ts が通る'] }),
+        ci_verify: { label: 'full-ci', checks: ['e2e'], commands: ['pnpm test:e2e:local'], wait_ceiling_seconds: 1500 },
+        local_verify: { command: 'pnpm test:e2e:local', db: { engine: 'postgres', version: '17' }, env: 'E2E_EXTERNAL_DATABASE_URL', timeout_seconds: 1500 },
+      }),
+    },
   },
   // cross-repo ラベル + 外部 repo の dirty 成果物 → graceful 終了（issue-labels / cross-repo-artifacts）
   'cross-repo': {

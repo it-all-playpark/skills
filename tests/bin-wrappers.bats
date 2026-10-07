@@ -43,6 +43,7 @@ dev-flow-prerun
 dev-flow-ready-set
 diff-risk-classify
 ensure-worktree-deps
+local-verify
 merge-tier-facts
 pr-iterate-prerun
 pr-push
@@ -84,6 +85,7 @@ target_for() {
         detect-and-install) echo "_shared/scripts/detect-and-install.sh" ;;
         diff-risk-classify) echo "_shared/scripts/diff-risk-classify.sh" ;;
         ensure-worktree-deps) echo "_shared/scripts/ensure-worktree-deps.sh" ;;
+        local-verify) echo "_shared/scripts/local-verify.sh" ;;
         redgreen-verify) echo "_shared/scripts/redgreen-verify.sh" ;;
         merge-tier-facts) echo "_shared/scripts/merge-tier-facts.sh" ;;
         secfloor-classify) echo "_shared/scripts/secfloor-classify.sh" ;;
@@ -141,7 +143,7 @@ skills_target_for() {
     [ "$actual" = "$expected" ]
 }
 
-@test "plugins/dev-flow/bin の entry は対象23本と完全一致する" {
+@test "plugins/dev-flow/bin の entry は対象24本と完全一致する" {
     expected="$(devflow_expected_names)"
     actual="$(/bin/ls -1 "$REPO_ROOT/plugins/dev-flow/bin" | sort)"
     [ "$actual" = "$expected" ]

@@ -69,6 +69,11 @@ const EXPECTED_DEV_FLOW = {
   'ui-verify-smoke*': RW,
   'ui-verify-teardown*': RW,
   'ui-verify-login*': RW,
+  // ci の AC のローカル実行（issue #863）。local-verify は worktree のコマンドを実行するので sandbox 内で動かす
+  // （excludedCommands に登録しない）。起動形は bin/ の bare 名 `local-verify start|wait|stop`
+  'local-verify-start#*': RW,
+  'local-verify-wait#*': RW,
+  'local-verify-stop#*': RW,
   'redgreen': RW,
   'reconcile-sync': RW,
   'journal-log': RW,
@@ -171,6 +176,25 @@ test("[exec-proxy-routing] dev-flow.js write/Skill-tier labels do NOT route to '
     const exp = expectedFor(EXPECTED_DEV_FLOW, c.label);
     if (exp?.agentType !== RW) continue;
     assert.ok(!c.agentType.endsWith('-ro'), `label '${c.label}' は write/Skill tier のはずだが '${c.agentType}'`);
+  }
+});
+
+// local-verify の起動形: bin/ の bare 名 `local-verify` を先頭トークンにした start / wait / stop の単文（issue #863）。
+// worktree の宣言コマンドを実行するので sandbox 内で動かす — excludedCommands に一致させる絶対パス・bash 前置の形にしない。
+test('[exec-proxy-routing] dev-flow.js: local-verify は bare 名 `local-verify start|wait|stop` で dev-runner-haiku から起動する', async () => {
+  const calls = await runDevFlowScenario('local-verify');
+  const lv = calls.filter((c) => c.label.startsWith('local-verify-'));
+  assert.deepEqual(lv.map((c) => c.label), ['local-verify-start#1', 'local-verify-wait#1.1', 'local-verify-stop#1']);
+  const stateDir = "'/tmp/wt/.devflow-tmp/local-verify'";
+  const forms = [
+    `\nlocal-verify start --worktree '/tmp/wt' --state-dir ${stateDir} --wait-sec 300`,
+    `\nlocal-verify wait --state-dir ${stateDir} --wait-sec 480`,
+    `\nlocal-verify stop --state-dir ${stateDir}`,
+  ];
+  for (const [i, c] of lv.entries()) {
+    assert.equal(c.agentType, RW, c.label);
+    // 最終行がコマンドそのもの（先頭トークンが bare 名。bash / cd / 環境変数代入の前置や絶対パスを含まない）
+    assert.ok(c.prompt.endsWith(forms[i]), `${c.label} の起動形が bare 名の単文でない:\n${c.prompt}`);
   }
 });
 

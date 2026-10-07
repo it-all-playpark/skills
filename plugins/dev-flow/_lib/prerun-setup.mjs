@@ -14,6 +14,7 @@
 //   ログ行に要約する純関数。deps.ok:false でも top-level ok には影響しない（fail-open）。
 // hasNextJs: stack.frameworks に 'next' が含まれるかを判定する純関数。Turbopack 規約注入の判定に使う。
 // normalizeCiVerify: prerun の ci_verify（repo の CI 判定の宣言。null は未設定）を検証・正規化する純関数。
+// normalizeLocalVerify: prerun の local_verify（ci の AC をローカル実行で判定する宣言。null は未設定）を検証・正規化する純関数。
 // analyze: prerun の analyze 段の結果（{ok, ...}）。ok:true の中身の whitelist 検証は
 //   buildReqFromContract（_lib/analyze-contract.mjs）が担い、ここでは object / ok boolean /
 //   ok:false のときの reason string だけを fail-closed に検証して verbatim で返す。
@@ -96,6 +97,7 @@ export function validatePrerunSetup(raw, issue) {
   const branch = isNonEmptyString(raw.branch) ? raw.branch : `feature/issue-${issue}`;
   const frameworks = raw.stack.frameworks.filter((f) => typeof f === 'string');
   const ciVerify = normalizeCiVerify(raw.ci_verify);
+  const localVerify = normalizeLocalVerify(raw.local_verify);
 
   return {
     base: raw.base.trim(),
@@ -109,6 +111,7 @@ export function validatePrerunSetup(raw, issue) {
     epoch: raw.epoch,
     epoch_end: raw.epoch_end,
     ci_verify: ciVerify,
+    local_verify: localVerify,
   };
 }
 
@@ -136,6 +139,33 @@ export function normalizeCiVerify(raw) {
     checks: raw.checks.map((c) => c.trim()),
     commands: raw.commands.map((c) => c.trim()),
     wait_ceiling_seconds: raw.wait_ceiling_seconds,
+  };
+}
+
+// local_verify（issue #863）: prerun が ci_verify と同じファイルから読んだ "dev-flow".local_verify。ci の AC を、
+// pg-broker の使い捨て Postgres に向けたローカル実行（local-verify）で PR 前に判定するための宣言。
+//   command: worktree を cwd に実行する検証コマンド（exit 0 で ci の AC を satisfied にする）
+//   db: { engine: 'postgres', version } — pg-broker create --version に渡す
+//   env: database_url を入れて command に渡す環境変数名
+//   timeout_seconds: command の上限（秒）
+// null / 欠落は未設定（ci の AC は CI の check で判定する）。形が不正なら ci_verify と同じく fail-closed で throw する。
+export function normalizeLocalVerify(raw) {
+  if (raw == null) return null;
+  const fail = (key, value) => {
+    throw new Error(`dev-flow: skill-config の "dev-flow".local_verify.${key} が不正（受信: ${stringifyForError(value)}）— { command: string, db: { engine: "postgres", version: string }, env: 環境変数名, timeout_seconds: 正の整数 } に直してから再実行せよ`);
+  };
+  if (!isPlainObject(raw)) fail('(object)', raw);
+  if (!isNonEmptyString(raw.command)) fail('command', raw.command);
+  if (!isPlainObject(raw.db)) fail('db', raw.db);
+  if (raw.db.engine !== 'postgres') fail('db.engine', raw.db.engine);
+  if (!isNonEmptyString(raw.db.version)) fail('db.version', raw.db.version);
+  if (!(typeof raw.env === 'string' && /^[A-Za-z_][A-Za-z0-9_]*$/.test(raw.env))) fail('env', raw.env);
+  if (!(Number.isInteger(raw.timeout_seconds) && raw.timeout_seconds > 0)) fail('timeout_seconds', raw.timeout_seconds);
+  return {
+    command: raw.command.trim(),
+    db: { engine: 'postgres', version: raw.db.version.trim() },
+    env: raw.env,
+    timeout_seconds: raw.timeout_seconds,
   };
 }
 

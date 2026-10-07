@@ -93,6 +93,7 @@ const DF_POST_EVAL_GREEN_FIX = DEV_FLOW_SCENARIOS['post-eval-green-fix'];
 const DF_FINAL_RECHECK = DEV_FLOW_SCENARIOS['final-recheck'];
 const DF_LITE = DEV_FLOW_SCENARIOS['lite'];
 const DF_CROSS_REPO = DEV_FLOW_SCENARIOS['cross-repo'];
+const DF_LOCAL_VERIFY = DEV_FLOW_SCENARIOS['local-verify'];
 // journal-log-abort は top-level abort catch 内でのみ呼ばれる — DEV_FLOW_SCENARIOS['abort'] の
 // トリガ throw message が THROW 定数と同じ 'injected' のため使うと自身の throw が吸収されたのか
 // 元の abort が伝播したのか区別できない。message を変えた専用 base で「元の error message が
@@ -250,6 +251,9 @@ const EXPECTED_DEV_FLOW = {
   'ui-verify-stack-final': { config: DF_FINAL_RECONCILE_UI, policy: 'continue', reason: 'try/catchで吸収しfailed_openへ倒すfail-open経路（Final reconcile再検証）' },
   'ui-verify-smoke-final': { config: DF_FINAL_RECONCILE_UI, policy: 'continue', reason: 'try/catchで吸収しfailed_openへ倒すfail-open経路（Final reconcile再検証）' },
   'ui-verify-teardown-final': { config: DF_FINAL_RECONCILE_UI, policy: 'abort', reason: 'finally節内のbare呼び出し。try/catchの外にあり例外はrunを中断させる（Final reconcile）' },
+  'local-verify-start#1': { config: DF_LOCAL_VERIFY, policy: 'continue', reason: 'failOpenAgent経由。ローカル実行の起動結果が無ければfail-openでCIのcheck待ちに回す' },
+  'local-verify-wait#1.1': { config: DF_LOCAL_VERIFY, policy: 'continue', reason: 'failOpenAgent経由。ローカル実行の結果が無ければfail-openでCIのcheck待ちに回す' },
+  'local-verify-stop#1': { config: DF_LOCAL_VERIFY, policy: 'continue', reason: 'failOpenAgent経由。停止確認の失敗はlogのみでDBの削除はlocal-verifyのtrapに委ねる' },
   'redgreen': { config: DF_REDGREEN, policy: 'abort', reason: 'bare据え置き。red→green実証呼び出し自体の例外は吸収されずrunを中断させる' },
   'reimpl#1:serial:issue-1': { config: DF_COMPLEX_FIX, policy: 'continue', reason: 'failOpenAgent経由。evaluator差し戻しのdev-implementer失敗はnullとしてdropし継続する' },
   'eval#2': { config: DF_COMPLEX_FIX, policy: 'abort', reason: 'need()包み。2周目の評価取得不能のままPRへ進めない致命契約' },

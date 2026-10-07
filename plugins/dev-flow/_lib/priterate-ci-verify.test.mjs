@@ -138,8 +138,23 @@ test('[ci-verify] ci_verify を渡さない run は ci-verify を起動せず、
   assert.ok(!roundCi.prompt.includes('--exclude'), roundCi.prompt);
 });
 
+// dev-flow が ci の AC を PR 前のローカル実行（local-verify。issue #863）で決着させた run は wait:false を渡す。
+test('[ci-verify] wait:false: round の CI 判定から e2e を外したまま、LGTM 後の完了待ちに入らない（ci_verify.status=not_run）', async () => {
+  const { result, calls } = await run({}, { pr: 5, ci_verify: { ...CI_VERIFY, wait: false } });
+  assert.equal(result.status, 'lgtm');
+  assert.equal(verifyCalls(calls).length, 0);
+  assert.equal(result.ci_verify.status, 'not_run');
+  const roundCi = calls.find((c) => c.label === 'ci-check#1');
+  assert.ok(roundCi.prompt.includes(`--exclude 'e2e'`), roundCi.prompt);
+});
+
 test('[ci-verify] args.ci_verify の不正形は明示 throw', async () => {
-  const { ctx } = makePrIterateSandbox({ args: { pr: 5, ci_verify: { label: 'full-ci', checks: [], wait_ceiling_seconds: 1500 } } });
-  const { error } = await runWorkflowCapture(src, ctx, '.claude/workflows/pr-iterate.js');
-  assert.match(String(error?.message), /args\.ci_verify が不正形/);
+  for (const ciVerify of [
+    { label: 'full-ci', checks: [], wait_ceiling_seconds: 1500 },
+    { ...CI_VERIFY, wait: 'false' },
+  ]) {
+    const { ctx } = makePrIterateSandbox({ args: { pr: 5, ci_verify: ciVerify } });
+    const { error } = await runWorkflowCapture(src, ctx, '.claude/workflows/pr-iterate.js');
+    assert.match(String(error?.message), /args\.ci_verify が不正形/, JSON.stringify(ciVerify));
+  }
 });
