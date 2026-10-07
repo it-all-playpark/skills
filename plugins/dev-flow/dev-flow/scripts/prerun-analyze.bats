@@ -155,6 +155,7 @@ curl_calls() { grep -c '^call$' "$CURL_LOG" || true; }
     echo "$output" | jq -e '.acceptance_criteria == ["AC one", "AC two"] and .issue_type == "feat" and .issue_title == "feat: add button"'
     echo "$output" | jq -e '.breaking_change == false and .breaking_keyword_scan == false and .comment_overrides == [] and .comment_conflicts == [] and .uncertain == []'
     echo "$output" | jq -e '(.issue_body | type) == "string" and .issue_body_truncated == false and .comment_count == 0 and .contract == "t1"'
+    echo "$output" | jq -e '.ac_observational == [false, false] and .ac_observational_evidence == ["正規表現の絞り込みに当たらない", "正規表現の絞り込みに当たらない"]'
     [ "$(curl_calls)" -eq 0 ]
 }
 
@@ -533,6 +534,90 @@ FAKE
     [ "$status" -eq 0 ]
     ! grep -q supersecret1 "$CURL_LOG.state"
     grep -q '<redacted>' "$CURL_LOG.state"
+}
+
+# ---- 観測型 AC（issue #859）: 正規表現の絞り込み → Jev ----
+# 対照 AC は _lib/test-helpers/observational-ac-controls.mjs（vitest と共有）を node で読む。
+# Jev の応答は title に埋めたマーカー（質問 id は ac_<n>）で AC ごとに固定する。
+
+CONTROLS="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd)/_lib/test-helpers/observational-ac-controls.mjs"
+
+# controls_json <JS 式>: controls module を m として import し、式の値を JSON で出す
+controls_json() {
+    node --input-type=module -e "const { pathToFileURL } = await import('node:url'); const m = await import(pathToFileURL(process.argv[1]).href); process.stdout.write(JSON.stringify($1))" "$CONTROLS"
+}
+
+# ac_body: stdin の AC 配列（JSON）から受け入れ基準つきの issue 本文を組む
+ac_body() {
+    jq -r '"## 概要\n\n説明。\n\n## 受け入れ基準\n\n" + (map("- [ ] " + .) | join("\n"))'
+}
+
+REG_MARKERS="[[jev:ac_2:0.04]] [[jev:ac_3:0.5]] [[jev:ac_4:0.96]] [[jev:ac_5:0.03]]"
+
+@test "観測型 AC の positive / negative control（issue #844）: 絞り込み + Jev スタブで positive は全て true、negative は全て false" {
+    ACS="$(controls_json '[...Object.values(m.KNOWN_OBSERVATIONAL_ACS), ...Object.values(m.NON_OBSERVATIONAL_ACS)]')"
+    NPOS="$(controls_json 'Object.keys(m.KNOWN_OBSERVATIONAL_ACS).length')"
+    # Jev は positive（AC-1..AC-NPOS）にだけ観測型 p=0.97、それ以外に聞かれたら p=0.03 を返す
+    MARKERS="$(jq -rn --argjson n "$NPOS" '[range(1; $n + 1) | "[[jev:ac_\(.):0.97]]"] | join(" ")') [[jev:noul:0.03]]"
+    fixture "$WORK/i.json" "test: controls ${MARKERS}" "$(printf '%s' "$ACS" | ac_body)"
+    run_analyze "$WORK/i.json"
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e --argjson acs "$ACS" '.acceptance_criteria == $acs'
+    echo "$output" | jq -e --argjson n "$NPOS" '(.ac_observational | length) == ($n + 5) and (.ac_observational[:$n] | all(. == true)) and (.ac_observational[$n:] | all(. == false))'
+    echo "$output" | jq -e --argjson n "$NPOS" 'all(.ac_observational_evidence[:$n][]; test("Jev noul 観測型 p=0.97"))'
+    echo "$output" | jq -e '.uncertain == [] and .analyze_path == "jev"'
+    [ "$(curl_calls)" -eq 1 ]
+}
+
+@test "観測型 AC の回帰（shift-bud）: 絞り込みに当たった AC だけを title と AC 文面で 1 request に聞き、Jev の p で true / false / null に振り分ける" {
+    ACS="$(controls_json 'm.SHIFT_BUD_REGRESSION_ACS.map((r) => r.ac)')"
+    fixture "$WORK/i.json" "test(video): 件数の直書きを整理 ${REG_MARKERS}" "$(printf '%s' "$ACS" | ac_body)"
+    run_analyze "$WORK/i.json" --repo playpark-llc/shift-bud
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e --argjson acs "$ACS" '.acceptance_criteria == $acs'
+    # 本番コード… = 絞り込みに当たらない / ログの件数表示 p=0.04 / エラー件数… 低確信 / 1 件以上記録 p=0.96 / #1605 AC#2 p=0.03
+    echo "$output" | jq -e '.ac_observational == [false, false, null, true, false]'
+    echo "$output" | jq -e '.ac_observational_evidence[0] == "正規表現の絞り込みに当たらない" and (.ac_observational_evidence[1] | test("p=0.04")) and (.ac_observational_evidence[2] | test("低確信") and test("p=0.5") and test("分類 agent")) and (.ac_observational_evidence[3] | test("p=0.96"))'
+    echo "$output" | jq -e '.jev_reasons == ["observational_ac prefilter hit (AC-2, AC-3, AC-4, AC-5)"] and .analyze_path == "jev"'
+    echo "$output" | jq -e '.uncertain == [] and .comment_conflicts == []' # null は needs_clarification にしない
+    [ "$(curl_calls)" -eq 1 ]
+    jq -e '(keys | sort) == ["ac_2", "ac_3", "ac_4", "ac_5"] and all(.[]; .type == "noul")' "$CURL_LOG.questions"
+    jq -e '.ac_5.instructions | test("AC-5") and test("コードとテストを読むだけでは確かめられず、実行した結果・ログ・計測を観測しないと確かめられないか") and test("テストコードやソースコード自体の書き方・構成について述べているなら no")' "$CURL_LOG.questions"
+    # state は title と当たった AC の文面だけ（当たらない AC と本文は送らない）
+    grep -q 'AC-5: 件数の直書きを、元データ（GUIDE_SLUGS 等）の長さとの比較か、件数に依存しない不変条件に置き換える' "$CURL_LOG.state"
+    ! grep -q '本番コードは変更しない' "$CURL_LOG.state" || false
+    ! grep -q '説明。' "$CURL_LOG.state" || false
+}
+
+@test "観測型 AC: Jev が応答しない（bg セッション等）-> 当たった AC は null（uncertain には積まない）、理由を根拠に載せる" {
+    ACS="$(controls_json 'm.SHIFT_BUD_REGRESSION_ACS.map((r) => r.ac)')"
+    fixture "$WORK/i.json" "test(video): 件数の直書きを整理" "$(printf '%s' "$ACS" | ac_body)"
+    FAKE_CURL_EXIT=28 run_analyze "$WORK/i.json"
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.ac_observational == [false, null, null, null, null] and .uncertain == []'
+    echo "$output" | jq -e 'all(.ac_observational_evidence[1:][]; test("Jev 応答なし") and test("タイムアウト") and test("分類 agent"))'
+}
+
+@test "観測型 AC: DEVFLOW_JEV_DISABLE=1 -> Jev を呼ばず当たった AC は null" {
+    ACS="$(controls_json 'm.SHIFT_BUD_REGRESSION_ACS.map((r) => r.ac)')"
+    fixture "$WORK/i.json" "test(video): 件数の直書きを整理 ${REG_MARKERS}" "$(printf '%s' "$ACS" | ac_body)"
+    DEVFLOW_JEV_DISABLE=1 run_analyze "$WORK/i.json"
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.ac_observational == [false, null, null, null, null] and .uncertain == []'
+    echo "$output" | jq -e 'all(.ac_observational_evidence[1:][]; test("DEVFLOW_JEV_DISABLE=1"))'
+    [ "$(curl_calls)" -eq 0 ]
+}
+
+@test "観測型 AC: 正規表現の絞り込みが実行できない（node 失敗）-> 全 AC を null にして分類 agent に回す" {
+    ACS="$(controls_json 'm.SHIFT_BUD_REGRESSION_ACS.map((r) => r.ac)')"
+    fixture "$WORK/i.json" "test(video): 件数の直書きを整理 ${REG_MARKERS}" "$(printf '%s' "$ACS" | ac_body)"
+    printf '#!/usr/bin/env bash\necho "node: broken" >&2\nexit 1\n' >"$WORK/bin/node"
+    chmod +x "$WORK/bin/node"
+    run_analyze "$WORK/i.json"
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.ok == true and .ac_observational == [null, null, null, null, null] and .uncertain == []'
+    echo "$output" | jq -e 'all(.ac_observational_evidence[]; test("正規表現の絞り込みを実行できない") and test("node: broken"))'
+    [ "$(curl_calls)" -eq 0 ]
 }
 
 # ---- 引数 ----

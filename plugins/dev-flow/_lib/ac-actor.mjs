@@ -36,6 +36,12 @@
 // Evaluate / Final reconcile は test の red→green 実証で deterministic 昇格したときだけ checked にし、それ以外は
 // 差し戻さず ac_human_pending へ回す（merge 後の実 run・計測が要る AC は run 内で証跡を作れず、差し戻しても
 // AGENT_AC_REIMPL_MAX を使い切ってから HOLD になるだけのため）。
+// 判定は 2 段構え（issue #859）: prerun-analyze.sh が正規表現（isObservationalAc）で絞り込み、当たった AC だけを
+// Jev に聞いて analyze.ac_observational（true / false / null）を出す。analyze ゲートは null の AC だけを AC の文面と
+// issue のタイトルだけを読む分類 agent に 1 回で渡し、それでも決まらなければ true にする（resolveAcObservational）。
+// 正規表現は絞り込み専用で拾いすぎてよい（語の追加で誤判定を直す方式は語彙の違う repo で収束しないため）。
+// 分類 agent に diff・evaluator の結果を渡さないのは、観測型の仕組みが evaluator のコード読みだけで達成扱いになるのを
+// 止めるためのもので、実装や評価を見た判定にすると抜け道になるため（incentive-structural）。
 //
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
@@ -157,8 +163,8 @@ export function classifyAcScope(ac, opts = {}) {
   return EXPLICIT_HUMAN_RE.test(String(ac ?? '').replace(INLINE_CODE_RE, ' ')) ? 'external' : 'mixed'
 }
 
-// 観測型 AC の分類規則（v2）。手順: inline code を除く → 鉤括弧の引用「…」を除く → CLAUSE_SEP_RE で節に分ける →
-// 1 節でも発火すれば観測型。
+// 観測型 AC の絞り込み規則（v2。当たった AC は prerun で Jev に回る）。手順: inline code を除く → 鉤括弧の引用「…」を除く →
+// CLAUSE_SEP_RE で節に分ける → 1 節でも発火すれば絞り込みに当たる。
 // 強い語: OBS_STRONG_NEG でなければ、否定・言及の節でも発火（「実測 / 計測」は動詞形だけ。実測値・実測表では発火しない）
 const OBS_STRONG_RE = /(実測|計測)(する|し|で|でき|を行|に基づ|[）)]|$)|A\/B\s*(を|で|テスト|比較)|比較表|(実|修正後の|直近の?)\s*(dev-flow\s*)?run\s*([（(][^）)]*[）)])?\s*(で|において|の)|1\s*件以上\s*(現れ|記録|残|出)/i
 const OBS_STRONG_NEG_RE = /(実測|計測|A\/B)\S{0,4}(しない|不要|しなくてよい)/
@@ -168,7 +174,7 @@ const OBS_NEG_RE = /しない|せず|[てで]いない|ない(こと|$)|載せ�
 const OBS_MENTION_EXTRA_RE = /を\s*(削除|外す|撤去|消す)|(削除|撤去)する|記載|明記|整合|一致|canonical|化され|扱い|キー名|識別子|表記/
 const QUOTE_RE = /「[^」]*」/g
 
-// AC が観測型（実行して出力・記録を観測しないと確かめられない）か。
+// AC が観測型（実行して出力・記録を観測しないと確かめられない）の候補か（正規表現の絞り込み）。
 export function isObservationalAc(ac) {
   const text = String(ac ?? '').replace(INLINE_CODE_RE, ' ').replace(QUOTE_RE, ' ')
   return text.split(CLAUSE_SEP_RE).some((clause) => {
@@ -183,15 +189,54 @@ export function acObservationalOf(acceptanceCriteria) {
   return (Array.isArray(acceptanceCriteria) ? acceptanceCriteria : []).map((ac) => isObservationalAc(ac))
 }
 
+// prerun が確定できなかった（null の）AC の index（0 始まり）。分類 agent に渡すのはこの AC だけ。
+export function pendingAcObservationalIndexes(acObservational) {
+  const out = []
+  const list = Array.isArray(acObservational) ? acObservational : []
+  for (let i = 0; i < list.length; i++) if (typeof list[i] !== 'boolean') out.push(i)
+  return out
+}
+
+// 分類 agent の prompt。材料は issue のタイトルと null の AC の文面だけ（diff・evaluator の結果・issue 本文は渡さない）。
+// 判定基準は prerun-analyze.sh の Jev 質問と同じ。
+export function acObservationalPrompt(issueTitle, acceptanceCriteria, indexes) {
+  const acs = Array.isArray(acceptanceCriteria) ? acceptanceCriteria : []
+  const items = (Array.isArray(indexes) ? indexes : []).map((i) => ({ ac_index: i, ac: String(acs[i] ?? '') }))
+  return '次の issue の受け入れ基準（AC）それぞれが観測型かを判定せよ。判定材料は下に示す issue のタイトルと AC の文面だけ。'
+    + 'ツールは使わず、ファイル・diff・issue 本文・コマンドの出力を読みに行かない。\n'
+    + '観測型（observational:true）: コードとテストを読むだけでは確かめられず、実行した結果・ログ・計測を観測しないと確かめられない AC。'
+    + 'AC がテストコードやソースコード自体の書き方・構成について述べているなら false。'
+    + '文面だけでは決められない AC は observational:null を返せ（観測型として扱われる）。\n'
+    + `issue のタイトル: ${JSON.stringify(String(issueTitle ?? ''))}\n`
+    + `AC（ac_index は 0 始まり）: ${JSON.stringify(items)}\n`
+    + '上の全 AC について 1 件ずつ {"results":[{"ac_index":<上の ac_index>,"observational":true|false|null}]} の形で返せ。\n'
+}
+
+// prerun の ac_observational（true / false / null）に分類 agent の応答を重ねて AC ごとの boolean に確定する。
+// prerun が確定した値はそのまま使い、null の AC は agent の boolean を採る。agent が判定できない（null 応答・
+// 応答なし・該当 index なし）AC は true（観測型）に倒す — 観測型の誤判定は人手 AC 待ちの HOLD で止まるだけだが、
+// 非観測型への誤判定は inspection の達成扱いを素通しするため。
+export function resolveAcObservational(acObservational, agentResult) {
+  const results = Array.isArray(agentResult?.results) ? agentResult.results : []
+  return (Array.isArray(acObservational) ? acObservational : []).map((v, i) => {
+    if (typeof v === 'boolean') return v
+    const r = results.find((x) => x && x.ac_index === i)
+    return typeof r?.observational === 'boolean' ? r.observational : true
+  })
+}
+
+// opts.observational は analyze ゲートで確定した AC の観測型判定（boolean）。true なら human。
 export function classifyAcActor(ac, opts = {}) {
   const text = String(ac ?? '').replace(INLINE_CODE_RE, ' ')
   if (HUMAN_AC_PATTERNS.some((re) => re.test(text))) return 'human'
   if (classifyAcScope(ac, opts) === 'external') return 'human'
-  return isObservationalAc(ac) ? 'human' : 'agent'
+  return opts?.observational === true ? 'human' : 'agent'
 }
 
+// opts.observational は AC ごとの観測型判定の配列（req.ac_observational）。
 export function acActorsOf(acceptanceCriteria, opts = {}) {
-  return (Array.isArray(acceptanceCriteria) ? acceptanceCriteria : []).map((ac) => classifyAcActor(ac, opts))
+  const obs = Array.isArray(opts?.observational) ? opts.observational : []
+  return (Array.isArray(acceptanceCriteria) ? acceptanceCriteria : []).map((ac, i) => classifyAcActor(ac, { repo: opts?.repo, observational: obs[i] === true }))
 }
 
 // ledger の AC-<n> item のうち、red→green 実証で deterministic 昇格して checked の AC の index（0 始まり）。

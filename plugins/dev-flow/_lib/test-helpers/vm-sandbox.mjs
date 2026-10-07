@@ -67,10 +67,13 @@ export const JS_GLOBALS = {
  * dev-flow-prerun の analyze 段の出力（args.setup.analyze）を返す。
  * 既定は contract 経路（AC ['a','b'] / issue_type 'fix' / breaking なし / comment なし / uncertain 空）で、
  * dev-flow.js の Analyze phase は agent を spawn せずゲートを通過する。
+ * ac_observational / ac_observational_evidence は overrides に無ければ AC 数に合わせて全 AC false
+ * （prerun で非観測型と確定 → 観測型の分類 agent も spawn しない）にする。
  *
  * @param {Record<string, unknown>} [overrides={}]
  */
 export function prerunAnalyze(overrides = {}) {
+  const acs = Array.isArray(overrides.acceptance_criteria) ? overrides.acceptance_criteria : ['a', 'b'];
   return {
     ok: true, analyze_path: 'contract', jev_reasons: [],
     issue_title: 'stub-issue-title', issue_type: 'fix', acceptance_criteria: ['a', 'b'],
@@ -78,6 +81,7 @@ export function prerunAnalyze(overrides = {}) {
     issue_body: 'stub-issue-body', issue_body_truncated: false,
     breaking_keyword_scan: false, breaking_change: false, breaking_evidence: '',
     comment_count: 0, comment_overrides: [], comment_conflicts: [], uncertain: [], blockers: [],
+    ac_observational: acs.map(() => false), ac_observational_evidence: acs.map(() => 'stub: 正規表現の絞り込みに当たらない'),
     contract: 't1', ac_heading_near_miss: [], duration_seconds: 5,
     ...overrides,
   };

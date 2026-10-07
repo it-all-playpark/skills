@@ -84,6 +84,8 @@ const EXPECTED_DEV_FLOW = {
   'ac-checkbox-sync': RW,
   // 判断寄り（Analyze のゲート後にだけ 1 spawn。通常経路の Analyze spawn は 0。issue #690）
   'analyze-clarify#*': RUNNER,
+  // 判断寄り（prerun で観測型判定が確定しない AC があるときだけ analyze ゲート通過後に 1 spawn。issue #859）
+  'ac-observational#*': RUNNER,
 };
 
 const EXPECTED_PR_ITERATE = {

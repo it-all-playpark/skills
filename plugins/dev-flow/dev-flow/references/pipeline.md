@@ -19,6 +19,8 @@ phase は持たない — 純関数の検証とゲート判定だけで所要 �
 `args.setup.analyze` の whitelist 検証と 4 条件ゲート（AC 空 / comment_conflicts 非空 / uncertain 非空 /
 repo 内外が混ざった AC）のみで通常経路の subagent 起動は 0（ゲートが引いたときだけ sonnet を 1 spawn して人間向け
 missing_context を生成し needs_clarification で終端する。失敗 telemetry の phase 帰属は `Setup`）。
+例外はゲート通過後の観測型判定で、`args.setup.analyze.ac_observational` に null（Jev 低確信・Jev に届かない）の AC が
+あるときだけ、その AC を AC の文面と issue タイトルだけを読む分類 agent（`ac-observational#N`、dev-runner）に 1 回で渡す。
 repo 内外の混在は `_lib/ac-actor.mjs` の `classifyAcScope` が決定論で判定する: repo 外の目印（`dotfiles` /
 `excludedCommands` / `settings.json` / `~/.claude` / 別 repo・他 repo / 対象 repo 以外の `owner/repo#N`・
 `github.com/owner/repo`）と repo 内の目印（テスト / README / rules / repo 内パス等）が 1 つの AC に両方あれば
@@ -137,7 +139,11 @@ repo 外の作業だけを書いた AC（`classifyAcScope` が `external`）は 
 ledger 収束だけでは未達 AC がループを回さない。そこで agent AC の `satisfied:false` は gate_policy に依らず
 `fix_feedback`（`topic: "AC-<n> 未達"`）付きで `dev-implementer` へ差し戻す（agent AC を理由にした差し戻しは全 shape で
 `AGENT_AC_REIMPL_MAX` 回まで）。human AC は worktree 外の作業なので差し戻さない。
-観測型 AC（`isObservationalAc`: 実行して出力・記録を観測しないと確かめられない AC。actor は `human`）は、Evaluate の
+観測型 AC（実行して出力・記録を観測しないと確かめられない AC。actor は `human`）は 2 段構えで決める: prerun-analyze.sh が
+正規表現（`isObservationalAc`。絞り込み専用で拾いすぎてよい）に当たった AC だけを Jev に noul で聞いて
+`analyze.ac_observational`（true / false / null）を出し、analyze ゲートが null の AC だけを AC 文面と issue タイトルだけを読む
+分類 agent に渡し、それでも決まらなければ true にする（`resolveAcObservational`。diff・evaluator の結果は渡さない —
+evaluator のコード読みで達成扱いになるのを止める仕組みなので、実装を見た判定は抜け道になる）。観測型 AC は、Evaluate の
 redgreen-verify で red→green を実証して deterministic 昇格したときだけ checked にする。evaluator・final AC reconcile の
 inspection による `satisfied:true` は達成扱いにせず（`demoteUnprovenObservationalAc`）、差し戻さずに人手 AC 待ちへ回す。Merge tier の HOLD 理由は
 `ac_agent_unsatisfied`（差し戻し上限後も未達 = ループの取りこぼし）と `ac_human_pending`（人手 AC 待ち）に分ける。
