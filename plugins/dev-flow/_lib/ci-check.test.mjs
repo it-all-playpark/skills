@@ -21,7 +21,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { CI_POLL_SECONDS, CI_WAIT_CEILING_SECONDS, CI_MAX_POLLS, CI_TURN_MARGIN, CI_STATUS, CI_WAIT_CHECK, ciCheckPrompt, ciWaitCheckPrompt, ciFetchSteps, ciHeadRejectReason, isFullCommitSha, ciStatusFromCounts, ciEffectiveStatus } from './ci-check.mjs';
+import { CI_POLL_SECONDS, CI_WAIT_CEILING_SECONDS, CI_MAX_POLLS, CI_TURN_MARGIN, CI_STATUS, CI_WAIT_CHECK, ciCheckPrompt, ciWaitCheckPrompt, ciFetchSteps, ciHeadRejectReason, isFullCommitSha, ciStatusFromCounts, ciEffectiveStatus, CI_VERIFY_POLL_SECONDS, CI_VERIFY_CHECK, ciVerifyPrompt, ciVerifyVerdict } from './ci-check.mjs';
 
 // ============================================================
 // 定数
@@ -325,4 +325,34 @@ test('[ci-check] isFullCommitSha は 40 桁 hex だけを真にする', () => {
   assert.equal(isFullCommitSha('g'.repeat(40)), false);
   assert.equal(isFullCommitSha(null), false);
   assert.equal(isFullCommitSha(undefined), false);
+});
+
+// ============================================================
+// ci-verify（ci_verify.checks の LGTM 後の待ち。issue #861）
+// ============================================================
+
+test('[ci-check] exclude は check-ci に --exclude で渡し、空なら prompt を変えない', () => {
+  assert.equal(ciCheckPrompt({ pr: 7, repo: 'o/n', exclude: [] }), ciCheckPrompt({ pr: 7, repo: 'o/n' }));
+  assert.equal(ciWaitCheckPrompt({ pr: 7, repo: 'o/n', seconds: 45, exclude: [] }), ciWaitCheckPrompt({ pr: 7, repo: 'o/n', seconds: 45 }));
+  assert.ok(ciCheckPrompt({ pr: 7, repo: 'o/n', exclude: ['e2e', "it's"] }).includes(`--exclude 'e2e' --exclude 'it'\\''s'\``));
+});
+
+test('[ci-check] ci-verify prompt の Bash 手順は（待つときだけ ci-wait）/ gh / check-ci --only で、turn 会計は ci-wait-check と同じ', () => {
+  const bashOf = (p) => (p.slice(p.indexOf('## Steps'), p.indexOf('## Output format')).match(/^\d+\. `[^`]+`/gm) ?? []).map((s) => s.replace(/^\d+\. `/, '').split(' ')[0]);
+  const waited = ciVerifyPrompt({ pr: 7, repo: 'o/n', checks: ['e2e'], seconds: CI_VERIFY_POLL_SECONDS });
+  assert.deepEqual(bashOf(waited), ['ci-wait', 'gh', 'check-ci']);
+  assert.deepEqual(bashOf(ciVerifyPrompt({ pr: 7, repo: 'o/n', checks: ['e2e'], seconds: 0 })), ['gh', 'check-ci']);
+  assert.ok(waited.includes('`gh pr checks 7 --repo o/n --json name,state,bucket,link`') && waited.includes(`--only 'e2e'`), waited);
+  assert.ok(ciWaitCheckTurns(CI_TURN_MARGIN) <= readMaxTurns());
+  // ci-wait は Bash tool の既定 timeout（120 秒）に収まる長さ
+  assert.ok(CI_VERIFY_POLL_SECONDS < 120);
+  assert.ok(CI_VERIFY_CHECK.required.every((k) => CI_STATUS.required.includes(k)));
+});
+
+test('[ci-check] ciVerifyVerdict: no_checks（label 直後で job 未登録）は pending、passed / failed / error はそのまま', () => {
+  assert.equal(ciVerifyVerdict({ status: 'no_checks' }), 'pending');
+  assert.equal(ciVerifyVerdict({ status: 'pending' }), 'pending');
+  assert.equal(ciVerifyVerdict({ status: 'passed' }), 'passed');
+  assert.equal(ciVerifyVerdict({ status: 'failed' }), 'failed');
+  assert.equal(ciVerifyVerdict({ status: 'error' }), 'error');
 });

@@ -98,7 +98,7 @@ test('[agent-ac-reimpl] (A-final) fixes_applied>0 の Final AC reconcile にも 
   assert.ok(fac[0].prompt.includes(DECISION), `final-ac-reconcile prompt に architecture_decisions: ${fac[0].prompt}`);
   assert.equal(result?.final_ac_reconcile, 'reverified');
   assert.equal(result?.merge_tier, 'REVIEW', `reverified で AC を満たすので HOLD しない: ${JSON.stringify(result?.merge_tier_reasons)}`);
-  assert.deepEqual(plain(result.final_unsatisfied_ac_by_actor), { agent: [], human: [] });
+  assert.deepEqual(plain(result.final_unsatisfied_ac_by_actor), { agent: [], human: [], ci: [] });
 });
 
 test('[agent-ac-reimpl] (A-ctrl) 全 AC 満たせば standard は evaluator 1 回・差し戻しなしで、AC 起因の HOLD を出さない（REVIEW）', async () => {
@@ -114,7 +114,7 @@ test('[agent-ac-reimpl] (B) （人手）の AC だけが未達 → 差し戻さ�
   assert.equal(evalCalls(calls).length, 1);
   assert.equal(result?.merge_tier, 'HOLD');
   assert.deepEqual(plain(result.merge_tier_hold_reasons.map((r) => r.code)), ['ac_human_pending']);
-  assert.deepEqual(plain(result.final_unsatisfied_ac_by_actor), { agent: [], human: [1] });
+  assert.deepEqual(plain(result.final_unsatisfied_ac_by_actor), { agent: [], human: [1], ci: [] });
 });
 
 test('[agent-ac-reimpl] (B2) repo 外の作業だけを書いた AC が未達 → 人手 AC として差し戻さず HOLD（エージェント AC 未達に数えない）', async () => {
@@ -123,7 +123,7 @@ test('[agent-ac-reimpl] (B2) repo 外の作業だけを書いた AC が未達 �
   assert.equal(reimplCalls(calls).length, 0, `repo 外の AC で差し戻した: ${calls.map((c) => c.label).join(', ')}`);
   assert.equal(result?.merge_tier, 'HOLD');
   assert.deepEqual(plain(result.merge_tier_hold_reasons.map((r) => r.code)), ['ac_human_pending']);
-  assert.deepEqual(plain(result.final_unsatisfied_ac_by_actor), { agent: [], human: [1] });
+  assert.deepEqual(plain(result.final_unsatisfied_ac_by_actor), { agent: [], human: [1], ci: [] });
 });
 
 test('[agent-ac-reimpl] (C) agent AC が差し戻し上限後も未達 → HOLD 理由は取りこぼし（ac_agent_unsatisfied）で人手待ちと区別できる', async () => {
@@ -140,5 +140,5 @@ test('[agent-ac-reimpl] (C) agent AC が差し戻し上限後も未達 → HOLD 
     Array.isArray(result.merge_tier_reasons) && result.merge_tier_reasons.some((x) => /AC 未達/.test(x)),
     `merge_tier_reasons に 'AC 未達' が含まれるべき: ${JSON.stringify(result.merge_tier_reasons)}`,
   );
-  assert.deepEqual(plain(result.final_unsatisfied_ac_by_actor), { agent: [0], human: [1] });
+  assert.deepEqual(plain(result.final_unsatisfied_ac_by_actor), { agent: [0], human: [1], ci: [] });
 });

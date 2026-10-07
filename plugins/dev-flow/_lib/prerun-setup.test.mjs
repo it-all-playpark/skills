@@ -9,6 +9,7 @@ import {
   validatePrerunSetup,
   summarizePrerunDeps,
   hasNextJs,
+  normalizeCiVerify,
 } from './prerun-setup.mjs';
 
 function validRaw(overrides = {}) {
@@ -223,6 +224,26 @@ test('summarizePrerunDeps: ok:true note空は implNote null, logLine に Setup(d
   assert.equal(result.outcome, 'ok');
   assert.equal(result.implNote, null);
   assert.match(result.logLine, /Setup\(deps\)/);
+});
+
+// ---- ci_verify（issue #861）: repo の "dev-flow".ci_verify を検証・正規化する ----
+
+const CI_VERIFY = { label: 'full-ci', checks: ['e2e'], commands: ['pnpm test:e2e:local', 'pnpm test:e2e'], wait_ceiling_seconds: 1500 };
+
+test('validatePrerunSetup: ci_verify は正規化して返し、null / 欠落は未設定（null）', () => {
+  assert.deepEqual(validatePrerunSetup(validRaw({ ci_verify: CI_VERIFY }), 641).ci_verify, CI_VERIFY);
+  assert.equal(validatePrerunSetup(validRaw({ ci_verify: null }), 641).ci_verify, null);
+  assert.equal(validatePrerunSetup(validRaw(), 641).ci_verify, null);
+  assert.deepEqual(normalizeCiVerify({ ...CI_VERIFY, label: ' full-ci ', checks: [' e2e '] }).checks, ['e2e']);
+});
+
+test('validatePrerunSetup: ci_verify の形が不正なら fail-closed で throw（黙って無視しない）', () => {
+  for (const [key, value] of [
+    ['label', ''], ['checks', []], ['checks', ['e2e', '']], ['commands', 'pnpm test:e2e'], ['wait_ceiling_seconds', 0], ['wait_ceiling_seconds', '1500'],
+  ]) {
+    assert.throws(() => validatePrerunSetup(validRaw({ ci_verify: { ...CI_VERIFY, [key]: value } }), 641), new RegExp(`ci_verify\\.${key}`), `${key}=${JSON.stringify(value)}`);
+  }
+  assert.throws(() => validatePrerunSetup(validRaw({ ci_verify: ['full-ci'] }), 641), /ci_verify/);
 });
 
 test('summarizePrerunDeps: ok:true note非空は logLine に note を含む', () => {

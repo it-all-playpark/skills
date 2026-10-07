@@ -1,8 +1,8 @@
 // _lib/ac-actor.test.mjs
-// AC の actor 分類（agent / human）と、ac_results の actor 別集計・差し戻し用 fix_feedback の pin（issue #747）。
+// AC の actor 分類（agent / human / ci）と、ac_results の actor 別集計・差し戻し用 fix_feedback の pin（issue #747 / #861）。
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
-import { AC_ACTORS, AC_SCOPES, AGENT_AC_REIMPL_MAX, classifyAcActor, acActorsOf, unsatisfiedAcByActor, agentAcFeedback, classifyAcScope, mixedScopeAcReasons, isObservationalAc, acObservationalOf, deterministicAcIndexes, demoteUnprovenObservationalAc, pendingAcObservationalIndexes, resolveAcObservational, acObservationalPrompt } from './ac-actor.mjs';
+import { AC_ACTORS, AC_SCOPES, AGENT_AC_REIMPL_MAX, classifyAcActor, acActorsOf, unsatisfiedAcByActor, agentAcFeedback, matchesCiVerify, ciAcIndexes, applyCiAcResults, unsatisfiedCiAcIndexes, dropCiAcFeedback, classifyAcScope, mixedScopeAcReasons, isObservationalAc, acObservationalOf, deterministicAcIndexes, demoteUnprovenObservationalAc, pendingAcObservationalIndexes, resolveAcObservational, acObservationalPrompt } from './ac-actor.mjs';
 import { KNOWN_OBSERVATIONAL_ACS } from './test-helpers/observational-ac-controls.mjs';
 
 // repo 内外が混ざった AC（テスト・README・rules の削除と dotfiles の excludedCommands の変更を 1 つに書いたもの）
@@ -37,7 +37,7 @@ test('[ac-actor] inline code で引用しただけの `（人手）` は human �
 test('[ac-actor] 空・非文字列は agent（判定できない AC は差し戻し側に倒す）', () => {
   assert.equal(classifyAcActor(''), 'agent');
   assert.equal(classifyAcActor(null), 'agent');
-  assert.deepEqual(AC_ACTORS, ['agent', 'human']);
+  assert.deepEqual(AC_ACTORS, ['agent', 'human', 'ci']);
   assert.ok(Number.isInteger(AGENT_AC_REIMPL_MAX) && AGENT_AC_REIMPL_MAX >= 1);
 });
 
@@ -57,8 +57,76 @@ test('[ac-actor] unsatisfiedAcByActor: satisfied:false だけを actor 別に数
     { ac_index: '1', satisfied: false },
     null,
   ], actors);
-  assert.deepEqual(r, { agent: [0], human: [1] });
-  assert.deepEqual(unsatisfiedAcByActor(null, actors), { agent: [], human: [] });
+  assert.deepEqual(r, { agent: [0], human: [1], ci: [] });
+  assert.deepEqual(unsatisfiedAcByActor(null, actors), { agent: [], human: [], ci: [] });
+});
+
+// ---- issue #861: ci の AC（repo の "dev-flow".ci_verify で CI の check が判定する AC） ----
+
+// shift-bud issue #1613 の AC#4（E2E は sandbox 内で DB が起動せず実行できない）
+const SHIFT_BUD_1613_AC4 = '`pnpm test:e2e:local`（または full-ci ラベルの CI）で `tenant-isolation.spec.ts` が通ることを確認する';
+const CI_VERIFY = { label: 'full-ci', commands: ['pnpm test:e2e:local'] };
+
+test('[ac-actor] ci_verify の commands を inline code で書いた / label に言及した AC は ci、ci_verify が無ければ従来どおり', () => {
+  assert.equal(classifyAcActor(SHIFT_BUD_1613_AC4, { ciVerify: CI_VERIFY }), 'ci');
+  assert.equal(classifyAcActor(SHIFT_BUD_1613_AC4), 'agent');
+  assert.equal(classifyAcActor(SHIFT_BUD_1613_AC4, { ciVerify: null }), 'agent');
+  // commands だけ・label だけでも ci（どちらか一方に当たれば足りる）
+  assert.equal(classifyAcActor('`pnpm test:e2e:local` で spec が通る', { ciVerify: { label: 'other', commands: ['pnpm test:e2e:local'] } }), 'ci');
+  assert.equal(classifyAcActor('`pnpm test:e2e:local --grep tenant` が通る', { ciVerify: CI_VERIFY }), 'ci');
+  assert.equal(classifyAcActor('full-ci ラベルの CI で通る', { ciVerify: { label: 'full-ci', commands: [] } }), 'ci');
+  assert.deepEqual(acActorsOf(['a', SHIFT_BUD_1613_AC4], { ciVerify: CI_VERIFY }), ['agent', 'ci']);
+  assert.deepEqual(acActorsOf(['a', SHIFT_BUD_1613_AC4]), ['agent', 'agent']);
+});
+
+test('[ac-actor] negative control: vitest のテスト追加・`pnpm test` が通る AC は ci_verify があっても agent', () => {
+  for (const ac of [
+    'vitest で tenant 分離のテストを追加する',
+    '`pnpm test` が通る',
+    '`pnpm test:e2e:locale` が通る',
+    'full-ci-nightly の設定は変えない',
+  ]) assert.equal(classifyAcActor(ac, { ciVerify: CI_VERIFY }), 'agent', ac);
+  assert.equal(matchesCiVerify('`pnpm test` が通る', CI_VERIFY), false);
+});
+
+test('[ac-actor] （人手）・staging の明示は ci より優先し、ci は観測型より優先する', () => {
+  assert.equal(classifyAcActor('staging で `pnpm test:e2e:local` を流す', { ciVerify: CI_VERIFY }), 'human');
+  assert.equal(classifyAcActor(SHIFT_BUD_1613_AC4, { ciVerify: CI_VERIFY, observational: true }), 'ci');
+});
+
+test('[ac-actor] ci の AC: CI の結果で ac_results を置き換え、success だけ satisfied。未達は ci に数え agent / human に数えない', () => {
+  const actors = ['agent', 'ci'];
+  assert.deepEqual(ciAcIndexes(actors), [1]);
+  const evalResults = [
+    { ac_index: 0, satisfied: true, verified_by: 'inspection', evidence: 'ok' },
+    { ac_index: 1, satisfied: true, verified_by: 'inspection', evidence: 'evaluator の判定は使わない' },
+  ];
+  const pending = applyCiAcResults(evalResults, actors, null);
+  assert.equal(pending[1].satisfied, false);
+  assert.equal(pending[1].ci, true);
+  assert.equal(pending[1].verified_by, 'ci');
+  assert.deepEqual(unsatisfiedAcByActor(pending, actors), { agent: [], human: [], ci: [1] });
+  const passed = applyCiAcResults(evalResults, actors, { status: 'passed', checks: ['e2e'], urls: ['https://github.com/o/r/actions/runs/2/job/22'] });
+  assert.equal(passed[1].satisfied, true);
+  assert.match(passed[1].evidence, /e2e.*success.*runs\/2\/job\/22/);
+  assert.deepEqual(unsatisfiedCiAcIndexes(actors, { status: 'passed' }), []);
+  for (const status of ['pending', 'failed', 'error', 'not_run']) assert.deepEqual(unsatisfiedCiAcIndexes(actors, { status }), [1], status);
+  assert.equal(applyCiAcResults(null, actors, null), null);
+});
+
+test('[ac-actor] dropCiAcFeedback: ci の AC に結び付いた evaluator feedback を差し戻しから外す', () => {
+  const fb = [{ topic: 'a', ac_index: 1 }, { topic: 'b', ac_index: 0 }, { topic: 'c' }];
+  assert.deepEqual(dropCiAcFeedback(fb, ['agent', 'ci']).map((f) => f.topic), ['b', 'c']);
+  assert.equal(dropCiAcFeedback(fb, ['agent', 'agent']), fb);
+});
+
+test('[ac-actor] unsatisfiedAcByActor: unreachable_env:true の agent AC は差し戻さず human（人手 AC 待ち）に数える', () => {
+  const actors = ['agent', 'agent'];
+  const r = unsatisfiedAcByActor([
+    { ac_index: 0, satisfied: false, unreachable_env: true },
+    { ac_index: 1, satisfied: false },
+  ], actors);
+  assert.deepEqual(r, { agent: [1], human: [0], ci: [] });
 });
 
 test('[ac-actor] agentAcFeedback: evaluator feedback と同じ形で AC 番号・本文・根拠と PR 本文の返し方を渡す', () => {
@@ -149,7 +217,7 @@ test('[ac-actor] repo 外の作業だけを書いた AC は human（エージェ
   assert.equal(classifyAcActor(MIXED_AC), 'agent', 'mixed は analyze ゲートで止めるので actor は agent のまま');
   const actors = acActorsOf(['worker 数の上限を設定で変えられる', EXTERNAL_AC]);
   assert.deepEqual(actors, ['agent', 'human']);
-  assert.deepEqual(unsatisfiedAcByActor([{ ac_index: 1, satisfied: false }], actors), { agent: [], human: [1] });
+  assert.deepEqual(unsatisfiedAcByActor([{ ac_index: 1, satisfied: false }], actors), { agent: [], human: [1], ci: [] });
   assert.deepEqual(acActorsOf(['acme/infra#206 の設定を入れる'], { repo: 'it-all-playpark/skills' }), ['human']);
 });
 
@@ -257,5 +325,5 @@ test('[ac-observational] demoteUnprovenObservationalAc: 実証の無い観測型
   assert.equal(demoteUnprovenObservationalAc(null, [true], []), null);
   // 倒した AC は actor human なので人手 AC 待ちに数え、差し戻し（agent）には数えない
   const actors = ['human', 'human', 'agent', 'human'];
-  assert.deepEqual(unsatisfiedAcByActor(out, actors), { agent: [], human: [0, 3] });
+  assert.deepEqual(unsatisfiedAcByActor(out, actors), { agent: [], human: [0, 3], ci: [] });
 });

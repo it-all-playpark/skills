@@ -546,12 +546,21 @@ export function prPushLogPath(wt) {
   return `${wt}/.devflow-tmp/${PR_PUSH_LOG_NAME}`;
 }
 
-export function prPhasePrompt({ wt, base, branch, repo, issue, commitMessage, prBody }) {
+// gh pr create に付ける ` --label "<label>"`（空・null なら空文字）。
+export function prLabelArg(label) {
+  const l = str(label).trim();
+  return l ? ` --label "${l.replace(/"/g, '\\"')}"` : '';
+}
+
+// label（issue #861）: ci の AC（repo の ci_verify で CI の check が判定する AC）がある run だけ ci_verify.label を渡し、
+// PR 作成時に付ける（CI はこのラベルで対象 job を回す）。null なら --label を付けない。
+export function prPhasePrompt({ wt, base, branch, repo, issue, commitMessage, prBody, label = null }) {
   const msgFile = `${wt}/.devflow-tmp/commit-msg.txt`;
   const bodyFile = `${wt}/.devflow-tmp/pr-body.md`;
   const pushLog = prPushLogPath(wt);
   const title = str(commitMessage).split('\n')[0].replace(/"/g, '\\"');
   const repoArg = repo ? ` --repo ${repo}` : '';
+  const labelArg = prLabelArg(label);
   const bare = '（cd 前置・`bash` 前置・環境変数代入前置・&& 連結・パイプ・リダイレクト禁止。cwd は worktree（EnterWorktree 済み）なので git には -C も cd も付けない）';
   return `## Objective\nissue #${issue} の変更を commit + push し draft PR を作成して、PR URL と番号を返す。\n\n`
     + `## 本文の保存\n`
@@ -577,7 +586,7 @@ export function prPhasePrompt({ wt, base, branch, repo, issue, commitMessage, pr
     + `(a) 出力に \`${PR_PUSH_TAIL_BEGIN}\` と \`${PR_PUSH_TAIL_END}\` が両方見えるなら、その間の行を一字一句そのまま（改行も保持）入れる。`
     + `(b) 両マーカーが揃って見えない（出力が途中で切れた・コマンドが起動しなかった等）なら \`"${PR_PUSH_TAIL_UNAVAILABLE}"\` を一字一句そのまま入れる。`
     + `どちらの場合も、マーカーの外にある出力（hook の途中経過等）から理由を推測・要約して書かない）\n`
-    + `4. \`gh pr create${repoArg} --draft --base ${base} --head ${branch} --title "${title}" --body-file ${bodyFile}\`（失敗は failed_step:"pr-create" で中断）\n`
+    + `4. \`gh pr create${repoArg} --draft --base ${base} --head ${branch} --title "${title}" --body-file ${bodyFile}${labelArg}\`（失敗は failed_step:"pr-create" で中断）\n`
     + `5. 手順 4 の stdout の PR URL を pr_url、その末尾の数字を pr_number として返す。\n`
     + `6. \`git rev-parse HEAD\` の stdout（40 桁 hex）をそのまま head_sha として返す（失敗時は空文字）。\n\n`
     + `## Output format\n{ "pr_url": string, "pr_number": number, "committed": boolean, "head_sha": string, "failed_step": "" | "commit" | "push" | "pr-create", "failure_reason": string, "push_header": string, "epoch": number }\n`
@@ -642,13 +651,13 @@ export function prPhaseFailure(pr, { pushLog } = {}) {
 // 食い違う。commit 未了なら add + commit から、pr-create で落ちた run は push 済みなので PR 作成から始める。
 // それ以外（push / unknown）は push から — 再 push は up-to-date で終わるので、段が不明でも飛ばさない。
 // `<N>` は gh pr create が出力した PR 番号。
-export function prPhaseRecoveryCommands({ committed, failedStep, base, branch, repo, commitMessage }) {
+export function prPhaseRecoveryCommands({ committed, failedStep, base, branch, repo, commitMessage, label = null }) {
   const repoArg = repo ? ` --repo ${repo}` : '';
   const title = str(commitMessage).split('\n')[0].replace(/"/g, '\\"');
   const cmds = [];
   if (committed !== true) cmds.push('git add -A', 'git commit -F .devflow-tmp/commit-msg.txt');
   if (committed !== true || failedStep !== 'pr-create') cmds.push('git push -u origin HEAD');
-  cmds.push(`gh pr create --draft --body-file .devflow-tmp/pr-body.md${repoArg} --base ${base} --head ${branch} --title "${title}"`);
+  cmds.push(`gh pr create --draft --body-file .devflow-tmp/pr-body.md${repoArg} --base ${base} --head ${branch} --title "${title}"${prLabelArg(label)}`);
   cmds.push('/pr-iterate <N>');
   return cmds;
 }

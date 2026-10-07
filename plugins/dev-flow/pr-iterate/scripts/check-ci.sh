@@ -2,6 +2,16 @@
 # check-ci.sh - Classify PR CI status from a `gh pr checks` snapshot.
 # Usage: check-ci.sh --checks-data <string> [--fetch-error-data <string>]
 #                    [--attempt N] [--max-attempts K] [--poll-seconds M]
+#                    [--only <check name>]... [--exclude <check name>]...
+#
+# --only / --exclude (repeatable, issue #861) narrow the snapshot by exact check
+# name before the verdict is derived. pr-iterate uses --exclude for the
+# review-round CI gate and --only for the post-LGTM wait on the checks a repo
+# declared in "dev-flow".ci_verify (sandbox-unreachable verification such as
+# E2E, which runs far longer than the round gate's wait ceiling). When --only
+# is given the output also carries passed_checks, and every reported check
+# keeps its `link` when the snapshot has one (fetch with --json ...,link) so
+# the caller can record the check run URL as AC evidence.
 #
 # Exits 0 when CI status is determined (passed/failed/pending/no_checks).
 # Exits 1 when the snapshot is unusable (the caller's fetch failed) or when
@@ -108,9 +118,13 @@ FETCH_ERR_DATA=""
 ATTEMPT=1
 MAX_ATTEMPTS=1
 POLL_SECONDS=15
+ONLY_JSON='[]'
+EXCLUDE_JSON='[]'
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --checks-data) CHECKS_DATA="$2"; HAVE_CHECKS_DATA=1; shift 2 ;;
+        --only) ONLY_JSON="$(jq -c --arg n "$2" '. + [$n]' <<<"$ONLY_JSON")"; shift 2 ;;
+        --exclude) EXCLUDE_JSON="$(jq -c --arg n "$2" '. + [$n]' <<<"$EXCLUDE_JSON")"; shift 2 ;;
         --fetch-error-data) FETCH_ERR_DATA="$2"; shift 2 ;;
         --attempt) ATTEMPT="$2"; shift 2 ;;
         --max-attempts) MAX_ATTEMPTS="$2"; shift 2 ;;
@@ -181,25 +195,36 @@ read_snapshot() {
 #             (fail-closed: an unknown bucket must count as failed, not
 #             silently drop out of every count and let the "no failed, no
 #             pending -> passed" default misreport it as green).
+#
+# --only / --exclude filter the snapshot by exact name first (--only keeps the
+# named checks, --exclude drops them); the verdict is then derived from what
+# is left, so a filter that leaves nothing reads as no_checks. `link` is kept
+# on each reported check only when the snapshot carries it.
 compute_verdict() {
-    result_json=$(printf '%s' "$CHECKS_JSON" | jq -c '
+    result_json=$(printf '%s' "$CHECKS_JSON" | jq -c --argjson only "$ONLY_JSON" --argjson exclude "$EXCLUDE_JSON" '
       def is_passed:  .bucket | IN("pass", "skipping");
       def is_pending: .bucket == "pending";
       def is_known:   .bucket | IN("pass", "fail", "pending", "skipping", "cancel");
       def is_failed:  (.bucket | IN("fail", "cancel")) or (is_known | not);
+      def with_link:  if (.link | type) == "string" and .link != "" then {link} else {} end;
+      def passed_checks_field:
+        if ($only | length) > 0 then {passed_checks: [.[] | select(is_passed) | {name, bucket, state} + with_link]} else {} end;
 
+      [.[] | . as $c
+           | select((($only | length) == 0) or ($only | any(. == $c.name)))
+           | select($exclude | any(. == $c.name) | not)] |
       if length == 0 then
         {status: "no_checks", passed: 0, failed: 0, pending: 0, skipped: 0,
-         failed_checks: [], pending_checks: []}
+         failed_checks: [], pending_checks: []} + passed_checks_field
       else
         {
           passed:  ([.[] | select(is_passed)]  | length),
           failed:  ([.[] | select(is_failed)]  | length),
           pending: ([.[] | select(is_pending)] | length),
           skipped: ([.[] | select(.bucket == "skipping")] | length),
-          failed_checks:  [.[] | select(is_failed)  | {name, bucket, state}],
-          pending_checks: [.[] | select(is_pending) | {name, state}]
-        } |
+          failed_checks:  [.[] | select(is_failed)  | {name, bucket, state} + with_link],
+          pending_checks: [.[] | select(is_pending) | {name, state} + with_link]
+        } + passed_checks_field |
         . + {
           status: (if .failed > 0 then "failed"
                    elif .pending > 0 then "pending"

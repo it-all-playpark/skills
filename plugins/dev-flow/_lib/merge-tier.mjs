@@ -139,7 +139,7 @@ export const HOLD_REASON_CODES = [
   'ledger_unconverged', 'danger_unresolved', 'breaking_structured', 'escalate',
   'ac_agent_unsatisfied', 'ac_human_pending', 'danger_fail_closed', 'final_reconcile_unavailable', 'final_test_red',
   'final_ac_unavailable', 'iterate_non_lgtm', 'hash_mismatch', 'testsurf_uncleared',
-  'mergeable_conflicting', 'pr_closes_missing', 'merge_facts_dropped', 'ci_checks_failed',
+  'mergeable_conflicting', 'pr_closes_missing', 'merge_facts_dropped', 'ci_checks_failed', 'ac_ci_pending',
 ];
 
 // merge-tier-facts の checks サブ結果（parseChecks の返り値 {ok:true, checks} | {ok:false, error}）を
@@ -217,6 +217,9 @@ export function classifyMergeableState(meta) {
 //   code を分ける — 'ac_agent_unsatisfied' は worktree 内で満たせる AC を Evaluate 差し戻しで拾えなかった
 //   取りこぼし（telemetry で異常として数える）、'ac_human_pending' は人手作業待ちの想定内の HOLD。
 //   boolean 以外は明示 error。旧キー unsatisfiedAc は actor を区別できないので受理しない（明示 error）。
+// s.unsatisfiedCiAc (optional boolean): ci の AC（repo の ci_verify で CI の check が判定する AC。issue #861）が
+//   pr-iterate の LGTM 後の待ちで success にならなかった（上限まで未完了・failure・取得不能・待ちに未到達）。
+//   'ac_ci_pending'（CI の結果を人間が確認して merge する）で HOLD。boolean 以外は明示 error。
 // s.dangerFailClosed (optional boolean): true の場合、danger-grep が実行不能（fail-closed）だったことを
 //   示す専用 HOLD reason を追記する（issue #271）。fail-closed 時は SEC seed item が unchecked のまま
 //   残るため s.converged が既に false になり HOLD へ落ちるが、この reason は「なぜ未収束か」を
@@ -345,6 +348,9 @@ export function classifyMergeTier(s) {
   if (s.unsatisfiedHumanAc != null && typeof s.unsatisfiedHumanAc !== 'boolean') {
     throw new Error('classifyMergeTier: invalid unsatisfiedHumanAc: ' + s.unsatisfiedHumanAc);
   }
+  if (s.unsatisfiedCiAc != null && typeof s.unsatisfiedCiAc !== 'boolean') {
+    throw new Error('classifyMergeTier: invalid unsatisfiedCiAc: ' + s.unsatisfiedCiAc);
+  }
   if (s.riskValueDropped != null && typeof s.riskValueDropped !== 'boolean') {
     throw new Error('classifyMergeTier: invalid riskValueDropped: ' + s.riskValueDropped);
   }
@@ -390,7 +396,8 @@ export function classifyMergeTier(s) {
     : null;
   if (s.escalateCount > 0) pushBlocking('escalate', `ESCALATE-TO-HUMAN 項目 ${s.escalateCount} 件`, 'human_judgment');
   if (s.unsatisfiedAgentAc === true) pushBlocking('ac_agent_unsatisfied', 'AC 未達（エージェント AC 未達 — worktree 内で満たせる AC が差し戻し上限後も satisfied:false。ループの取りこぼし。gate_policy に依らず人間確認必須）', 'human_judgment');
-  if (s.unsatisfiedHumanAc === true) pushBlocking('ac_human_pending', 'AC 未達（人手 AC 待ち — （人手）/ staging / 本番等の worktree 外作業を要する AC が satisfied:false。人間が実施して確認する）', 'human_judgment');
+  if (s.unsatisfiedHumanAc === true) pushBlocking('ac_human_pending', 'AC 未達（人手 AC 待ち — （人手）/ staging / 本番等の worktree 外作業、または実行環境に届かない検証を要する AC が satisfied:false。人間が実施して確認する）', 'human_judgment');
+  if (s.unsatisfiedCiAc === true) pushBlocking('ac_ci_pending', 'AC 未確定（CI 判定待ち — ci_verify の check で判定する AC が pr-iterate の LGTM 後の待ちで success にならなかった。CI の結果を確認して merge する）', 'human_judgment');
   if (s.dangerFailClosed === true) {
     if (s.riskValueDropped === true) pushBlocking('merge_facts_dropped', 'merge-tier-facts の転記欠落（subagent 応答から danger-grep 結果 risk.value が落ちた。danger-grep 自体は実行済みの可能性あり）— security 未検証のため人間確認必須', 'human_judgment');
     else pushBlocking('danger_fail_closed', 'danger-grep 実行不能（fail-closed）— security 未検証のため人間確認必須', 'human_judgment');

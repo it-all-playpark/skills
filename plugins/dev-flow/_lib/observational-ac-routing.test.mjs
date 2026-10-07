@@ -64,7 +64,7 @@ test('[observational-ac] (A) inspection の satisfied:true → checked にせず
   assert.equal(acObsCalls(calls).length, 0, 'prerun が全 AC を確定していれば分類 agent を spawn しない');
   assert.equal(result?.merge_tier, 'HOLD');
   assert.deepEqual(plain(result.merge_tier_hold_reasons.map((r) => r.code)), ['ac_human_pending']);
-  assert.deepEqual(plain(result.final_unsatisfied_ac_by_actor), { agent: [], human: [0] });
+  assert.deepEqual(plain(result.final_unsatisfied_ac_by_actor), { agent: [], human: [0], ci: [] });
   const prCall = calls.find((c) => c.label === 'pr#1');
   assert.ok(prCall.prompt.includes(`- [ ] ${OBS_AC}`), `PR 本文で観測型 AC が checked になった: ${prCall.prompt}`);
   const summary = calls.find((c) => c.label === 'post-summary');
@@ -79,7 +79,7 @@ test('[observational-ac] (B) verified_by:test + redgreen で red→green 実証 
   assert.equal(calls.filter((c) => c.label === 'redgreen').length, 1);
   assert.equal(reimplCalls(calls).length, 0);
   assert.equal(result?.merge_tier, 'REVIEW', `red→green 実証済みなので HOLD しない: ${JSON.stringify(result?.merge_tier_reasons)}`);
-  assert.deepEqual(plain(result.final_unsatisfied_ac_by_actor), { agent: [], human: [] });
+  assert.deepEqual(plain(result.final_unsatisfied_ac_by_actor), { agent: [], human: [], ci: [] });
   const prCall = calls.find((c) => c.label === 'pr#1');
   assert.ok(prCall.prompt.includes(`- [x] ${OBS_AC}`), `PR 本文で観測型 AC が checked にならない: ${prCall.prompt}`);
 });
@@ -89,7 +89,7 @@ test('[observational-ac] (C) verified_by:test でも red→green 不成立 → c
   assert.equal(reimplCalls(calls).length, 0, `観測型 AC で差し戻した: ${calls.map((c) => c.label).join(', ')}`);
   assert.equal(result?.merge_tier, 'HOLD');
   assert.deepEqual(plain(result.merge_tier_hold_reasons.map((r) => r.code)), ['ac_human_pending']);
-  assert.deepEqual(plain(result.final_unsatisfied_ac_by_actor), { agent: [], human: [0] });
+  assert.deepEqual(plain(result.final_unsatisfied_ac_by_actor), { agent: [], human: [0], ci: [] });
 });
 
 test('[observational-ac] (D) Final reconcile の inspection pass でも観測型 AC を checked にせず、ac_human_pending の HOLD のまま', async () => {
@@ -103,7 +103,7 @@ test('[observational-ac] (D) Final reconcile の inspection pass でも観測型
   assert.equal(result?.final_ac_reconcile, 'reverified');
   assert.equal(result?.merge_tier, 'HOLD');
   assert.deepEqual(plain(result.merge_tier_hold_reasons.map((r) => r.code)), ['ac_human_pending']);
-  assert.deepEqual(plain(result.final_unsatisfied_ac_by_actor), { agent: [], human: [0] });
+  assert.deepEqual(plain(result.final_unsatisfied_ac_by_actor), { agent: [], human: [0], ci: [] });
 });
 
 test('[observational-ac] (E) Evaluate で red→green 実証済みの観測型 AC は Final reconcile 後も達成のまま', async () => {
@@ -115,7 +115,7 @@ test('[observational-ac] (E) Evaluate で red→green 実証済みの観測型 A
   }, { workflow: FIXED_ITERATE });
   assert.equal(result?.final_ac_reconcile, 'reverified');
   assert.equal(result?.merge_tier, 'REVIEW', `red→green 実証済みなので HOLD しない: ${JSON.stringify(result?.merge_tier_reasons)}`);
-  assert.deepEqual(plain(result.final_unsatisfied_ac_by_actor), { agent: [], human: [] });
+  assert.deepEqual(plain(result.final_unsatisfied_ac_by_actor), { agent: [], human: [], ci: [] });
 });
 
 // 回帰（issue #859）: shift-bud の AC。prerun の判定は prerun-analyze.bats の Jev スタブと同じ値
@@ -151,7 +151,7 @@ test('[observational-ac] (F) 回帰: null の AC だけを AC 文面 + title で
   assert.ok(evalCalls(calls)[0].prompt.includes('"ac_observational":[false,false,false,true,false]'), evalCalls(calls)[0].prompt.slice(0, 2000));
   assert.equal(result?.merge_tier, 'HOLD');
   assert.deepEqual(plain(result.merge_tier_hold_reasons.map((r) => r.code)), ['ac_human_pending']);
-  assert.deepEqual(plain(result.final_unsatisfied_ac_by_actor), { agent: [], human: [3] }, '#1605 AC#2（AC-5）・件数の AC は観測型にしない');
+  assert.deepEqual(plain(result.final_unsatisfied_ac_by_actor), { agent: [], human: [3], ci: [] }, '#1605 AC#2（AC-5）・件数の AC は観測型にしない');
   const prCall = calls.find((c) => c.label === 'pr#1');
   assert.ok(prCall.prompt.includes(`- [x] ${REG_ACS[4]}`), `#1605 AC#2 が達成扱いにならない: ${prCall.prompt}`);
 });
@@ -161,5 +161,5 @@ test('[observational-ac] (G) 分類 agent が失敗（null）なら未確定の 
   assert.equal(acObsCalls(calls).length, 1);
   assert.equal(reimplCalls(calls).length, 0);
   assert.equal(result?.merge_tier, 'HOLD');
-  assert.deepEqual(plain(result.final_unsatisfied_ac_by_actor), { agent: [], human: [2, 3] });
+  assert.deepEqual(plain(result.final_unsatisfied_ac_by_actor), { agent: [], human: [2, 3], ci: [] });
 });

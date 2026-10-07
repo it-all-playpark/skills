@@ -381,6 +381,27 @@ STUB
     echo "$output" | jq -e '.deps.note | test("packages/backend")'
 }
 
+# ---- (10c) ci_verify: worktree の skill-config の "dev-flow".ci_verify を verbatim で渡す (issue #861) ----
+
+@test "(10c) .claude/skill-config.json の \"dev-flow\".ci_verify -> ci_verify に verbatim、無ければ null" {
+    cd "$ROOT"
+    run --separate-stderr "$SCRIPT" --issue 1 --worktree "$WT"
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e 'has("ci_verify") and .ci_verify == null'
+
+    git -C "$SEED" checkout -q dev
+    mkdir -p "$SEED/.claude"
+    echo '{"dev-flow":{"ci_verify":{"label":"full-ci","checks":["e2e"],"commands":["pnpm test:e2e:local"],"wait_ceiling_seconds":1500}}}' > "$SEED/.claude/skill-config.json"
+    git -C "$SEED" add .claude/skill-config.json
+    git -C "$SEED" commit -q -m "add ci_verify"
+    git -C "$SEED" push -q origin dev
+
+    WT2="$BATS_TEST_TMPDIR/wt/df-2"
+    run --separate-stderr "$SCRIPT" --issue 2 --worktree "$WT2"
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.ci_verify == {"label":"full-ci","checks":["e2e"],"commands":["pnpm test:e2e:local"],"wait_ceiling_seconds":1500}'
+}
+
 # ---- (11) 引数エラー ----
 
 @test "(11a) --issue 欠落 -> exit 2, stdout空" {

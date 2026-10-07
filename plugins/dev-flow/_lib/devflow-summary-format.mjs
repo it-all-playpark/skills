@@ -39,6 +39,17 @@ export const RESOLVED_CELL_MAX = 200;
 
 // 観測型 AC（実行して出力・記録を観測しないと確かめられない AC）が未達のときの対応欄（issue #844）。
 const OBSERVATIONAL_AC_ACTION = '実行して AC の主張を確認する（例: merge 後の実 run・計測）';
+// evaluator が未達の理由を実行環境に届かない（unreachable_env:true）と返した AC の対応欄（issue #861）。
+// コード上に未達の根拠が無いので「修正が必要」とは書かない。
+const UNREACHABLE_ENV_AC_ACTION = '実行して確認する';
+
+// ci の AC（ci_verify の check で判定する AC。issue #861）が未確定のときの対応欄。ciVerify は pr-iterate の返り値 ci_verify。
+function ciAcAction(ciVerify) {
+  const checks = Array.isArray(ciVerify?.checks) && ciVerify.checks.length ? ciVerify.checks.map((c) => `\`${c}\``).join(', ') : 'CI の check';
+  if (ciVerify?.status === 'pending') return `CI の ${checks} 実行中 — 結果を確認して merge`;
+  if (ciVerify?.status === 'failed') return `CI の ${checks} の失敗ログを確認する`;
+  return `CI の ${checks} の結果を確認して merge`;
+}
 
 function resolvedCell(v) {
   if (v == null) return '';
@@ -112,9 +123,12 @@ function resolvedCell(v) {
  *   worktree の外を指すとして fix から外した指摘（返り値 human_followups）。非空なら「人間側 follow-up」節に出す（表示専用）
  * @param {string[]|null|undefined} [opts.outOfScope] - dev-implementer が out_of_scope[] で申告した、issue 本文にあるが
  *   実施しなかった作業。非空なら「この PR に含めなかったもの」節にそのまま出す（表示専用）
- * @param {{agent:number[], human:number[]}|null|undefined} [opts.unsatisfiedAcByActor] - merge tier が
- *   ac_agent_unsatisfied / ac_human_pending の入力にした AC 未達の actor 別 index（0 始まり）。同じ AC に紐づく
- *   HOLD 理由をまとめるとき、AC 未達の code を AC ごとに決めるのに使う（表示専用。欠落なら AC 未達の code はまとめない）
+ * @param {{agent:number[], human:number[], ci?:number[]}|null|undefined} [opts.unsatisfiedAcByActor] - merge tier が
+ *   ac_agent_unsatisfied / ac_human_pending / ac_ci_pending の入力にした AC 未達の actor 別 index（0 始まり）。同じ AC に紐づく
+ *   HOLD 理由をまとめるとき、AC 未達の code を AC ごとに決めるのに使う。human / ci の AC の未達はコード上の未達の根拠では
+ *   ないので、結論行の「修正作業が必要」の根拠に数えない（表示専用。欠落なら AC 未達の code はまとめず、未達 AC は全件修正の根拠に数える）
+ * @param {{status:string, checks:string[], urls?:string[], waited_seconds?:number}|null|undefined} [opts.ciVerify] - pr-iterate の返り値
+ *   ci_verify（LGTM 後の ci_verify.checks の待ち結果）。ac_ci_pending の「現状/対応」に check 名と状態を出す（表示専用）
  * @param {{note:number, decision:number, change_bullet:number, sections_over_chars:number}|null|undefined} [opts.prBodyClips] -
  *   pr-artifacts の prBodyClipReport。PR 本文で末尾を切った要約行の件数と pr_sections の合計上限超過字数。
  *   1 つでも非 0 なら「PR 本文で切れた項目」節に出す（表示専用。null / 全 0 なら 1 行も足さない）
@@ -160,6 +174,7 @@ export function buildDevflowSummaryBody({
   humanFollowups,
   outOfScope,
   unsatisfiedAcByActor,
+  ciVerify,
   prBodyClips,
 }) {
   const EVAL_STALENESS_VALUES = ['none', 'hash_mismatch', 'hash_reconverged', 'iterate_incomplete', 'iterate_fixed'];
@@ -285,14 +300,22 @@ export function buildDevflowSummaryBody({
   const acGapsByActor = unsatisfiedAcByActor != null && typeof unsatisfiedAcByActor === 'object' ? unsatisfiedAcByActor : {};
   const acAgentGaps = Array.isArray(acGapsByActor.agent) ? acGapsByActor.agent : [];
   const acHumanGaps = Array.isArray(acGapsByActor.human) ? acGapsByActor.human : [];
+  const acCiGaps = Array.isArray(acGapsByActor.ci) ? acGapsByActor.ci : [];
   // 観測型 AC（ac_results の observational:true。_lib/ac-actor.mjs の demoteUnprovenObservationalAc が付ける）の未達は
   // 人手 AC 待ちのうち「実行して確かめる」もの。対応欄の文言を分け、どの AC が観測型かを AC 番号で出す。
   const observationalGaps = unsatisfiedAC.filter((a) => a.observational === true).map((a) => a.ac_index);
+  // evaluator が実行環境に届かない（unreachable_env:true）と返した AC の未達も人手 AC 待ちのうち「実行して確かめる」もの。
+  const unreachableGaps = unsatisfiedAC.filter((a) => a.unreachable_env === true && acHumanGaps.includes(a.ac_index) && a.observational !== true).map((a) => a.ac_index);
   const acUnsatisfiedCode = (k) => {
     if (acAgentGaps.includes(k)) return 'ac_agent_unsatisfied';
     if (acHumanGaps.includes(k)) return 'ac_human_pending';
+    if (acCiGaps.includes(k)) return 'ac_ci_pending';
     return null;
   };
+  // 人手 AC 待ち・CI 判定待ちの AC の未達はコード上の未達の根拠ではない（worktree で直す対象が無い）。
+  // unsatisfiedAcByActor が渡されないときは actor が分からないので、未達 AC を全件修正の根拠に数える。
+  const pendingAcIndexes = new Set([...acHumanGaps, ...acCiGaps]);
+  const fixableUnsatisfiedAC = unsatisfiedAC.filter((a) => !pendingAcIndexes.has(a.ac_index));
   const acGroupMap = new Map();
   const acGroupOf = (k) => {
     if (!acGroupMap.has(k)) acGroupMap.set(k, { acIndex: k, blocking: [], escalate: [], ac: null });
@@ -323,7 +346,8 @@ export function buildDevflowSummaryBody({
       const label = `AC#${g.acIndex + 1}${g.ac != null ? ' 未達' : ''}${observational ? '（観測型）' : ''}`;
       const unresolvedEsc = g.escalate.filter((it) => !isResolved(it));
       const actions = [];
-      if (acCode === 'ac_human_pending') actions.push(observational ? OBSERVATIONAL_AC_ACTION : '人手で実施して AC を確認する');
+      if (acCode === 'ac_human_pending') actions.push(observational ? OBSERVATIONAL_AC_ACTION : unreachableGaps.includes(g.acIndex) ? UNREACHABLE_ENV_AC_ACTION : '人手で実施して AC を確認する');
+      else if (acCode === 'ac_ci_pending') actions.push(ciAcAction(ciVerify));
       else if (g.blocking.length > 0 || g.ac != null) actions.push('修正が必要');
       for (const it of unresolvedEsc) actions.push(`要判断${it.escalate_reason ? '（' + mdCell(it.escalate_reason) + '）' : ''}`);
       return { ...g, codes, label, actions };
@@ -343,7 +367,7 @@ export function buildDevflowSummaryBody({
   const testsurfUncleared = testsurfClearance.some(tc => !tc.cleared);
   const fixRequiredHold = Array.isArray(holdReasons) && holdReasons.some(hr => FIX_REQUIRED_HOLD_CODES.includes(hr && hr.code));
   const fixRequired = uncheckedBlocking.length > 0
-    || unsatisfiedAC.length > 0
+    || fixableUnsatisfiedAC.length > 0
     || uncleared.length > 0
     || testsurfUncleared
     || finalTestGreen === false
@@ -573,6 +597,7 @@ export function buildDevflowSummaryBody({
       escalate: escalateAll.map(itemAcIndex),
       ac_agent_unsatisfied: acAgentGaps,
       ac_human_pending: acHumanGaps,
+      ac_ci_pending: acCiGaps,
     };
     const absorbedCodes = new Set(Object.keys(codeAcIndexes).filter((code) => {
       const covered = new Set(holdAcGroups.filter((g) => g.holdCodes.includes(code)).map((g) => g.acIndex));
@@ -583,6 +608,7 @@ export function buildDevflowSummaryBody({
       escalate: 'ESCALATE',
       ac_agent_unsatisfied: 'AC 未達（エージェント）',
       ac_human_pending: 'AC 未達（人手）',
+      ac_ci_pending: 'AC 未確定（CI）',
     };
     let acGroupRowsEmitted = false;
     for (const hr of holdReasons) {
@@ -608,6 +634,8 @@ export function buildDevflowSummaryBody({
         pr,
         humanAcGaps: acHumanGaps,
         observationalAcGaps: observationalGaps,
+        unreachableAcGaps: unreachableGaps,
+        ciVerify,
       });
       lines.push(`| ${mdCell(hr && hr.reason)} | ${current} | ${action} |`);
     }
@@ -761,7 +789,7 @@ export function buildDevflowSummaryBody({
       for (const ac of unsatisfiedACRows) {
         const verifiedBy = ac.verified_by != null ? ac.verified_by : 'inspection';
         const evidenceCell = ac.evidence ? mdCell(ac.evidence) : '—';
-        lines.push(`| ❌ 未達 | AC#${ac.ac_index + 1}${ac.observational === true ? '（観測型）' : ''} | ${verifiedBy} | ${evidenceCell} |`);
+        lines.push(`| ❌ 未達 | AC#${ac.ac_index + 1}${ac.observational === true ? '（観測型）' : ''}${ac.ci === true ? '（CI）' : ''} | ${verifiedBy} | ${evidenceCell} |`);
       }
     }
 
@@ -1043,12 +1071,30 @@ function holdReasonDisplay(code, kind, ctx) {
       return { current: 'エージェントで満たせる AC が差し戻し後も未達（ループの取りこぼし）', action: '修正が必要（下表 ❌ 未達 行）' };
     case 'ac_human_pending': {
       const obs = Array.isArray(ctx.observationalAcGaps) ? ctx.observationalAcGaps : [];
-      if (obs.length === 0) return { current: '人手作業を要する AC が未達（人手 AC 待ち）', action: '人手で実施して AC を確認する（下表 ❌ 未達 行）' };
-      const others = (Array.isArray(ctx.humanAcGaps) ? ctx.humanAcGaps : []).filter((k) => !obs.includes(k));
-      return {
-        current: `${others.length > 0 ? '人手作業を要する AC が未達（人手 AC 待ち）・' : ''}観測型 AC（${obs.map((k) => `AC#${k + 1}`).join(', ')}）は実行しないと確かめられず、test の red→green 実証が無い`,
-        action: `${others.length > 0 ? '人手で実施して AC を確認する・' : ''}${OBSERVATIONAL_AC_ACTION}（下表 ❌ 未達 行）`,
-      };
+      const unreachable = Array.isArray(ctx.unreachableAcGaps) ? ctx.unreachableAcGaps : [];
+      if (obs.length === 0 && unreachable.length === 0) return { current: '人手作業を要する AC が未達（人手 AC 待ち）', action: '人手で実施して AC を確認する（下表 ❌ 未達 行）' };
+      const others = (Array.isArray(ctx.humanAcGaps) ? ctx.humanAcGaps : []).filter((k) => !obs.includes(k) && !unreachable.includes(k));
+      const acList = (ks) => ks.map((k) => `AC#${k + 1}`).join(', ');
+      const current = [
+        ...(others.length > 0 ? ['人手作業を要する AC が未達（人手 AC 待ち）'] : []),
+        ...(unreachable.length > 0 ? [`AC（${acList(unreachable)}）は実行環境に届かず run 内で確かめられない`] : []),
+        ...(obs.length > 0 ? [`観測型 AC（${acList(obs)}）は実行しないと確かめられず、test の red→green 実証が無い`] : []),
+      ];
+      const actions = [
+        ...(others.length > 0 ? ['人手で実施して AC を確認する'] : []),
+        ...(unreachable.length > 0 ? [UNREACHABLE_ENV_AC_ACTION] : []),
+        ...(obs.length > 0 ? [OBSERVATIONAL_AC_ACTION] : []),
+      ];
+      return { current: current.join('・'), action: `${actions.join('・')}（下表 ❌ 未達 行）` };
+    }
+    case 'ac_ci_pending': {
+      const v = ctx.ciVerify;
+      const checks = Array.isArray(v?.checks) && v.checks.length ? v.checks.map((c) => `\`${c}\``).join(', ') : 'CI の check';
+      const current = v?.status === 'pending' ? `CI の ${checks} が待機上限${Number.isFinite(v.waited_seconds) ? `（${v.waited_seconds}s 待機）` : ''}までに完了しない`
+        : v?.status === 'failed' ? `CI の ${checks} が failure（pr-iterate の fix 後も green にならない）`
+          : v?.status === 'error' ? `CI の ${checks} の状態を取得できない`
+            : `CI の ${checks} の完了待ちに到達していない（pr-iterate が LGTM 前に終端）`;
+      return { current, action: ciAcAction(v) };
     }
     case 'danger_unresolved':
       return { current: `security clearance 未確認 ${ctx.unclearedCount} 件`, action: '人が該当 diff を確認する' };

@@ -153,6 +153,44 @@ setup() {
     [ "$(echo "$output" | jq -r '.passed')" = "1" ]
 }
 
+# ---------------------------------------------------------------------------
+# --only / --exclude: narrow the snapshot by check name (issue #861)
+# ---------------------------------------------------------------------------
+
+SNAPSHOT_WITH_E2E='[{"name":"lint","state":"SUCCESS","bucket":"pass","link":"https://github.com/o/r/actions/runs/1/job/11"},{"name":"e2e","state":"IN_PROGRESS","bucket":"pending","link":"https://github.com/o/r/actions/runs/2/job/22"}]'
+
+@test "filter: --exclude drops the named check before the verdict (pending e2e no longer blocks the round gate)" {
+    run bash "$SCRIPT" --checks-data "$SNAPSHOT_WITH_E2E" --exclude e2e
+    [ "$status" -eq 0 ]
+    [ "$(echo "$output" | jq -r '.status')" = "passed" ]
+    [ "$(echo "$output" | jq -r '.pending')" = "0" ]
+    echo "$output" | jq -e 'has("passed_checks") | not'
+}
+
+@test "filter: --only keeps just the named checks and reports passed_checks with link" {
+    run bash "$SCRIPT" --checks-data "$SNAPSHOT_WITH_E2E" --only e2e
+    [ "$status" -eq 0 ]
+    [ "$(echo "$output" | jq -r '.status')" = "pending" ]
+    [ "$(echo "$output" | jq -r '.passed')" = "0" ]
+    echo "$output" | jq -e '.pending_checks == [{"name":"e2e","state":"IN_PROGRESS","link":"https://github.com/o/r/actions/runs/2/job/22"}]'
+    echo "$output" | jq -e '.passed_checks == []'
+
+    run bash "$SCRIPT" --checks-data '[{"name":"lint","state":"SUCCESS","bucket":"pass"},{"name":"e2e","state":"SUCCESS","bucket":"pass","link":"https://github.com/o/r/actions/runs/2/job/22"}]' --only e2e
+    [ "$(echo "$output" | jq -r '.status')" = "passed" ]
+    echo "$output" | jq -e '.passed_checks == [{"name":"e2e","bucket":"pass","state":"SUCCESS","link":"https://github.com/o/r/actions/runs/2/job/22"}]'
+
+    run bash "$SCRIPT" --checks-data '[{"name":"e2e","state":"FAILURE","bucket":"fail","link":"https://github.com/o/r/actions/runs/2/job/22"}]' --only e2e
+    [ "$(echo "$output" | jq -r '.status')" = "failed" ]
+    echo "$output" | jq -e '.failed_checks[0].link == "https://github.com/o/r/actions/runs/2/job/22"'
+}
+
+@test "filter: --only on a check that is not registered yet -> no_checks" {
+    run bash "$SCRIPT" --checks-data '[{"name":"lint","state":"SUCCESS","bucket":"pass"}]' --only e2e
+    [ "$status" -eq 0 ]
+    [ "$(echo "$output" | jq -r '.status')" = "no_checks" ]
+    echo "$output" | jq -e '.passed_checks == []'
+}
+
 @test "argv: removed --checks-json option is rejected as Unknown option" {
     run bash "$SCRIPT" --checks-json /tmp/whatever.json
     [ "$status" -eq 1 ]

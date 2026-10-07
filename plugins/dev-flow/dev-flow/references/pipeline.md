@@ -145,8 +145,18 @@ ledger 収束だけでは未達 AC がループを回さない。そこで agent
 分類 agent に渡し、それでも決まらなければ true にする（`resolveAcObservational`。diff・evaluator の結果は渡さない —
 evaluator のコード読みで達成扱いになるのを止める仕組みなので、実装を見た判定は抜け道になる）。観測型 AC は、Evaluate の
 redgreen-verify で red→green を実証して deterministic 昇格したときだけ checked にする。evaluator・final AC reconcile の
-inspection による `satisfied:true` は達成扱いにせず（`demoteUnprovenObservationalAc`）、差し戻さずに人手 AC 待ちへ回す。Merge tier の HOLD 理由は
-`ac_agent_unsatisfied`（差し戻し上限後も未達 = ループの取りこぼし）と `ac_human_pending`（人手 AC 待ち）に分ける。
+inspection による `satisfied:true` は達成扱いにせず（`demoteUnprovenObservationalAc`）、差し戻さずに人手 AC 待ちへ回す。
+evaluator が agent AC の未達理由を実行環境に届かない（`unreachable_env:true` — DB コンテナ等が sandbox 内で動かない）と
+返したものも差し戻さず人手 AC 待ちに数える（コード上に未達の根拠が無いので終端サマリーは「修正が必要」にせず「実行して確認する」）。
+ci AC（actor `ci`）: repo が `skill-config.json` / `.claude/skill-config.json` の `"dev-flow".ci_verify`
+（`{ label, checks, commands, wait_ceiling_seconds }`。prerun が読み、`normalizeCiVerify` が不正形を fail-closed で止める）で
+宣言した `commands` を inline code に書いた AC、または `label` に言及した AC（`matchesCiVerify`。汎用の E2E 語・Jev は使わない）。
+evaluator・final AC reconcile の判定を使わず差し戻しにも回さない。PR 作成時に `label` を付け、pr-iterate は `checks` を各 round の
+CI 判定から外し（check-ci `--exclude`）、LGTM 後に別ループ（`ci-verify#i.k`、check-ci `--only`）で `wait_ceiling_seconds` まで完了を待つ。
+success は check run の URL を根拠に satisfied、failure は失敗 job の link を fix に渡して直させ次 iteration で再び待つ（MAX に含める）、
+上限まで未完了は LGTM のまま `ci_verify.status='pending'`。Merge tier の HOLD 理由は
+`ac_agent_unsatisfied`（差し戻し上限後も未達 = ループの取りこぼし）と `ac_human_pending`（人手 AC 待ち）と
+`ac_ci_pending`（ci AC が CI で success にならなかった。「CI の `<check>` 実行中 — 結果を確認して merge」）に分ける。
 `dev-implementer` が返す `design_decisions` / `pr_notes` は plan（`architecture_decisions` / `pr_notes`）に取り込み、
 PR body の「設計判断」「検証」に 1 行要約として clip して載せる。対応表など複数行の記録は `pr_sections` で返させ、
 `## 検証` の後に `<details>` で改行を保ったまま clip せず載せる（`PR_BODY_MAX_CHARS` は `<details>` の外にだけ掛ける）。

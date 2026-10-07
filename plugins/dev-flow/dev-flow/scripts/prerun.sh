@@ -443,6 +443,26 @@ else
 fi
 
 # ============================================================================
+# Segment 5b: ci_verify (段2成功時のみ)
+# ============================================================================
+
+# worktree の skill-config.json / .claude/skill-config.json（前者優先）の "dev-flow".ci_verify を verbatim で渡す
+# （sandbox 内で実行できない検証を CI のどの check で判定するかの repo 側の宣言。issue #861）。
+# 形の検証は workflow 側（_lib/prerun-setup.mjs の normalizeCiVerify）が行い、不正なら fail-closed で止める。
+# 無い・JSON として読めないファイルは未設定（null）として扱う。
+ci_verify_json='null'
+if [[ "$SEG2_OK" == true ]]; then
+    for rel in skill-config.json .claude/skill-config.json; do
+        [[ -f "$WT/$rel" ]] || continue
+        cv="$(jq -c 'if type == "object" and (.["dev-flow"] | type) == "object" then .["dev-flow"].ci_verify else null end' "$WT/$rel" 2>/dev/null)" || cv=''
+        if [[ -n "$cv" && "$cv" != 'null' ]]; then
+            ci_verify_json="$cv"
+            break
+        fi
+    done
+fi
+
+# ============================================================================
 # Segment 6 (join): analyze 段の完了を待つ
 # ============================================================================
 
@@ -504,6 +524,7 @@ jq -n \
     --argjson deps "$deps_json" \
     --argjson stack "$stack_json" \
     --argjson analyze "$analyze_json" \
+    --argjson ci_verify "$ci_verify_json" \
     --argjson epoch "$epoch" \
     --argjson epoch_end "$epoch_end" \
     --arg plugin_commit "$plugin_commit" \
@@ -515,7 +536,7 @@ jq -n \
     + (if $have_head then {head: $head} else {} end)
     + (if $have_worktree_error then {worktree_error: $worktree_error} else {} end)
     + {worktree_status: $worktree_status, worktree_removed: $worktree_removed}
-    + {clean: $clean, deps: $deps, stack: $stack, analyze: $analyze, epoch: $epoch, epoch_end: $epoch_end}
+    + {clean: $clean, deps: $deps, stack: $stack, analyze: $analyze, ci_verify: $ci_verify, epoch: $epoch, epoch_end: $epoch_end}
     + {plugin_commit: (if ($plugin_commit | test("^[0-9a-f]{12}$")) then $plugin_commit else null end)}
     '
 

@@ -9,8 +9,18 @@
 //   - 'human': `（人手）` 表記・staging / 本番環境・外部サービスの操作・issue へのコメントを要する AC。
 //     エージェントは worktree の外に出ない（agents/dev-implementer.md）ので差し戻しても満たせない。
 //     未達は差し戻さず Merge tier の 'ac_human_pending'（人手 AC 待ち）へ回す。
+//   - 'ci': sandbox 内で実行できない検証（E2E 等）を repo が CI の check で判定すると宣言した AC（issue #861）。
+//     repo の skill-config.json / .claude/skill-config.json の "dev-flow".ci_verify（{label, checks, commands,
+//     wait_ceiling_seconds}）の commands のどれかを inline code で書いた AC、または label に言及した AC。
+//     evaluator は判定せず、reimpl / Evaluate の差し戻しにも回さない。PR に label を付け、pr-iterate の LGTM 後に
+//     checks の完了を待って、その結果で satisfied を決める。未完了は Merge tier の 'ac_ci_pending'。
+//     判定は repo が宣言した規則だけを使う（汎用の E2E 語の正規表現・Jev は使わない — 語彙の違う repo で
+//     誤判定を語の追加で直す方式は収束しないため）。
 // 判定できない AC は 'agent' に倒す。human への誤分類は差し戻しを失い未達のまま人間へ流れるが、agent への誤分類は
 // 差し戻しの上限（AGENT_AC_REIMPL_MAX）で止まり、HOLD 理由に取りこぼしとして残るため。
+// agent の AC でも、evaluator が未達の理由を実行環境に届かない（unreachable_env:true）と返したものは差し戻さず
+// 人手 AC 待ちに数える（unsatisfiedAcByActor）。差し戻しても worktree 内では満たせず、AGENT_AC_REIMPL_MAX を
+// 使い切ってから HOLD になるだけのため。
 //
 // inline code（`...`）は判定前に除く。AC 本文が `（人手）` 等の語を識別子として引用しているだけのものを
 // human にしないため。
@@ -46,7 +56,7 @@
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 
-export const AC_ACTORS = ['agent', 'human']
+export const AC_ACTORS = ['agent', 'human', 'ci']
 
 // agent AC の未達だけを理由にした差し戻しの上限。standard shape（EVAL_PASSES=1）でもこの回数までは
 // evaluate を延長して差し戻す。incentive-structural — 満たせない AC で差し戻しが続くのを総回数で止める。
@@ -225,18 +235,99 @@ export function resolveAcObservational(acObservational, agentResult) {
   })
 }
 
+// label が AC 本文（inline code を含む）に語として現れるか。前後が英数字・_・- でない位置だけを数える
+// （`full-ci` が `full-ci-nightly` の一部として現れたものを言及にしない）。
+function mentionsLabel(text, label) {
+  const isWordChar = (c) => c !== undefined && /[A-Za-z0-9_-]/.test(c)
+  for (let at = text.indexOf(label); at >= 0; at = text.indexOf(label, at + 1)) {
+    if (!isWordChar(text[at - 1]) && !isWordChar(text[at + label.length])) return true
+  }
+  return false
+}
+
+// AC が ci_verify（prerun が読んだ repo の宣言。null は未設定）で CI に回す AC か。inline code が commands の
+// どれかと一致する（引数を足した `<command> <args>` も含む）か、label に言及していれば true。
+export function matchesCiVerify(ac, ciVerify) {
+  if (!ciVerify || typeof ciVerify !== 'object') return false
+  const text = String(ac ?? '')
+  const commands = (Array.isArray(ciVerify.commands) ? ciVerify.commands : [])
+    .filter((c) => typeof c === 'string' && c.trim()).map((c) => c.trim())
+  const codes = (text.match(INLINE_CODE_RE) ?? []).map((m) => m.slice(1, -1).trim())
+  if (codes.some((code) => commands.some((cmd) => code === cmd || code.startsWith(cmd + ' ')))) return true
+  const label = typeof ciVerify.label === 'string' ? ciVerify.label.trim() : ''
+  return label !== '' && mentionsLabel(text, label)
+}
+
 // opts.observational は analyze ゲートで確定した AC の観測型判定（boolean）。true なら human。
+// opts.ciVerify は repo の ci_verify 宣言（null / 省略は未設定 — 'ci' を返さない）。
+// （人手）・staging・本番等の明示は ci より優先する（CI の check では満たせない作業を書いた AC のため）。
+// ci は観測型より優先する（実行しないと確かめられない AC を、CI の check が実行して確かめるため）。
 export function classifyAcActor(ac, opts = {}) {
   const text = String(ac ?? '').replace(INLINE_CODE_RE, ' ')
   if (HUMAN_AC_PATTERNS.some((re) => re.test(text))) return 'human'
+  if (matchesCiVerify(ac, opts?.ciVerify)) return 'ci'
   if (classifyAcScope(ac, opts) === 'external') return 'human'
   return opts?.observational === true ? 'human' : 'agent'
 }
 
-// opts.observational は AC ごとの観測型判定の配列（req.ac_observational）。
+// opts.observational は AC ごとの観測型判定の配列（req.ac_observational）。opts.ciVerify は classifyAcActor と同じ。
 export function acActorsOf(acceptanceCriteria, opts = {}) {
   const obs = Array.isArray(opts?.observational) ? opts.observational : []
-  return (Array.isArray(acceptanceCriteria) ? acceptanceCriteria : []).map((ac, i) => classifyAcActor(ac, { repo: opts?.repo, observational: obs[i] === true }))
+  return (Array.isArray(acceptanceCriteria) ? acceptanceCriteria : []).map((ac, i) => classifyAcActor(ac, { repo: opts?.repo, observational: obs[i] === true, ciVerify: opts?.ciVerify }))
+}
+
+// actor が 'ci' の AC の index（0 始まり）。
+export function ciAcIndexes(actors) {
+  const out = []
+  const list = Array.isArray(actors) ? actors : []
+  for (let i = 0; i < list.length; i++) if (list[i] === 'ci') out.push(i)
+  return out
+}
+
+// pr-iterate が返す ci_verify.status（LGTM 後の check 待ちの結果）。'not_run' は LGTM 前に終端して待ちに入らなかった。
+export const CI_VERIFY_STATUSES = ['passed', 'failed', 'pending', 'error', 'not_run']
+
+// ci AC の判定文。ciVerify は pr-iterate の返り値 ci_verify（null は未判定 — PR 作成前・pr-iterate 未起動）。
+function ciAcEvidence(ciVerify) {
+  const checks = Array.isArray(ciVerify?.checks) && ciVerify.checks.length ? ciVerify.checks.join(', ') : 'CI'
+  switch (ciVerify?.status) {
+    case 'passed': {
+      const urls = Array.isArray(ciVerify.urls) ? ciVerify.urls.filter((u) => typeof u === 'string' && u) : []
+      return `CI の ${checks} が success${urls.length ? `: ${urls.join(' ')}` : ''}`
+    }
+    case 'failed': return `CI の ${checks} が failure（pr-iterate の fix 後も green にならなかった）`
+    case 'pending': return `CI の ${checks} 実行中（${Number.isFinite(ciVerify.waited_seconds) ? ciVerify.waited_seconds : '?'}s 待って未完了）`
+    case 'error': return `CI の ${checks} の状態を取得できなかった`
+    case 'not_run': return `CI の ${checks} の完了待ちに入っていない（pr-iterate が LGTM 前に終端）`
+    default: return 'CI の check で判定する（pr-iterate の LGTM 後に完了を待つ）— 未判定'
+  }
+}
+
+// ac_results の ci AC を CI の判定で置き換える（evaluator / final-ac-reconcile の判定は使わない）。
+// ci AC の結果が無ければ足す。satisfied は ciVerify.status === 'passed' のときだけ true。非配列はそのまま返す。
+export function applyCiAcResults(acResults, actors, ciVerify) {
+  if (!Array.isArray(acResults)) return acResults
+  const ci = ciAcIndexes(actors)
+  if (!ci.length) return acResults
+  const evidence = ciAcEvidence(ciVerify)
+  const satisfied = ciVerify?.status === 'passed'
+  const kept = acResults.filter((r) => !(r && Number.isInteger(r.ac_index) && ci.includes(r.ac_index)))
+  const ciResults = ci.map((i) => ({ ac_index: i, satisfied, verified_by: 'ci', ci: true, evidence }))
+  return [...kept, ...ciResults].sort((a, b) => (Number.isInteger(a?.ac_index) ? a.ac_index : Infinity) - (Number.isInteger(b?.ac_index) ? b.ac_index : Infinity))
+}
+
+// ci AC のうち CI で未達（status !== 'passed'）の index。evaluator の ac_results の有無に依らず決まる。
+export function unsatisfiedCiAcIndexes(actors, ciVerify) {
+  return ciVerify?.status === 'passed' ? [] : ciAcIndexes(actors)
+}
+
+// evaluator feedback のうち ci AC に結び付けた（ac_index が ci AC の）項目を除く。ci AC は CI の check が判定するので、
+// evaluator の指摘を差し戻し・ledger の critical に入れない。非配列はそのまま返す。
+export function dropCiAcFeedback(feedback, actors) {
+  if (!Array.isArray(feedback)) return feedback
+  const ci = ciAcIndexes(actors)
+  if (!ci.length) return feedback
+  return feedback.filter((f) => !(f && Number.isInteger(f.ac_index) && ci.includes(f.ac_index)))
 }
 
 // ledger の AC-<n> item のうち、red→green 実証で deterministic 昇格して checked の AC の index（0 始まり）。
@@ -279,13 +370,16 @@ export function mixedScopeAcReasons(acceptanceCriteria, opts = {}) {
 
 // evaluator / final-ac-reconcile の ac_results から satisfied:false の ac_index を actor 別に返す。
 // actors の範囲外の ac_index（evaluator の誤応答）は数えない。同じ index の重複は 1 件にする。
+// agent の AC で unreachable_env:true（evaluator が未達の理由を実行環境に届かないと判定）のものは human に数える
+// （差し戻さず人手 AC 待ちにする）。
 export function unsatisfiedAcByActor(acResults, actors) {
-  const out = { agent: [], human: [] }
+  const out = { agent: [], human: [], ci: [] }
   const list = Array.isArray(actors) ? actors : []
   for (const r of (Array.isArray(acResults) ? acResults : [])) {
     if (!r || r.satisfied !== false || !Number.isInteger(r.ac_index)) continue
-    const actor = list[r.ac_index]
+    let actor = list[r.ac_index]
     if (!AC_ACTORS.includes(actor)) continue
+    if (actor === 'agent' && r.unreachable_env === true) actor = 'human'
     if (!out[actor].includes(r.ac_index)) out[actor].push(r.ac_index)
   }
   return out
