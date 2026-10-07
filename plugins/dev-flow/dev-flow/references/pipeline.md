@@ -157,7 +157,16 @@ ci AC（actor `ci`）: repo が `skill-config.json` / `.claude/skill-config.json
 evaluator・final AC reconcile の判定を使わず差し戻しにも回さない。PR 作成時に `label` を付け、pr-iterate は `checks` を各 round の
 CI 判定から外し（check-ci `--exclude`）、LGTM 後に別ループ（`ci-verify#i.k`、check-ci `--only`）で `wait_ceiling_seconds` まで完了を待つ。
 success は check run の URL を根拠に satisfied、failure は失敗 job の link を fix に渡して直させ次 iteration で再び待つ（MAX に含める）、
-上限まで未完了は LGTM のまま `ci_verify.status='pending'`。Merge tier の HOLD 理由は
+上限まで未完了は LGTM のまま `ci_verify.status='pending'`。
+repo が `"dev-flow".local_verify`（`{ command, db: { engine: "postgres", version }, env, timeout_seconds }`。
+`normalizeLocalVerify` が不正形を fail-closed で止める）も宣言していれば、ci AC は PR の前にローカル実行で判定する
+（`execLocalVerify`。Validate green 後・Evaluate 前。`local-verify start / wait / stop` を `dev-runner-haiku` の exec-proxy で呼び、
+local-verify が pg-broker の使い捨て Postgres の `database_url` を `env` に入れて `command` を実行する）。exit 0 は `log_path` と exit code を
+根拠に satisfied、PR に `label` は付けるが pr-iterate には `ci_verify.wait:false` を渡して check の完了を待たない（full-ci の結果は
+merge 前に人間が確認する — 終端サマリーの「あなたがやること」）。失敗は `log_tail` を付けて dev-implementer に差し戻し
+（`AGENT_AC_REIMPL_MAX` を Evaluate の agent AC 差し戻しと共有）、上限後も失敗なら ci AC を agent の未達に数えて `ac_agent_unsatisfied`。
+pg-broker に届かない・結果を取得できない・Validate が red なら fail-open で上の CI 待ちに戻し、理由を終端サマリーの「参考」に 1 行出す。
+Merge tier の HOLD 理由は
 `ac_agent_unsatisfied`（差し戻し上限後も未達 = ループの取りこぼし）と `ac_human_pending`（人手 AC 待ち）と
 `ac_ci_pending`（ci AC が CI で success にならなかった。「CI の `<check>` 実行中 — 結果を確認して merge」）に分ける。
 `dev-implementer` が返す `design_decisions` / `pr_notes` は plan（`architecture_decisions` / `pr_notes`）に取り込み、

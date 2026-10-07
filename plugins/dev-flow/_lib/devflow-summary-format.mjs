@@ -51,6 +51,20 @@ function ciAcAction(ciVerify) {
   return `CI の ${checks} の結果を確認して merge`;
 }
 
+// local-verify の結果の 1 行（「参考」節。issue #863）。unavailable / error / skipped は CI の check 待ちに回した理由、
+// stale は passed を最終 tree の根拠にしなかった理由を出す。
+function localVerifyLine(lv) {
+  const cmd = `\`${lv.command ?? 'local_verify'}\``;
+  const log = lv.log_path ? `log: ${lv.log_path}` : 'log なし';
+  if (lv.status === 'passed') return `${cmd} が exit 0（${log}）— ci の AC を satisfied にした。CI の check の結果は待っていない`;
+  if (lv.status === 'failed') {
+    return `${cmd} が exit ${lv.exit_code ?? '?'}（差し戻し ${Number.isInteger(lv.reimpl_count) ? lv.reimpl_count : '?'} 回後も失敗。${log}）— ci の AC は未達（エージェント）`;
+  }
+  // stale: passed を出した tree と最終 tree が異なり、最終 tree で確かめられなかった。CI の check は待っていない
+  if (lv.status === 'stale') return `${cmd} の exit 0 は最終 tree の結果ではない（${mdCell(lv.reason ?? '最終 tree で確かめられない')}）— ci の AC は未確定。PR の CI の結果で判定する`;
+  return `${mdCell(lv.reason ?? '実行できなかった')} — ci の AC は CI の check の結果で判定した`;
+}
+
 function resolvedCell(v) {
   if (v == null) return '';
   const chars = Array.from(String(v).replace(/\s+/g, ' ').trim());
@@ -132,6 +146,9 @@ function resolvedCell(v) {
  *   ないので、結論行の「修正作業が必要」の根拠に数えない（表示専用。欠落なら AC 未達の code はまとめず、未達 AC は全件修正の根拠に数える）
  * @param {{status:string, checks:string[], urls?:string[], waited_seconds?:number}|null|undefined} [opts.ciVerify] - pr-iterate の返り値
  *   ci_verify（LGTM 後の ci_verify.checks の待ち結果）。ac_ci_pending の「現状/対応」に check 名と状態を出す（表示専用）
+ * @param {{status:string, command:string, label?:string, reason?:string, exit_code?:number|null, log_path?:string|null, reimpl_count?:number}|null|undefined} [opts.localVerify] -
+ *   local-verify（ci の AC を pg-broker の DB でローカル実行。issue #863）の結果。「参考」に 1 行出す（unavailable / error / skipped は
+ *   CI の check 待ちに回した理由）。passed なら「あなたがやること」に merge 前の CI 確認を足す（run は check の結果を待っていない）。表示専用
  * @param {{note:number, decision:number, change_bullet:number, sections_over_chars:number}|null|undefined} [opts.prBodyClips] -
  *   pr-artifacts の prBodyClipReport。PR 本文で末尾を切った要約行の件数と pr_sections の合計上限超過字数。
  *   1 つでも非 0 なら「PR 本文で切れた項目」節に出す（表示専用。null / 全 0 なら 1 行も足さない）
@@ -179,6 +196,7 @@ export function buildDevflowSummaryBody({
   outOfScope,
   unsatisfiedAcByActor,
   ciVerify,
+  localVerify,
   prBodyClips,
 }) {
   const EVAL_STALENESS_VALUES = ['none', 'hash_mismatch', 'hash_reconverged', 'iterate_incomplete', 'iterate_fixed'];
@@ -558,6 +576,12 @@ export function buildDevflowSummaryBody({
     youDoLines.push(`1. diff を一読 → \`gh pr ready ${pr}\` → マージ`);
   }
   let youDoN = youDoLines.length + 1;
+  // ci の AC をローカル実行で satisfied にした run は、PR に付けた label の CI（full-ci の build / docker-build / 全 unit テスト等）の
+  // 結果を run が待っていない。merge 前に人間が確認する（issue #863）。
+  if (localVerify != null && localVerify.status === 'passed') {
+    youDoLines.push(`${youDoN}. マージ前: PR の CI（${localVerify.label ? `\`${localVerify.label}\` ラベルで走る ` : ''}build / docker-build / 全 unit テスト等）の結果を確認する — ci の AC はローカル実行で判定済みで、run は check の結果を待っていない`);
+    youDoN++;
+  }
   const seenDangerClasses = new Set();
   const dangerForYouDo = Array.isArray(dangerHits) ? dangerHits : [];
   for (const cls of dangerForYouDo) {
@@ -1017,6 +1041,9 @@ export function buildDevflowSummaryBody({
   }
   if (baseFailing.length > 0) {
     referenceLines.push(`- base でも失敗する既存の失敗 ${baseFailing.length} 件（diff と無関係のため green 要件から除外）: ${baseFailing.map((f) => '`' + f + '`').join(', ')}`);
+  }
+  if (localVerify != null) {
+    referenceLines.push(`- ローカル検証 (local_verify): ${localVerifyLine(localVerify)}`);
   }
   if (uiVerify != null && uiVerify !== 'skipped') {
     const modeSuffix = uiVerifyMode ? ` (mode: ${uiVerifyMode})` : '';

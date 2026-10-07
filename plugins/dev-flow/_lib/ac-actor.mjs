@@ -288,7 +288,12 @@ export function ciAcIndexes(actors) {
 export const CI_VERIFY_STATUSES = ['passed', 'failed', 'pending', 'error', 'not_run']
 
 // ci AC の判定文。ciVerify は pr-iterate の返り値 ci_verify（null は未判定 — PR 作成前・pr-iterate 未起動）。
+// source:'local' は local-verify（pg-broker の DB でのローカル実行。issue #863）の結果 {status, command, exit_code, log_path}。
 function ciAcEvidence(ciVerify) {
+  if (ciVerify?.source === 'local') {
+    const run = `ローカル実行（${ciVerify.command ?? 'local_verify'}）が exit ${ciVerify.exit_code ?? '?'}`
+    return `${run}${ciVerify.status === 'passed' ? '' : '（差し戻し上限まで直らなかった）'}: ${ciVerify.log_path ?? 'log なし'}`
+  }
   const checks = Array.isArray(ciVerify?.checks) && ciVerify.checks.length ? ciVerify.checks.join(', ') : 'CI'
   switch (ciVerify?.status) {
     case 'passed': {
@@ -305,6 +310,7 @@ function ciAcEvidence(ciVerify) {
 
 // ac_results の ci AC を CI の判定で置き換える（evaluator / final-ac-reconcile の判定は使わない）。
 // ci AC の結果が無ければ足す。satisfied は ciVerify.status === 'passed' のときだけ true。非配列はそのまま返す。
+// ciVerify.source === 'local'（local-verify の結果）なら verified_by は 'local'、根拠は log_path と exit code。
 export function applyCiAcResults(acResults, actors, ciVerify) {
   if (!Array.isArray(acResults)) return acResults
   const ci = ciAcIndexes(actors)
@@ -312,7 +318,8 @@ export function applyCiAcResults(acResults, actors, ciVerify) {
   const evidence = ciAcEvidence(ciVerify)
   const satisfied = ciVerify?.status === 'passed'
   const kept = acResults.filter((r) => !(r && Number.isInteger(r.ac_index) && ci.includes(r.ac_index)))
-  const ciResults = ci.map((i) => ({ ac_index: i, satisfied, verified_by: 'ci', ci: true, evidence }))
+  const verifiedBy = ciVerify?.source === 'local' ? 'local' : 'ci'
+  const ciResults = ci.map((i) => ({ ac_index: i, satisfied, verified_by: verifiedBy, ci: true, evidence }))
   return [...kept, ...ciResults].sort((a, b) => (Number.isInteger(a?.ac_index) ? a.ac_index : Infinity) - (Number.isInteger(b?.ac_index) ? b.ac_index : Infinity))
 }
 

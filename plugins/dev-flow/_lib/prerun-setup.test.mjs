@@ -10,6 +10,7 @@ import {
   summarizePrerunDeps,
   hasNextJs,
   normalizeCiVerify,
+  normalizeLocalVerify,
 } from './prerun-setup.mjs';
 
 function validRaw(overrides = {}) {
@@ -244,6 +245,31 @@ test('validatePrerunSetup: ci_verify の形が不正なら fail-closed で throw
     assert.throws(() => validatePrerunSetup(validRaw({ ci_verify: { ...CI_VERIFY, [key]: value } }), 641), new RegExp(`ci_verify\\.${key}`), `${key}=${JSON.stringify(value)}`);
   }
   assert.throws(() => validatePrerunSetup(validRaw({ ci_verify: ['full-ci'] }), 641), /ci_verify/);
+});
+
+// ---- local_verify（issue #863）: ci の AC をローカル実行で判定する宣言を検証・正規化する ----
+
+const LOCAL_VERIFY = { command: 'pnpm test:e2e:local', db: { engine: 'postgres', version: '17' }, env: 'E2E_EXTERNAL_DATABASE_URL', timeout_seconds: 1500 };
+
+test('validatePrerunSetup: local_verify は正規化して返し、null / 欠落は未設定（null）', () => {
+  assert.deepEqual(validatePrerunSetup(validRaw({ local_verify: LOCAL_VERIFY }), 641).local_verify, LOCAL_VERIFY);
+  assert.equal(validatePrerunSetup(validRaw({ local_verify: null }), 641).local_verify, null);
+  assert.equal(validatePrerunSetup(validRaw(), 641).local_verify, null);
+  assert.equal(normalizeLocalVerify({ ...LOCAL_VERIFY, command: ' pnpm test:e2e:local ' }).command, 'pnpm test:e2e:local');
+});
+
+test('validatePrerunSetup: local_verify の形が不正なら fail-closed で throw（黙って無視しない）', () => {
+  for (const [key, value, re] of [
+    ['command', '', /local_verify\.command/],
+    ['db', null, /local_verify\.db/],
+    ['db', { engine: 'mysql', version: '8' }, /local_verify\.db\.engine/],
+    ['db', { engine: 'postgres', version: 17 }, /local_verify\.db\.version/],
+    ['env', 'E2E-URL', /local_verify\.env/],
+    ['timeout_seconds', 0, /local_verify\.timeout_seconds/],
+    ['timeout_seconds', '1500', /local_verify\.timeout_seconds/],
+  ]) {
+    assert.throws(() => validatePrerunSetup(validRaw({ local_verify: { ...LOCAL_VERIFY, [key]: value } }), 641), re, `${key}=${JSON.stringify(value)}`);
+  }
 });
 
 test('summarizePrerunDeps: ok:true note非空は logLine に note を含む', () => {

@@ -466,7 +466,7 @@ skills/
 │   │   ├── agents/                       # 8 dev-flow agent 実体
 │   │   ├── _lib/                         # workflow のロジック本体・test
 │   │   ├── _shared/scripts/              # dev-flow 共通スクリプト
-│   │   ├── bin/                          # dev-flow bare 名 wrapper（23本）
+│   │   ├── bin/                          # dev-flow bare 名 wrapper（24本）
 │   │   └── dev-flow/, dev-flow-health/, dev-issue-analyze/,
 │   │       git-commit/, git-pr/, github-issue-orchestrator/,
 │   │       pr-iterate/（SKILL.md 7本）

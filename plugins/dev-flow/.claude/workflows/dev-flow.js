@@ -222,6 +222,7 @@ function validatePrerunSetup(raw, issue) {
   const branch = isNonEmptyString(raw.branch) ? raw.branch : `feature/issue-${issue}`;
   const frameworks = raw.stack.frameworks.filter((f) => typeof f === 'string');
   const ciVerify = normalizeCiVerify(raw.ci_verify);
+  const localVerify = normalizeLocalVerify(raw.local_verify);
 
   return {
     base: raw.base.trim(),
@@ -235,6 +236,7 @@ function validatePrerunSetup(raw, issue) {
     epoch: raw.epoch,
     epoch_end: raw.epoch_end,
     ci_verify: ciVerify,
+    local_verify: localVerify,
   };
 }
 
@@ -254,6 +256,26 @@ function normalizeCiVerify(raw) {
     checks: raw.checks.map((c) => c.trim()),
     commands: raw.commands.map((c) => c.trim()),
     wait_ceiling_seconds: raw.wait_ceiling_seconds,
+  };
+}
+
+function normalizeLocalVerify(raw) {
+  if (raw == null) return null;
+  const fail = (key, value) => {
+    throw new Error(`dev-flow: skill-config の "dev-flow".local_verify.${key} が不正（受信: ${stringifyForError(value)}）— { command: string, db: { engine: "postgres", version: string }, env: 環境変数名, timeout_seconds: 正の整数 } に直してから再実行せよ`);
+  };
+  if (!isPlainObject(raw)) fail('(object)', raw);
+  if (!isNonEmptyString(raw.command)) fail('command', raw.command);
+  if (!isPlainObject(raw.db)) fail('db', raw.db);
+  if (raw.db.engine !== 'postgres') fail('db.engine', raw.db.engine);
+  if (!isNonEmptyString(raw.db.version)) fail('db.version', raw.db.version);
+  if (!(typeof raw.env === 'string' && /^[A-Za-z_][A-Za-z0-9_]*$/.test(raw.env))) fail('env', raw.env);
+  if (!(Number.isInteger(raw.timeout_seconds) && raw.timeout_seconds > 0)) fail('timeout_seconds', raw.timeout_seconds);
+  return {
+    command: raw.command.trim(),
+    db: { engine: 'postgres', version: raw.db.version.trim() },
+    env: raw.env,
+    timeout_seconds: raw.timeout_seconds,
   };
 }
 
@@ -1101,6 +1123,10 @@ function ciAcIndexes(actors) {
 const CI_VERIFY_STATUSES = ['passed', 'failed', 'pending', 'error', 'not_run']
 
 function ciAcEvidence(ciVerify) {
+  if (ciVerify?.source === 'local') {
+    const run = `ローカル実行（${ciVerify.command ?? 'local_verify'}）が exit ${ciVerify.exit_code ?? '?'}`
+    return `${run}${ciVerify.status === 'passed' ? '' : '（差し戻し上限まで直らなかった）'}: ${ciVerify.log_path ?? 'log なし'}`
+  }
   const checks = Array.isArray(ciVerify?.checks) && ciVerify.checks.length ? ciVerify.checks.join(', ') : 'CI'
   switch (ciVerify?.status) {
     case 'passed': {
@@ -1122,7 +1148,8 @@ function applyCiAcResults(acResults, actors, ciVerify) {
   const evidence = ciAcEvidence(ciVerify)
   const satisfied = ciVerify?.status === 'passed'
   const kept = acResults.filter((r) => !(r && Number.isInteger(r.ac_index) && ci.includes(r.ac_index)))
-  const ciResults = ci.map((i) => ({ ac_index: i, satisfied, verified_by: 'ci', ci: true, evidence }))
+  const verifiedBy = ciVerify?.source === 'local' ? 'local' : 'ci'
+  const ciResults = ci.map((i) => ({ ac_index: i, satisfied, verified_by: verifiedBy, ci: true, evidence }))
   return [...kept, ...ciResults].sort((a, b) => (Number.isInteger(a?.ac_index) ? a.ac_index : Infinity) - (Number.isInteger(b?.ac_index) ? b.ac_index : Infinity))
 }
 
@@ -1197,6 +1224,60 @@ function agentAcFeedback(indexes, acceptanceCriteria, acResults) {
   })
 }
 // ==== END inline: _lib/ac-actor.mjs ====
+// ==== BEGIN inline: _lib/local-verify.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
+
+const LOCAL_VERIFY_START_WAIT_SEC = 300
+const LOCAL_VERIFY_WAIT_SEC = 480
+const LOCAL_VERIFY_TAIL_MAX = 4000
+const LOCAL_VERIFY_STATE_DIR = '.devflow-tmp/local-verify'
+
+function localVerifyConfigArg(cfg) {
+  return encodeURIComponent(JSON.stringify(cfg)).replace(/[!'()*~]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase())
+}
+
+function localVerifyWaitPolls(timeoutSeconds) {
+  const t = Number.isInteger(timeoutSeconds) && timeoutSeconds > 0 ? timeoutSeconds : 0
+  return Math.ceil(t / LOCAL_VERIFY_WAIT_SEC) + 1
+}
+
+function localVerifyVerdict(res) {
+  if (!res || typeof res !== 'object') return 'error'
+  switch (res.status) {
+    case 'passed': return res.exit_code === 0 ? 'passed' : 'error'
+    case 'failed':
+    case 'timeout': return 'failed'
+    case 'unavailable': return 'unavailable'
+    case 'running': return 'running'
+    default: return 'error'
+  }
+}
+
+function localVerifyFeedback({ result, command, acIndexes, acceptanceCriteria }) {
+  const acs = Array.isArray(acceptanceCriteria) ? acceptanceCriteria : []
+  const how = result?.status === 'timeout' ? 'timeout_seconds を超えて止められた' : `exit ${result?.exit_code ?? '?'} で失敗した`
+  const logTail = String(result?.log_tail ?? '').slice(-LOCAL_VERIFY_TAIL_MAX)
+  return (Array.isArray(acIndexes) ? acIndexes : []).map((i) => ({
+    severity: 'major',
+    topic: `AC-${i + 1} 未達`,
+    ac_index: i,
+    description: `AC-${i + 1}「${String(acs[i] ?? '')}」のローカル実行（\`${command}\`。pg-broker の使い捨て Postgres に向けて実行）が ${how}`,
+    suggestion: 'log_tail（失敗した実行の出力の末尾）から原因を特定して実装を直せ。テストの期待値を弱めて通さない。全文は log_path にある',
+    log_path: typeof result?.log_path === 'string' ? result.log_path : null,
+    log_tail: logTail,
+  }))
+}
+
+function localVerifyCiOutcome(localVerify) {
+  if (!localVerify || !['passed', 'failed'].includes(localVerify.status)) return null
+  return {
+    source: 'local',
+    status: localVerify.status,
+    command: localVerify.command,
+    exit_code: localVerify.exit_code ?? null,
+    log_path: localVerify.log_path ?? null,
+  }
+}
+// ==== END inline: _lib/local-verify.mjs ====
 
 // ==== BEGIN inline: _lib/final-ac-reconcile.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 
@@ -2414,6 +2495,17 @@ function ciAcAction(ciVerify) {
   return `CI の ${checks} の結果を確認して merge`;
 }
 
+function localVerifyLine(lv) {
+  const cmd = `\`${lv.command ?? 'local_verify'}\``;
+  const log = lv.log_path ? `log: ${lv.log_path}` : 'log なし';
+  if (lv.status === 'passed') return `${cmd} が exit 0（${log}）— ci の AC を satisfied にした。CI の check の結果は待っていない`;
+  if (lv.status === 'failed') {
+    return `${cmd} が exit ${lv.exit_code ?? '?'}（差し戻し ${Number.isInteger(lv.reimpl_count) ? lv.reimpl_count : '?'} 回後も失敗。${log}）— ci の AC は未達（エージェント）`;
+  }
+  if (lv.status === 'stale') return `${cmd} の exit 0 は最終 tree の結果ではない（${mdCell(lv.reason ?? '最終 tree で確かめられない')}）— ci の AC は未確定。PR の CI の結果で判定する`;
+  return `${mdCell(lv.reason ?? '実行できなかった')} — ci の AC は CI の check の結果で判定した`;
+}
+
 function resolvedCell(v) {
   if (v == null) return '';
   const chars = Array.from(String(v).replace(/\s+/g, ' ').trim());
@@ -2463,6 +2555,7 @@ function buildDevflowSummaryBody({
   outOfScope,
   unsatisfiedAcByActor,
   ciVerify,
+  localVerify,
   prBodyClips,
 }) {
   const EVAL_STALENESS_VALUES = ['none', 'hash_mismatch', 'hash_reconverged', 'iterate_incomplete', 'iterate_fixed'];
@@ -2768,6 +2861,10 @@ function buildDevflowSummaryBody({
     youDoLines.push(`1. diff を一読 → \`gh pr ready ${pr}\` → マージ`);
   }
   let youDoN = youDoLines.length + 1;
+  if (localVerify != null && localVerify.status === 'passed') {
+    youDoLines.push(`${youDoN}. マージ前: PR の CI（${localVerify.label ? `\`${localVerify.label}\` ラベルで走る ` : ''}build / docker-build / 全 unit テスト等）の結果を確認する — ci の AC はローカル実行で判定済みで、run は check の結果を待っていない`);
+    youDoN++;
+  }
   const seenDangerClasses = new Set();
   const dangerForYouDo = Array.isArray(dangerHits) ? dangerHits : [];
   for (const cls of dangerForYouDo) {
@@ -3171,6 +3268,9 @@ function buildDevflowSummaryBody({
   }
   if (baseFailing.length > 0) {
     referenceLines.push(`- base でも失敗する既存の失敗 ${baseFailing.length} 件（diff と無関係のため green 要件から除外）: ${baseFailing.map((f) => '`' + f + '`').join(', ')}`);
+  }
+  if (localVerify != null) {
+    referenceLines.push(`- ローカル検証 (local_verify): ${localVerifyLine(localVerify)}`);
   }
   if (uiVerify != null && uiVerify !== 'skipped') {
     const modeSuffix = uiVerifyMode ? ` (mode: ${uiVerifyMode})` : '';
@@ -4341,6 +4441,9 @@ const UISRV = { type: 'object', required: ['ok', 'phase'], properties: { ok: { t
 const UIVERIFY = { type: 'object', required: ['ok', 'mode'], properties: { ok: { type: 'boolean' }, mode: { type: 'string', enum: ['scenario', 'smoke'] }, checks: { type: 'array', items: { type: 'object', required: ['action', 'result'], properties: { ac_index: { type: 'number' }, action: { type: 'string' }, result: { type: 'string', enum: ['pass', 'fail', 'skip'] }, evidence: { type: 'string' } } } }, console_errors: { type: 'array', items: { type: 'string' } }, screenshots: { type: 'array', items: { type: 'string' } }, summary: { type: 'string' }, env_failure: { type: 'boolean' } } }
 const UILOGIN = { type: 'object', required: ['ok'], properties: { ok: { type: 'boolean' }, skipped: { type: 'boolean' }, ran: { type: 'number' }, total: { type: 'number' }, failed: { type: 'object' }, error: { type: 'string' }, env_failure: { type: 'boolean' } } }
 const UISTOP = { type: 'object', required: ['server_stopped', 'session_closed'], properties: { server_stopped: { type: 'boolean' }, session_closed: { type: 'boolean' }, leftover: { type: 'array', items: { type: 'string' } }, notes: { type: 'string' } } }
+// local-verify start / wait / stop の stdout JSON（_shared/scripts/local-verify.sh）。
+const LOCALVERIFY = { type: 'object', required: ['ok', 'status'], properties: { ok: { type: 'boolean' }, status: { type: 'string', enum: ['running', 'passed', 'failed', 'timeout', 'stopped', 'unavailable', 'error'] }, exit_code: { type: ['number', 'null'] }, log_path: { type: 'string' }, log_tail: { type: 'string' }, reason: { type: 'string' }, error: { type: 'string' }, db_deleted: { type: ['boolean', 'null'] } } }
+const LOCALVERIFY_STOP = { type: 'object', required: ['ok'], properties: { ok: { type: 'boolean' }, stopped: { type: 'boolean' }, was_running: { type: 'boolean' }, db_deleted: { type: ['boolean', 'null'] }, error: { type: 'string' } } }
 const SYNCRES = { type: 'object', required: ['ok'], properties: { ok: { type: 'boolean' }, head: { type: 'string' }, error: { type: 'string' }, epoch: { type: 'number' } } }
 // MERGE_FACTS: Merge tier 統合 exec-proxy (`_shared/scripts/merge-tier-facts.sh`) の応答 schema。
 // Merge tier の read-only 事実 7 種（diffhash / risk / changed / pr / head_tree / checks / closes）を 1 spawn で採り、
@@ -5741,6 +5844,10 @@ const CI_VERIFY = PRERUN.ci_verify
 req.ac_actors = acActorsOf(req.acceptance_criteria, { repo: REPO, observational: req.ac_observational, ciVerify: CI_VERIFY })
 const CI_AC_INDEXES = ciAcIndexes(req.ac_actors)
 if (CI_VERIFY) log(`analyze: ci_verify（label=${CI_VERIFY.label} / checks=${CI_VERIFY.checks.join(', ')} / 上限 ${CI_VERIFY.wait_ceiling_seconds}s）— ci の AC ${CI_AC_INDEXES.length} 件${CI_AC_INDEXES.length ? `（AC-${CI_AC_INDEXES.map((n) => n + 1).join(', AC-')}）— evaluator に判定させず、PR に label を付けて CI の check で判定する` : ''}`)
+// local_verify: repo が "dev-flow".local_verify を宣言していれば、ci の AC を PR の前に pg-broker の DB でローカル実行して
+// 判定する（execLocalVerify。Validate green 後・Evaluate 前）。pg-broker に届かなければ上の CI の check 待ちに戻る。
+const LOCAL_VERIFY = PRERUN.local_verify
+if (LOCAL_VERIFY && CI_AC_INDEXES.length) log(`analyze: local_verify（${LOCAL_VERIFY.command} / postgres ${LOCAL_VERIFY.db.version} / 上限 ${LOCAL_VERIFY.timeout_seconds}s）— ci の AC を PR の前にローカル実行で判定する（pg-broker に届かなければ CI の check で判定）`)
 if (req.ac_actors.includes('human')) log(`analyze: 人手 AC ${req.ac_actors.filter((a) => a === 'human').length} 件（AC-${req.ac_actors.map((a, i) => a === 'human' ? i + 1 : null).filter((n) => n != null).join(', AC-')}）— 未達でも差し戻さず Merge tier の人手 AC 待ちへ回す`)
 
 // isolation probe: implementer と同じ Write tool 経路で書けるかを subagent で検証する（wrapper の Bash では
@@ -5781,6 +5888,9 @@ let state = {
   // Validate が green 要件から外した「base でも失敗する既存の失敗」（env）と、base 再実行済みで ENV でなかったファイル（ran）
   baseFailing: { env: [], ran: [] },
   unsatisfiedAc: false, unsatisfiedAcByActor: { agent: [], human: [], ci: [] },
+  // local-verify（ci の AC のローカル実行。execLocalVerify）の結果と、その失敗で dev-implementer へ差し戻した回数
+  // （AGENT_AC_REIMPL_MAX を Evaluate の agent AC 差し戻しと共有する）
+  localVerify: null, localVerifyReimplCount: 0,
   evalDiffHash: null, secDiffHash: null, validateDiffHash: null,
   prDiffHash: null, staleDiffFiles: null, prHeadTreeOid: null,
   uiVerifyConfig: null, uiTouched: false, uiVerifyStatus: 'skipped', uiVerifyMode: null,
@@ -6213,6 +6323,129 @@ async function execValidatePhase(state) {
 }
 
 // ============================================================
+// local-verify: ci の AC（ci_verify で CI の check が判定する AC）を、repo が "dev-flow".local_verify を
+// 宣言した run だけ、Validate が green になった後・Evaluate の前に pg-broker の使い捨て Postgres に向けてローカル実行する
+// （_shared/scripts/local-verify.sh を bin/ の bare 名 local-verify で exec-proxy から呼ぶ。経路の判定は _lib/local-verify.mjs）。
+//   passed: ci の AC を satisfied にする（Final reconcile の ci 反映で localVerifyCiOutcome を使う）。pr-iterate は check を待たない
+//   failed: log_tail を付けて dev-implementer に差し戻し（AGENT_AC_REIMPL_MAX を Evaluate の agent AC 差し戻しと共有）、
+//     unit テストを Validate と同じループで確かめてから再実行する。上限後も失敗なら ci の AC は ac_agent_unsatisfied で HOLD
+//   unavailable / error / Validate red: fail-open（pr-iterate が LGTM 後に CI の check を待って判定する）。理由は終端サマリーに出す
+// 1 回の Bash 呼び出しは 600 秒以内（start は DB 確保まで、wait は LOCAL_VERIFY_WAIT_SEC まで待って running を返す）。
+// stop は finally で必ず呼ぶ。呼ばれなくても local-verify の supervisor が終了時の trap で DB を DELETE する。
+// ============================================================
+// start には Setup 時に検証した宣言（LOCAL_VERIFY）を --config-pct で渡す。local-verify は worktree の宣言を読み直さず
+// これを実行し、worktree の宣言が一致しなければ error を返す（実装が command を書き換えて ci の AC を satisfied にできないように）。
+async function runLocalVerifyOnce(attempt, phaseName = 'Validate') {
+  const stateDir = `${WT}/${LOCAL_VERIFY_STATE_DIR}`
+  const proxy = (cmd) => `cd ${WT} で作業。次を Bash で **timeout 600000** を指定して 1 回だけ実行し、**stdout の JSON object をそのまま** 返せ`
+    + `（判定や脚色をしない。失敗時に ok:true を生成してはならない。& や nohup を足さない — 常駐化はコマンド自身が行う）:\n${cmd}`
+  let res = null
+  try {
+    res = await failOpenAgent(
+      proxy(`local-verify start --worktree '${WT}' --state-dir '${stateDir}' --wait-sec ${LOCAL_VERIFY_START_WAIT_SEC} --config-pct ${localVerifyConfigArg(LOCAL_VERIFY)}`),
+      { agentType: 'dev-runner-haiku', schema: LOCALVERIFY, label: `local-verify-start#${attempt}`, phase: phaseName },
+    )
+    const polls = localVerifyWaitPolls(LOCAL_VERIFY.timeout_seconds)
+    for (let k = 1; localVerifyVerdict(res) === 'running' && k <= polls; k++) {
+      res = await failOpenAgent(
+        proxy(`local-verify wait --state-dir '${stateDir}' --wait-sec ${LOCAL_VERIFY_WAIT_SEC}`),
+        { agentType: 'dev-runner-haiku', schema: LOCALVERIFY, label: `local-verify-wait#${attempt}.${k}`, phase: phaseName },
+      )
+    }
+  } finally {
+    const stop = await failOpenAgent(
+      proxy(`local-verify stop --state-dir '${stateDir}'`),
+      { agentType: 'dev-runner-haiku', schema: LOCALVERIFY_STOP, label: `local-verify-stop#${attempt}`, phase: phaseName },
+    )
+    if (!stop || stop.ok !== true) log(`⚠️ local-verify-stop#${attempt}: 停止を確認できない（${stop?.error ?? 'proxy の応答が無い'}）— DB の DELETE は local-verify の supervisor の trap に委ねる`)
+  }
+  return res
+}
+
+async function execLocalVerify(state) {
+  if (!LOCAL_VERIFY || !CI_AC_INDEXES.length) return state
+  const command = LOCAL_VERIFY.command
+  const acList = `AC-${CI_AC_INDEXES.map((n) => n + 1).join(', AC-')}`
+  const fallBack = (status, reason) => {
+    state.localVerify = { status, command, label: CI_VERIFY.label, reason, reimpl_count: state.localVerifyReimplCount }
+    log(`⚠️ local-verify: ${reason} — ci の AC（${acList}）は CI の check で判定する（fail-open）`)
+    return state
+  }
+  if (!(state.val && state.val.green === true)) return fallBack('skipped', `Validate が green でないため実行しない（tests=${state.val?.tests ?? 'null'}）`)
+  // 実行する tree の diff hash（tree_hash）。passed はこの tree でしか確かめていないので、Final reconcile で最終 tree と
+  // 突き合わせる（reconcileLocalVerifyTree）。初回は Validate の diff-gate の hash（最後に test を走らせた tree）を使い、
+  // 差し戻し後は実行前に取り直す。取れなければ null（Final reconcile で最終 tree での再実行に倒れる）。
+  let treeHash = state.validateDiffHash ?? null
+  for (let attempt = 1; ; attempt++) {
+    if (treeHash == null) treeHash = await localVerifyTreeHash(state.dhPrompt, `diff-hash-local-verify#${attempt}`, 'Validate')
+    const res = await runLocalVerifyOnce(attempt)
+    const verdict = localVerifyVerdict(res)
+    if (verdict === 'unavailable') return fallBack('unavailable', `pg-broker に届かない（${res.reason ?? '理由不明'}）`)
+    if (verdict === 'running') return fallBack('error', `local-verify が ${LOCAL_VERIFY.timeout_seconds}s を過ぎても終わらない`)
+    if (verdict === 'error') return fallBack('error', `local-verify の結果を取得できない（${res?.error ?? 'proxy の応答が無い・形が不正'}）`)
+    const outcome = { command, label: CI_VERIFY.label, exit_code: res.exit_code ?? null, log_path: res.log_path ?? null, reimpl_count: state.localVerifyReimplCount, tree_hash: treeHash }
+    if (verdict === 'passed') {
+      state.localVerify = { status: 'passed', ...outcome }
+      log(`local-verify#${attempt}: ${command} が exit 0 — ci の AC（${acList}）を satisfied にする（PR に label "${CI_VERIFY.label}" は付けるが check の結果は待たない）`)
+      return state
+    }
+    if (state.localVerifyReimplCount >= AGENT_AC_REIMPL_MAX) {
+      state.localVerify = { status: 'failed', ...outcome }
+      log(`⚠️ local-verify#${attempt}: ${command} が ${res.status === 'timeout' ? 'timeout' : `exit ${res.exit_code}`} — 差し戻し上限（AGENT_AC_REIMPL_MAX=${AGENT_AC_REIMPL_MAX}）到達。ci の AC（${acList}）は Merge tier の ac_agent_unsatisfied で HOLD`)
+      return state
+    }
+    state.localVerifyReimplCount++
+    log(`local-verify#${attempt}: ${command} が ${res.status === 'timeout' ? 'timeout' : `exit ${res.exit_code}`} — log_tail を付けて dev-implementer へ差し戻す（${state.localVerifyReimplCount}/${AGENT_AC_REIMPL_MAX}）`)
+    const feedback = localVerifyFeedback({ result: res, command, acIndexes: CI_AC_INDEXES, acceptanceCriteria: state.req.acceptance_criteria })
+    const reimplResults = await runImplement(state.req, state.plan, feedback, `reimpl-local-verify#${attempt}`)
+    for (const r of reimplResults) { if (r && Array.isArray(r.concerns)) state.concerns.push(...r.concerns) }
+    state.plan = await trimPrSectionsIfOver(state.req, adoptImplPrNotes(adoptReportedFiles(state.plan, reimplResults), reimplResults), `sections-trim-local-verify#${attempt}`)
+    // 差し戻し後の tree で unit テストを Validate と同じループで確かめてから再実行する（tree が変わったので validate_result は渡さない）
+    const gfBefore = state.greenFixIterations.length
+    state.val = await runValidateLoop('local-verify', { concerns: state.concerns, greenFixIterations: state.greenFixIterations, phaseName: 'Validate', baseFailing: state.baseFailing })
+    state.validateDiffHash = null
+    treeHash = null
+    state.greenFixCount = state.greenFixIterations.length
+    if (state.greenFixCount > gfBefore) state.concerns.push(`local-verify 差し戻し後の green-fix が ${state.greenFixCount - gfBefore} 回発生: テストの期待値・assert の弱体化で green 化していないかテスト diff を重点監査せよ`)
+  }
+}
+
+async function localVerifyTreeHash(dhPrompt, label, phaseName) {
+  if (typeof dhPrompt !== 'string') return null
+  const dh = await failOpenAgent(dhPrompt, { agentType: 'dev-runner-haiku-ro', schema: DIFFHASH, label, phase: phaseName, retryOnContractViolation: true })
+  return dh && typeof dh.hash === 'string' ? dh.hash : null
+}
+
+// Final reconcile: local-verify の passed は実行した tree（tree_hash）でしか確かめていない。Evaluate の差し戻し・
+// pr-iterate の fix で最終 tree が変わっていれば、最終 tree で 1 回だけ再実行して結果を置き換える（差し戻しはしない）。
+// worktree が最終 HEAD に無い・hash が取れない・再実行の結果が取れないときは passed を捨てて stale にする —
+// pr-iterate には wait:false を渡して CI の check を待っていないので、ci の AC は ac_ci_pending で HOLD になる。
+async function reconcileLocalVerifyTree(state, { worktreeAtFinal }) {
+  const lv = state.localVerify
+  const stale = (reason) => {
+    state.localVerify = { ...lv, status: 'stale', reason }
+    log(`⚠️ local-verify: ${reason} — 最終 tree の結果ではない passed を ci の AC の根拠にしない（CI の check は待っていないので ac_ci_pending で HOLD）`)
+    return state
+  }
+  if (!worktreeAtFinal) return stale('worktree を PR の最終 HEAD に同期できず、最終 tree で確かめられない')
+  const finalHash = await localVerifyTreeHash(state.dhPrompt, 'diff-hash-local-verify-final', 'Final reconcile')
+  if (finalHash == null) return stale('最終 tree の diff hash を取得できない')
+  if (lv.tree_hash === finalHash) {
+    log(`local-verify: 最終 tree（${finalHash.slice(0, 8)}）は exit 0 を出した tree と一致 — その結果で ci の AC を判定する`)
+    return state
+  }
+  log(`local-verify: exit 0 を出した tree（${typeof lv.tree_hash === 'string' ? lv.tree_hash.slice(0, 8) : '不明'}）と最終 tree（${finalHash.slice(0, 8)}）が異なる — 最終 tree で再実行する`)
+  const res = await runLocalVerifyOnce('final', 'Final reconcile')
+  const verdict = localVerifyVerdict(res)
+  if (verdict === 'passed' || verdict === 'failed') {
+    state.localVerify = { status: verdict, command: lv.command, label: lv.label, exit_code: res.exit_code ?? null, log_path: res.log_path ?? null, reimpl_count: lv.reimpl_count, tree_hash: finalHash }
+    log(`local-verify#final: ${lv.command} が ${verdict === 'passed' ? 'exit 0' : res.status === 'timeout' ? 'timeout' : `exit ${res.exit_code}`} — 最終 tree の結果で ci の AC を判定する`)
+    return state
+  }
+  return stale(`最終 tree での再実行の結果が取れない（${verdict}: ${res?.reason ?? res?.error ?? 'proxy の応答が無い・形が不正'}）`)
+}
+
+// ============================================================
 // Phase Security floor: realized diff に diff-risk-classify(W1)を当て、
 // 7 danger クラスを常時 seed した Goal Ledger に反映する(W5)。
 // clean クラスは自動 check、hit クラスは critical 据え置きで evaluator が evidence 解消する。
@@ -6591,7 +6824,8 @@ async function execEvaluatePhase(state) {
   let reimplCount = 0          // reimpl#i（fix_feedback 付き差し戻し）の実行回数。>0 なら PR 前にフルテストを再実行する
   let unsatisfiedAc = false
   let unsatisfiedByActor = { agent: [], human: [], ci: [] }
-  let agentAcReimplCount = 0  // agent AC の未達を理由に含む reimpl#i の回数（AGENT_AC_REIMPL_MAX で cap）
+  // agent AC の未達を理由に含む reimpl#i の回数（AGENT_AC_REIMPL_MAX で cap）。local-verify の失敗で差し戻した回数も含める
+  let agentAcReimplCount = state.localVerifyReimplCount
   // evaluate の上限。agent AC の未達が残る間は AGENT_AC_REIMPL_MAX まで延長する — standard（EVAL_PASSES=1）でも
   // 「worktree 内で満たせる AC が未達のまま PR → lgtm → HOLD」を差し戻しで拾うため。
   let evalLimit = EVAL_PASSES
@@ -7081,6 +7315,7 @@ feedClockMark('implement_end', maxEpochRes(state.implResults ?? []))
 phase('Validate')
 state = await execValidatePhase(state)
 if (state.__earlyReturn) return state.__earlyReturn
+state = await execLocalVerify(state)
 feedClockMark('validate_end', epochResOf(state.validateEndEpochRes))
 
 phase('Security floor')
@@ -7242,10 +7477,12 @@ let prBodyLatest = prBody
 // である args.setup.epoch とは別時刻のため、probe パス
 // `.devflow-tmp/.isolation-probe-<token>` が衝突しない）。
 // ci_verify: ci の AC がある run だけ渡す。pr-iterate は checks を各 round の CI 判定から外し、LGTM 後に別ループで完了を待つ。
+// local-verify で ci の AC が決着した run（passed / failed）は wait:false — checks は round の CI 判定から外したまま、完了は待たない。
+const LOCAL_VERIFY_DECIDED = localVerifyCiOutcome(state.localVerify) != null
 const prIterateArgs = () => ({
   pr: pr.pr_number, acceptance_criteria: req.acceptance_criteria,
   plugin_commit: PLUGIN_COMMIT,
-  ...(CI_AC_INDEXES.length ? { ci_verify: { label: CI_VERIFY.label, checks: CI_VERIFY.checks, wait_ceiling_seconds: CI_VERIFY.wait_ceiling_seconds } } : {}),
+  ...(CI_AC_INDEXES.length ? { ci_verify: { label: CI_VERIFY.label, checks: CI_VERIFY.checks, wait_ceiling_seconds: CI_VERIFY.wait_ceiling_seconds, ...(LOCAL_VERIFY_DECIDED ? { wait: false } : {}) } } : {}),
   nested: {
     caller: 'dev-flow', cwd: WT, head_ref: state.setup.branch,
     ...(REPO ? { repo: REPO } : {}),
@@ -7357,6 +7594,7 @@ let changedFilesFinal = null
 // （未計測をキー欠落として正しく表現するため、疑似的な微小値は入れない）。
 let finalEpochRes = null
 let finalSyncHead = null   // reconcile-sync 成功時の HEAD sha（40hex）。ci-final の期待 sha
+let finalSyncOk = false    // reconcile-sync が成功し worktree が PR の最終 HEAD にある（local-verify の最終 tree 突合に使う）
 let finalCi = null   // finalCiVerdict の結果。finalReconcile が unavailable/ci_verified のときのみ non-null
 let finalRecheckTargets = []   // pr-iterate fix が触ったファイルに言及する解消済み item（Final AC reconcile で再検証）
 if ((iterate?.fixes_applied ?? 0) > 0) {
@@ -7380,6 +7618,7 @@ if ((iterate?.fixes_applied ?? 0) > 0) {
     finalReconcile = 'unavailable'
     log(`⚠️ Final reconcile: worktree を PR 最終 HEAD へ同期できず（${sync?.error ?? 'null'}）— unavailable（fail-safe → merge tier HOLD）`)
   } else {
+    finalSyncOk = true
     finalSyncHead = typeof sync.head === 'string' ? sync.head : null
     // Step2 test 一発再実行（fail-safe。green-fix ループなし — red は修正せず HOLD）
     let ft = null
@@ -7634,23 +7873,35 @@ if (_facDecision.run) {
 // ci の AC: pr-iterate が LGTM 後に ci_verify.checks の完了を待った結果（iterate.ci_verify）で判定を確定する。
 // evaluator / final-ac-reconcile の判定は使わない。success なら ledger の AC item を check run の URL を根拠に checked にし、
 // それ以外（上限まで未完了・failure・取得不能・待ちに未到達）は Merge tier の ac_ci_pending で HOLD にする。
+// local-verify で決着した run（passed / failed）は CI を待たずその結果で確定する。差し戻し上限後も失敗した ci の AC は
+// worktree 内で直せたはずの未達なので agent に数え、ac_agent_unsatisfied で HOLD にする。
+// passed は最終 tree と突き合わせてから使う（reconcileLocalVerifyTree。不一致なら最終 tree で再実行、確かめられなければ stale）。
+// fix が無い run の worktree は PR の tree のまま、fix がある run は reconcile-sync が成功したときだけ最終 HEAD にある。
+if (CI_AC_INDEXES.length && state.localVerify?.status === 'passed') {
+  state = await reconcileLocalVerifyTree(state, { worktreeAtFinal: (iterate?.fixes_applied ?? 0) === 0 || finalSyncOk })
+}
 if (CI_AC_INDEXES.length) {
+  const localOutcome = localVerifyCiOutcome(state.localVerify)
   const ciVerifyResult = iterate?.ci_verify ?? null
-  const ciStatus = CI_VERIFY_STATUSES.includes(ciVerifyResult?.status) ? ciVerifyResult.status : 'not_run'
-  const ciOutcome = { ...(ciVerifyResult ?? {}), status: ciStatus, checks: CI_VERIFY.checks }
+  const ciStatus = localOutcome ? localOutcome.status : CI_VERIFY_STATUSES.includes(ciVerifyResult?.status) ? ciVerifyResult.status : 'not_run'
+  const ciOutcome = localOutcome ?? { ...(ciVerifyResult ?? {}), status: ciStatus, checks: CI_VERIFY.checks }
   if (state.evalResult && Array.isArray(state.evalResult.ac_results)) state.evalResult = { ...state.evalResult, ac_results: applyCiAcResults(state.evalResult.ac_results, req.ac_actors, ciOutcome) }
   state.finalAcResults = applyCiAcResults(state.finalAcResults, req.ac_actors, ciOutcome)
   const ciGaps = unsatisfiedCiAcIndexes(req.ac_actors, ciOutcome)
-  state.finalUnsatisfiedAcByActor = { ...(state.finalUnsatisfiedAcByActor ?? { agent: [], human: [] }), ci: ciGaps }
+  const gapsBefore = state.finalUnsatisfiedAcByActor ?? { agent: [], human: [] }
+  state.finalUnsatisfiedAcByActor = localOutcome
+    ? { ...gapsBefore, agent: [...new Set([...(gapsBefore.agent ?? []), ...ciGaps])].sort((a, b) => a - b), ci: [] }
+    : { ...gapsBefore, ci: ciGaps }
   state.finalUnsatisfiedAc = ['agent', 'human', 'ci'].some((k) => (state.finalUnsatisfiedAcByActor[k] ?? []).length > 0)
   if (ciStatus === 'passed') {
+    const evidence = localOutcome ? ciAcEvidence(localOutcome) : `CI の ${CI_VERIFY.checks.join(', ')} が success${(ciOutcome.urls ?? []).length ? ': ' + ciOutcome.urls.join(' ') : ''}`
     for (const k of CI_AC_INDEXES) {
       const acId = `AC-${k + 1}`
-      if (state.ledger.items.some((it) => it.id === acId && !it.checked)) state.ledger = checkItem(state.ledger, acId, `CI の ${CI_VERIFY.checks.join(', ')} が success${(ciOutcome.urls ?? []).length ? ': ' + ciOutcome.urls.join(' ') : ''}`)
+      if (state.ledger.items.some((it) => it.id === acId && !it.checked)) state.ledger = checkItem(state.ledger, acId, evidence)
     }
   }
-  state.ciVerify = ciOutcome
-  log(`ci-verify: ci の AC ${CI_AC_INDEXES.length} 件（AC-${CI_AC_INDEXES.map((n) => n + 1).join(', AC-')}）— CI の ${CI_VERIFY.checks.join(', ')} = ${ciStatus}${ciGaps.length ? ' → Merge tier の ac_ci_pending' : ' → satisfied'}`)
+  state.ciVerify = localOutcome ? null : ciOutcome
+  log(`ci-verify: ci の AC ${CI_AC_INDEXES.length} 件（AC-${CI_AC_INDEXES.map((n) => n + 1).join(', AC-')}）— ${localOutcome ? `ローカル実行（${localOutcome.command}）` : `CI の ${CI_VERIFY.checks.join(', ')}`} = ${ciStatus}${ciGaps.length ? ` → Merge tier の ${localOutcome ? 'ac_agent_unsatisfied' : 'ac_ci_pending'}` : ' → satisfied'}`)
 }
 // 解消済み item の再検証結果を台帳へ反映する。Final AC reconcile が reverified でなければ再検証されていないので、
 // 対象は全件解消根拠を取り下げる（後の fix で崩れたかもしれない根拠を終端サマリの「解消済み」に残さない）。
@@ -7959,6 +8210,7 @@ const summaryBody = buildDevflowSummaryBody({
   outOfScope: state.plan?.out_of_scope ?? null,
   unsatisfiedAcByActor: acGapsFinal,
   ciVerify: state.ciVerify ?? null,
+  localVerify: state.localVerify ?? null,
   prBodyClips: hasPrBodyClips(prBodyClips) ? prBodyClips : null,
 })
 // 終端サマリーコメント投稿: bodySaveInstr で body を worktree の .devflow-tmp/ 固定パスへ保存し
@@ -8080,7 +8332,8 @@ return {
   final_ac_reconcile: finalAcReconcile,
   final_unsatisfied_ac: state.finalUnsatisfiedAc,
   final_unsatisfied_ac_by_actor: acGapsFinal,
-  ci_verify: state.ciVerify ?? null,  // ci の AC がある run の CI 判定（pr-iterate の LGTM 後の待ち結果）。無い run は null
+  ci_verify: state.ciVerify ?? null,  // ci の AC がある run の CI 判定（pr-iterate の LGTM 後の待ち結果）。無い run・local-verify で決着した run は null
+  local_verify: state.localVerify ?? null,  // local-verify の結果（status: passed / failed / unavailable / error / skipped / stale。passed / failed は tree_hash を持つ）。local_verify の宣言が無い・ci の AC が無い run は null
   pr_closes_status: prClosesStatus,
   pr_body_synced: prBodySynced,
   summary_posted: summaryPosted,
