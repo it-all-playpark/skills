@@ -92,8 +92,8 @@ dev-flow の Analyze ゲート（AC 空）が needs_clarification に倒す。
 かつ `comment_count === 0`。`eligible` は最初に不合格になった 1 理由だけを `ineligible_reason` に載せる
 要約フラグで、dev-flow の prerun（`prerun-analyze.sh`）はこれではなく上記の生シグナル
 （`acceptance_criteria` / `breaking_keyword_scan` / `title_breaking_marker` / `comment_count` / `comments` /
-`issue_author`）を読み、決定論で解けない 2 理由（breaking keyword hit / comments present）だけを Jev の
-有界判定に回す（issue #690）。不合格でも exit 0。
+`issue_author`）を読み、決定論で解けない 3 理由（breaking keyword hit / comments present / 観測型 AC の
+正規表現の絞り込み hit）だけを Jev の有界判定に回す（issue #690 / #859）。不合格でも exit 0。
 
 **残余リスク**: breaking keyword を含まない実質 breaking issue は Jev にも回らず、事後の danger-grep on
 realized diff / merge tier が補償する（意図的な設計判断）。

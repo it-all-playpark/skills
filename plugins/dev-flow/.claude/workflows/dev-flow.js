@@ -991,15 +991,45 @@ function acObservationalOf(acceptanceCriteria) {
   return (Array.isArray(acceptanceCriteria) ? acceptanceCriteria : []).map((ac) => isObservationalAc(ac))
 }
 
+function pendingAcObservationalIndexes(acObservational) {
+  const out = []
+  const list = Array.isArray(acObservational) ? acObservational : []
+  for (let i = 0; i < list.length; i++) if (typeof list[i] !== 'boolean') out.push(i)
+  return out
+}
+
+function acObservationalPrompt(issueTitle, acceptanceCriteria, indexes) {
+  const acs = Array.isArray(acceptanceCriteria) ? acceptanceCriteria : []
+  const items = (Array.isArray(indexes) ? indexes : []).map((i) => ({ ac_index: i, ac: String(acs[i] ?? '') }))
+  return '次の issue の受け入れ基準（AC）それぞれが観測型かを判定せよ。判定材料は下に示す issue のタイトルと AC の文面だけ。'
+    + 'ツールは使わず、ファイル・diff・issue 本文・コマンドの出力を読みに行かない。\n'
+    + '観測型（observational:true）: コードとテストを読むだけでは確かめられず、実行した結果・ログ・計測を観測しないと確かめられない AC。'
+    + 'AC がテストコードやソースコード自体の書き方・構成について述べているなら false。'
+    + '文面だけでは決められない AC は observational:null を返せ（観測型として扱われる）。\n'
+    + `issue のタイトル: ${JSON.stringify(String(issueTitle ?? ''))}\n`
+    + `AC（ac_index は 0 始まり）: ${JSON.stringify(items)}\n`
+    + '上の全 AC について 1 件ずつ {"results":[{"ac_index":<上の ac_index>,"observational":true|false|null}]} の形で返せ。\n'
+}
+
+function resolveAcObservational(acObservational, agentResult) {
+  const results = Array.isArray(agentResult?.results) ? agentResult.results : []
+  return (Array.isArray(acObservational) ? acObservational : []).map((v, i) => {
+    if (typeof v === 'boolean') return v
+    const r = results.find((x) => x && x.ac_index === i)
+    return typeof r?.observational === 'boolean' ? r.observational : true
+  })
+}
+
 function classifyAcActor(ac, opts = {}) {
   const text = String(ac ?? '').replace(INLINE_CODE_RE, ' ')
   if (HUMAN_AC_PATTERNS.some((re) => re.test(text))) return 'human'
   if (classifyAcScope(ac, opts) === 'external') return 'human'
-  return isObservationalAc(ac) ? 'human' : 'agent'
+  return opts?.observational === true ? 'human' : 'agent'
 }
 
 function acActorsOf(acceptanceCriteria, opts = {}) {
-  return (Array.isArray(acceptanceCriteria) ? acceptanceCriteria : []).map((ac) => classifyAcActor(ac, opts))
+  const obs = Array.isArray(opts?.observational) ? opts.observational : []
+  return (Array.isArray(acceptanceCriteria) ? acceptanceCriteria : []).map((ac, i) => classifyAcActor(ac, { repo: opts?.repo, observational: obs[i] === true }))
 }
 
 function deterministicAcIndexes(ledgerItems) {
@@ -1608,6 +1638,10 @@ function buildReqFromContract(analyze, issueNumber) {
   if (typeof analyze.scope !== 'string') return null
   if (typeof analyze.scope_truncated !== 'boolean') return null
   if (!Array.isArray(analyze.blockers) || !analyze.blockers.every(isBlocker)) return null
+  const acCount = analyze.acceptance_criteria.length
+  if (!Array.isArray(analyze.ac_observational) || analyze.ac_observational.length !== acCount) return null
+  if (!analyze.ac_observational.every((v) => v === true || v === false || v === null)) return null
+  if (!isStringArray(analyze.ac_observational_evidence) || analyze.ac_observational_evidence.length !== acCount) return null
 
   const req = {
     summary: `Issue #${issueNumber}: ${analyze.issue_title}`,
@@ -1615,6 +1649,7 @@ function buildReqFromContract(analyze, issueNumber) {
     issue_title: analyze.issue_title,
     issue_type: analyze.issue_type,
     acceptance_criteria: analyze.acceptance_criteria.slice(0, 20),
+    ac_observational: analyze.ac_observational.slice(0, 20),
     scope: analyze.scope,
     scope_truncated: analyze.scope_truncated,
     breaking_change: analyze.breaking_change,
@@ -3613,6 +3648,22 @@ const CLARIFY = {
     epoch: { type: 'number' },
   },
 }
+// Setup 末尾の analyze ゲート通過後、prerun で観測型判定が確定しない（null の）AC があるときだけ 1 spawn する
+// 分類 agent のスキーマ（acObservationalPrompt）。observational:null は判定できない AC で、true として扱う。
+const AC_OBSERVATIONAL = {
+  type: 'object',
+  required: ['results'],
+  properties: {
+    results: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['ac_index', 'observational'],
+        properties: { ac_index: { type: 'integer' }, observational: { type: ['boolean', 'null'] } },
+      },
+    },
+  },
+}
 const IMPL = {
   type: 'object', required: ['status', 'task_id'],
   properties: {
@@ -5360,15 +5411,6 @@ const req = buildReqFromContract(ANALYZE, ISSUE)
 if (!req) {
   throw new Error(`dev-flow: args.setup.analyze が whitelist 検証に不合格（dev-flow-prerun の analyze 段の出力契約違反。受信: ${JSON.stringify(ANALYZE).slice(0, 400)}）— prerun-analyze.sh と buildReqFromContract の契約を揃えてから再実行せよ`)
 }
-// AC ごとの actor（'agent' | 'human'。_lib/ac-actor.mjs）。analyze ゲートで AC と一緒に freeze し、Evaluate の
-// 差し戻し（agent AC の未達だけ）と Merge tier の HOLD 理由（取りこぼし / 人手待ち）を分ける。
-// repo 外の作業だけを書いた AC は human、repo 内外が混ざった AC は下の analyze ゲートで止める。
-req.ac_actors = acActorsOf(req.acceptance_criteria, { repo: REPO })
-// 観測型 AC（実行して出力・記録を観測しないと確かめられない。actor は human）。Evaluate / Final reconcile は
-// red→green 実証で deterministic 昇格したときだけ checked にし、inspection の satisfied:true は人手 AC 待ちに倒す。
-req.ac_observational = acObservationalOf(req.acceptance_criteria)
-if (req.ac_observational.includes(true)) log(`analyze: 観測型 AC ${req.ac_observational.filter(Boolean).length} 件（AC-${req.ac_observational.map((o, i) => o ? i + 1 : null).filter((n) => n != null).join(', AC-')}）— red→green 実証が無ければ inspection で達成扱いにせず人手 AC 待ちへ回す`)
-if (req.ac_actors.includes('human')) log(`analyze: 人手 AC ${req.ac_actors.filter((a) => a === 'human').length} 件（AC-${req.ac_actors.map((a, i) => a === 'human' ? i + 1 : null).filter((n) => n != null).join(', AC-')}）— 未達でも差し戻さず Merge tier の人手 AC 待ちへ回す`)
 // analyze 経路（log 表示用）: ANALYZE_PATH は 'contract' | 'jev'。
 // ANALYZE_INELIGIBLE_REASON は Jev に回した理由（prerun の jev_reasons を '; ' 結合。contract 経路は null）。
 const ANALYZE_PATH = req.analyze_path
@@ -5426,6 +5468,27 @@ if (gateReasons.length) {
     note: '要件を決定論で確定できないため中断。呼び出し元セッションが missing_context を AskUserQuestion で人間に確認し、issue body を更新してから /dev-flow を再起動すること（comment の訂正は body に反映する。黙って片方を採用しない。issue #573 / #690）。worktree は保持済みで再利用される',
   }
 }
+
+// 観測型 AC（実行して出力・記録を観測しないと確かめられない。actor は human）。prerun が正規表現の
+// 絞り込み + Jev で出した analyze.ac_observational を使い、null（Jev 低確信・Jev に届かない）の AC だけを
+// AC の文面と issue のタイトルだけを読む分類 agent に 1 回で渡す。agent が判定できない AC は true（resolveAcObservational）。
+// null が無ければ spawn しない。needs_clarification で終わる run に spawn を使わないようゲート通過後に置く。
+// Evaluate / Final reconcile は red→green 実証で deterministic 昇格したときだけ checked にし、inspection の
+// satisfied:true は人手 AC 待ちに倒す。
+if (req.ac_observational.length) log(`analyze: 観測型判定（prerun）: ${req.ac_observational.map((o, i) => `AC-${i + 1}=${JSON.stringify(o)}（${ANALYZE.ac_observational_evidence[i]}）`).join(' / ')}`)
+const acObsPending = pendingAcObservationalIndexes(req.ac_observational)
+if (acObsPending.length) {
+  log(`analyze: 観測型判定が prerun で確定しない AC ${acObsPending.length} 件（AC-${acObsPending.map((i) => i + 1).join(', AC-')}）— AC の文面だけを読む分類 agent に 1 回で渡す`)
+  const acObsAgent = await failOpenAgent(acObservationalPrompt(req.issue_title, req.acceptance_criteria, acObsPending), { agentType: 'dev-runner', schema: AC_OBSERVATIONAL, label: `ac-observational#${ISSUE}`, phase: 'Setup' })
+  if (!acObsAgent) log('⚠️ analyze: 観測型の分類 agent が null — 未確定の AC は観測型として扱う')
+  req.ac_observational = resolveAcObservational(req.ac_observational, acObsAgent)
+}
+if (req.ac_observational.includes(true)) log(`analyze: 観測型 AC ${req.ac_observational.filter(Boolean).length} 件（AC-${req.ac_observational.map((o, i) => o ? i + 1 : null).filter((n) => n != null).join(', AC-')}）— red→green 実証が無ければ inspection で達成扱いにせず人手 AC 待ちへ回す`)
+// AC ごとの actor（'agent' | 'human'。_lib/ac-actor.mjs）。analyze ゲートで AC と一緒に freeze し、Evaluate の
+// 差し戻し（agent AC の未達だけ）と Merge tier の HOLD 理由（取りこぼし / 人手待ち）を分ける。
+// repo 外の作業だけを書いた AC と、上で確定した観測型 AC は human（repo 内外が混ざった AC は上の analyze ゲートで止めた）。
+req.ac_actors = acActorsOf(req.acceptance_criteria, { repo: REPO, observational: req.ac_observational })
+if (req.ac_actors.includes('human')) log(`analyze: 人手 AC ${req.ac_actors.filter((a) => a === 'human').length} 件（AC-${req.ac_actors.map((a, i) => a === 'human' ? i + 1 : null).filter((n) => n != null).join(', AC-')}）— 未達でも差し戻さず Merge tier の人手 AC 待ちへ回す`)
 
 // isolation probe: implementer と同じ Write tool 経路で書けるかを subagent で検証する（wrapper の Bash では
 // 意味が変わるため代替しない）。ゲート通過後に置くことで needs_clarification 経路の spawn を 0 に保つ。

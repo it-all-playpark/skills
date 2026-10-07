@@ -6,8 +6,9 @@ import assert from 'node:assert/strict';
 import { buildReqFromContract, analyzeGateReasons, blockedByReasons, ANALYZE_PATH_INPUT, BLOCKER_SOURCES } from './analyze-contract.mjs';
 import { classifyShape } from './triviality.mjs';
 
-// prerun-analyze.sh の ok:true 出力と同形
+// prerun-analyze.sh の ok:true 出力と同形（ac_observational / ac_observational_evidence は AC 数に合わせる）
 function baseAnalyze(overrides = {}) {
+  const acs = Array.isArray(overrides.acceptance_criteria) ? overrides.acceptance_criteria : ['AC1: parse t1/t2 contracts', 'AC2: fallback preserved'];
   return {
     ok: true,
     analyze_path: 'contract',
@@ -28,6 +29,8 @@ function baseAnalyze(overrides = {}) {
     comment_conflicts: [],
     uncertain: [],
     blockers: [],
+    ac_observational: acs.map(() => false),
+    ac_observational_evidence: acs.map(() => '正規表現の絞り込みに当たらない'),
     contract: 't1',
     ac_heading_near_miss: [],
     duration_seconds: 4,
@@ -168,6 +171,20 @@ test('[analyze-contract] (3i) comment_overrides / comment_conflicts / uncertain 
 test('[analyze-contract] (3j) scope が非 string / scope_truncated が非 boolean → null', () => {
   assert.equal(buildReqFromContract(baseAnalyze({ scope: null }), 690), null);
   assert.equal(buildReqFromContract(baseAnalyze({ scope_truncated: 'false' }), 690), null);
+});
+
+test('[analyze-contract] (3k) ac_observational は AC と同じ長さの true / false / null 配列、ac_observational_evidence は同じ長さの string 配列でなければ null', () => {
+  const req = buildReqFromContract(baseAnalyze({ ac_observational: [true, null], ac_observational_evidence: ['Jev noul 観測型 p=0.95', 'Jev が低確信'] }), 690);
+  assert.deepEqual(req.ac_observational, [true, null], 'null（prerun で確定しない AC）はそのまま REQ に運び、analyze ゲートが分類 agent に回す');
+  assert.equal(Object.prototype.hasOwnProperty.call(req, 'ac_observational_evidence'), false, '根拠は log 用で REQ（evaluator の requirements）に載せない');
+  for (const v of [undefined, 'x', [true], [true, false, false], [true, 'false'], [true, 0]]) {
+    assert.equal(buildReqFromContract(baseAnalyze({ ac_observational: v }), 690), null, `ac_observational=${JSON.stringify(v)} で null になっていない`);
+  }
+  for (const v of [undefined, ['x'], ['x', 1]]) {
+    assert.equal(buildReqFromContract(baseAnalyze({ ac_observational_evidence: v }), 690), null, `ac_observational_evidence=${JSON.stringify(v)} で null になっていない`);
+  }
+  const many = Array.from({ length: 25 }, (_, i) => `AC${i}`);
+  assert.equal(buildReqFromContract(baseAnalyze({ acceptance_criteria: many }), 690).ac_observational.length, 20, 'AC と同じく 20 件で切る');
 });
 
 // (4) optional キー
