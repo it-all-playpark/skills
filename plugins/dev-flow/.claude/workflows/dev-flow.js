@@ -2566,7 +2566,11 @@ function buildDevflowSummaryBody({
     acCell = s === t ? `✅ ${s}/${t}` : `❌ ${s}/${t}`;
   }
   const dangerArr = dangerHits && dangerHits.length > 0 ? dangerHits : null;
-  const dangerCell = dangerArr ? `⚠️ ${dangerArr.length} クラス` : '✅ clean';
+  const clearedDangerClasses = new Set(securityClearance.filter(sc => sc.cleared === true).map(sc => sc.danger_class));
+  let dangerCell;
+  if (!dangerArr) dangerCell = '✅ clean';
+  else if (dangerArr.every(cls => clearedDangerClasses.has(cls))) dangerCell = `✅ cleared（${dangerArr.length} クラス）`;
+  else dangerCell = `⚠️ ${dangerArr.length} クラス`;
   const testsurfArr = testsurfHits && testsurfHits.length > 0 ? testsurfHits : null;
   const hasTestsurf = testsurfArr != null || testsurfClearance.length > 0;
 
@@ -2611,7 +2615,7 @@ function buildDevflowSummaryBody({
   }
 
   if (dangerArr) {
-    lines.push(`検出クラス: ${dangerArr.join(', ')}`);
+    lines.push(`検出クラス: ${dangerArr.map(cls => clearedDangerClasses.has(cls) ? `${cls}（cleared）` : cls).join(', ')}`);
   }
 
   if (testsurfArr) {
@@ -2640,7 +2644,7 @@ function buildDevflowSummaryBody({
   const seenDangerClasses = new Set();
   const dangerForYouDo = Array.isArray(dangerHits) ? dangerHits : [];
   for (const cls of dangerForYouDo) {
-    if (seenDangerClasses.has(cls)) continue;
+    if (seenDangerClasses.has(cls) || clearedDangerClasses.has(cls)) continue;
     seenDangerClasses.add(cls);
     const msg = POST_MERGE_CHECK[cls] ?? `danger class "${cls}" の変更箇所の初回動作を確認する`;
     youDoLines.push(`${youDoN}. マージ後: ${msg}`);
