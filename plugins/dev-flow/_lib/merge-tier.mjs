@@ -316,6 +316,11 @@ export function classifyMergeableState(meta) {
 //   完了を待たない）。判定は bucket だけで行い mergeStateStatus（UNSTABLE 等）は見ない。
 //   未指定 = reason・開示とも追加なし。object でない / ok が boolean でない / ok:true で checks が配列で
 //   ないものは明示 error。
+// s.finalTestFlaky (optional { files: string[], logs: string[] }): test#final が red で、落ちたファイルだけの
+//   単体再実行が green だった記録（_lib/final-test-rerun.mjs の finalTestRerunVerdict。issue #865）。このとき
+//   workflow は finalTestGreen を true にするので final_test_red は積まれない。flake は HOLD 理由にせず
+//   開示行（finalTestFlakyDisclosure）だけを disclosures に積む。未指定 = 開示なし。files が非空の string[]
+//   でない / logs が string[] でない / finalTestGreen !== true（red のまま flake を名乗る矛盾）は明示 error。
 // 返り値: { tier, reasons, holdReasons, holdKind, disclosures }（issue #599 で holdReasons/holdKind、
 //   issue #658 で disclosures を追加）。
 //   reasons は従来どおり string[]（HOLD 時は blocking 文言 + 可視化行、AUTO/REVIEW 時は従来文言 +
@@ -373,7 +378,15 @@ export function classifyMergeTier(s) {
     || (s.ciChecks.ok === true && !Array.isArray(s.ciChecks.checks)))) {
     throw new Error('classifyMergeTier: invalid ciChecks');
   }
-  const ci = s.ciChecks != null ? classifyCiChecks(s.ciChecks) : null;
+  const isStringArray = (v) => Array.isArray(v) && v.every((x) => typeof x === 'string');
+  if (s.finalTestFlaky != null && (!isStringArray(s.finalTestFlaky.files) || s.finalTestFlaky.files.length === 0
+    || !isStringArray(s.finalTestFlaky.logs))) {
+    throw new Error('classifyMergeTier: invalid finalTestFlaky');
+  }
+  if (s.finalTestFlaky != null && s.finalTestGreen !== true) {
+    throw new Error('classifyMergeTier: finalTestFlaky requires finalTestGreen===true');
+  }
+  const ci =s.ciChecks != null ? classifyCiChecks(s.ciChecks) : null;
   // blocking 文言のみ（可視化行は含めない）。HOLD 判定・holdReasons/holdKind の入力に使う。
   const blockingReasons = [];
   const pushBlocking = (code, reason, kind) => blockingReasons.push({ code, reason, kind });
@@ -449,13 +462,17 @@ export function classifyMergeTier(s) {
     : ci?.state === 'unavailable'
       ? `CI 未完了（checks を取得できず: ${ci.error ?? 'unknown'}）— CI 結果は未確認（fail-open。HOLD 理由にしない）。merge 前に gh pr checks で結果を確認する`
       : null;
-  const disclosures = [keywordAloneDisclosure, evalFailDisclosure, ciVerifiedDisclosure, ciIncompleteDisclosure].filter(Boolean);
+  const finalTestFlakyDisclosure = s.finalTestFlaky != null
+    ? `final test flake（単体再実行で green）: ${s.finalTestFlaky.files.join(', ')} — 最終 tree の全件実行で落ち、落ちたファイルだけの 1 回の再実行で green（HOLD 理由にしない。1 回目のログ: ${s.finalTestFlaky.logs.length ? s.finalTestFlaky.logs.join(', ') : '不明'}）`
+    : null;
+  const disclosures = [keywordAloneDisclosure, evalFailDisclosure, ciVerifiedDisclosure, ciIncompleteDisclosure, finalTestFlakyDisclosure].filter(Boolean);
   if (blockingReasons.length) {
     const reasons = blockingReasons.map((r) => r.reason);
     if (keywordAloneDisclosure) reasons.push(keywordAloneDisclosure);
     if (evalFailDisclosure) reasons.push(evalFailDisclosure);
     if (ciVerifiedDisclosure) reasons.push(ciVerifiedDisclosure);
     if (ciIncompleteDisclosure) reasons.push(ciIncompleteDisclosure);
+    if (finalTestFlakyDisclosure) reasons.push(finalTestFlakyDisclosure);
     return { tier: 'HOLD', reasons, holdReasons: blockingReasons, holdKind: aggregateHoldKind(blockingReasons), disclosures };
   }
   if (s.shape === 'micro' && s.docsOrTestOnly) {
@@ -468,6 +485,7 @@ export function classifyMergeTier(s) {
     if (evalFailDisclosure) autoReasons.push(evalFailDisclosure);
     if (ciVerifiedDisclosure) autoReasons.push(ciVerifiedDisclosure);
     if (ciIncompleteDisclosure) autoReasons.push(ciIncompleteDisclosure);
+    if (finalTestFlakyDisclosure) autoReasons.push(finalTestFlakyDisclosure);
     return { tier: 'AUTO', reasons: autoReasons, holdReasons: [], holdKind: null, disclosures };
   }
   // REVIEW / AUTO の既定文は終端サマリーが「理由の節を出さない」判定に使う（devflow-summary-format.mjs の
@@ -477,5 +495,6 @@ export function classifyMergeTier(s) {
   if (evalFailDisclosure) reviewReasons.push(evalFailDisclosure);
   if (ciVerifiedDisclosure) reviewReasons.push(ciVerifiedDisclosure);
   if (ciIncompleteDisclosure) reviewReasons.push(ciIncompleteDisclosure);
+  if (finalTestFlakyDisclosure) reviewReasons.push(finalTestFlakyDisclosure);
   return { tier: 'REVIEW', reasons: reviewReasons, holdReasons: [], holdKind: null, disclosures };
 }

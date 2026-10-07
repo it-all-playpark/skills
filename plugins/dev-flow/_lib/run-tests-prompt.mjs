@@ -24,11 +24,27 @@
  * @returns {string}
  */
 export function runTestsPrompt(wt, base) {
+  return runTestsCommandPrompt(wt, `run-tests ${wt} --base ${base}`);
+}
+
+// Final reconcile の test#final-rerun（issue #865）: test#final が落ちたファイルだけを 1 回流し直す。
+// 全件を再実行しない — 並列負荷による flake は全件を回すと再発する。files は呼び出し側（finalTestRerunFiles）が
+// シェルで分割・展開されない文字だけのパスに絞ってから渡す。転写の契約は runTestsPrompt と同じ。
+/**
+ * @param {string} wt worktree の絶対パス
+ * @param {string[]} files 再実行するテストファイル（WT 相対）
+ * @returns {string}
+ */
+export function runTestFilesPrompt(wt, files) {
+  return runTestsCommandPrompt(wt, `run-tests ${wt} --files ${files.join(' ')}`);
+}
+
+function runTestsCommandPrompt(wt, command) {
   return `cd ${wt} で作業。次のコマンドを **先頭トークンが run-tests の bare 単文** で 1 回だけ実行し、`
     + `**stdout の JSON 1 行だけ** を verbatim で返せ（判定や脚色をしない。キーの追加・削除・値の書き換えをしない）。`
     + `argv は一字一句そのまま実行する — which による絶対パス解決・絶対パスへの書き換え・cd 前置・\`bash\` 前置・環境変数代入前置・&& 連結は禁止。`
     + `Bash tool の \`timeout: 600000\` を指定して実行し、\`run_in_background\` は使わない（禁止）。再実行しない（timeout に達した場合も含む）。`
     + `timeout に達した・stdout に JSON 1 行が無い場合だけは、`
     + `{"tests":"error","green":false,"summary":"run-tests did not return JSON"} を一字一句そのまま返せ:\n`
-    + `run-tests ${wt} --base ${base}`;
+    + command;
 }

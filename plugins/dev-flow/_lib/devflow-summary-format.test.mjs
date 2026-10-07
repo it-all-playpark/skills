@@ -1269,11 +1269,13 @@ test.each([
 test.each([
   { finalReconcile: 'reverified', finalTestGreen: true, includes: ['reverified', '✅ green'], excludes: [] },
   { finalReconcile: 'reverified', finalTestGreen: false, includes: ['❌ red'], excludes: [] },
+  // issue #865: 単体再実行で green の flake
+  { finalReconcile: 'reverified', finalTestGreen: true, finalTestFlaky: { files: ['a.bats'], logs: [] }, includes: ['flake（単体再実行で green）'], excludes: ['✅ green', '❌ red'] },
   { finalReconcile: 'unavailable', finalTestGreen: null, includes: ['不明'], excludes: [] },
   // issue #599: ci_verified は test を CI へ委譲した結果なので「不明」ではなく CI 委譲と表示する
   { finalReconcile: 'ci_verified', finalTestGreen: null, includes: ['ci_verified', 'CI 委譲'], excludes: ['不明'] },
-])('finalReconcile=$finalReconcile, finalTestGreen=$finalTestGreen -> 「- Final reconcile」行の表示', ({ finalReconcile, finalTestGreen, includes, excludes }) => {
-  const line = finalReconcileLine(buildDevflowSummaryBody({ ...BASE_INPUT, finalReconcile, finalTestGreen }));
+])('finalReconcile=$finalReconcile, finalTestGreen=$finalTestGreen -> 「- Final reconcile」行の表示', ({ finalReconcile, finalTestGreen, finalTestFlaky, includes, excludes }) => {
+  const line = finalReconcileLine(buildDevflowSummaryBody({ ...BASE_INPUT, finalReconcile, finalTestGreen, finalTestFlaky }));
   assert.ok(line, 'Final reconcile 行を含む');
   for (const s of includes) assert.ok(line.includes(s), `「${s}」を含む: ${line}`);
   for (const s of excludes) assert.ok(!line.includes(s), `「${s}」を含まない: ${line}`);
@@ -2086,6 +2088,9 @@ test.each([
   { name: 'AC2: reverified, finalTestGreen=true, testGreen=false', input: { finalReconcile: 'reverified', finalTestGreen: true, testGreen: false }, want: '✅ green' },
   { name: 'AC2: reverified, finalTestGreen=false, testGreen=true', input: { finalReconcile: 'reverified', finalTestGreen: false, testGreen: true }, want: '❌ red' },
   { name: 'AC2: reverified, finalTestGreen=null, testGreen=true', input: { finalReconcile: 'reverified', finalTestGreen: null, testGreen: true }, want: '不明' },
+  // issue #865: test#final の単体再実行で green（flake）は green と区別して出す
+  { name: '#865: reverified, finalTestGreen=true + finalTestFlaky', input: { finalReconcile: 'reverified', finalTestGreen: true, finalTestFlaky: { files: ['a.bats'], logs: [] } }, want: '⚠️ flake（単体再実行で green）' },
+  { name: '#865: reverified, finalTestGreen=true + finalTestFlaky.files 空', input: { finalReconcile: 'reverified', finalTestGreen: true, finalTestFlaky: { files: [], logs: [] } }, want: '✅ green' },
   { name: 'AC2: skipped, testGreen=false', input: { finalReconcile: 'skipped', testGreen: false }, want: '❌ red' },
   { name: 'AC2: skipped, testGreen=true', input: { finalReconcile: 'skipped', testGreen: true }, want: '✅ green' },
   { name: 'AC2: unavailable, finalTestGreen=null, testGreen=false', input: { finalReconcile: 'unavailable', finalTestGreen: null, testGreen: false }, want: '❌ red' },

@@ -22,6 +22,12 @@
 #     dependency install.
 #   - Otherwise: `exec`s `node_modules/.bin/vitest run`, passing through its
 #     exit code as-is.
+#   - Explicit file list: dev-flow's run-tests --files passes
+#     `DEVFLOW_TEST_FILES` (absolute path of a file listing repo-relative test
+#     files, one per line) to rerun only the files that failed. When set, only
+#     the listed `*.test.mjs` files are passed to vitest; none listed means
+#     vitest is not started (exit 0) — other runners own the other files. An
+#     unreadable list falls back to the full suite.
 #
 # Designed to be called from CI (GitHub Actions) with Node 24.
 
@@ -67,7 +73,22 @@ fi
 # be bypassed entirely in favor of vitest's own defaults.
 cd "$REPO_ROOT" || exit 1
 
+TEST_FILES=()
+if [[ -n "${DEVFLOW_TEST_FILES:-}" ]]; then
+    if [[ -f "$DEVFLOW_TEST_FILES" && -r "$DEVFLOW_TEST_FILES" ]]; then
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            [[ "$line" == *.test.mjs ]] && TEST_FILES+=("$line")
+        done < "$DEVFLOW_TEST_FILES"
+        if [[ ${#TEST_FILES[@]} -eq 0 ]]; then
+            echo "[run-node-tests] DEVFLOW_TEST_FILES lists no .test.mjs file — vitest not started."
+            exit 0
+        fi
+    else
+        echo "[run-node-tests] DEVFLOW_TEST_FILES is not a readable file: $DEVFLOW_TEST_FILES — running all."
+    fi
+fi
+
 # --configLoader runner: 既定の bundle loader は config を node_modules/.vite-temp に書き出してから
 # import する。sandbox 内（dev-flow の run-tests 経由を含む）ではその書き込みが EPERM になり、
 # テストが 1 本も走らないまま exit 1 になる（偽 red）。runner loader は書き出さずに読む。
-exec "$VITEST_BIN" run --configLoader runner
+exec "$VITEST_BIN" run --configLoader runner ${TEST_FILES[@]+"${TEST_FILES[@]}"}

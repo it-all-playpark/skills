@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # run-tests.sh - Validate（test#i）・post-eval・test#final のテスト実行 exec-proxy（issue #821）。
-# Usage: run-tests.sh <worktree> [--base <ref>]
+# Usage: run-tests.sh <worktree> [--base <ref> | --files <test file>...]
 #
 # green 判定を LLM の解釈ではなく exit code から決める。呼び出し側 agent は stdout の JSON 1 行を
 # verbatim で転写するだけで、スクリプトの選択・起動失敗の分類・failed_files の抽出はここで行う。
@@ -13,6 +13,14 @@
 # --base 無し・merge-base 解決失敗・git 失敗では両変数とも設定しない（未設定 = ランナーは全件実行）。
 # 失敗は stderr に 1 行出すだけで status / green には影響させない。フォールバック経路には渡さない。
 # 呼び出し元の環境に同名変数があっても継がない（入れ子の run-tests で外側の一覧を誤って使わない）。
+#
+# 落ちたファイルだけの再実行（issue #865。Final reconcile が test#final の red を flake と本物の red に分ける入口）:
+# --files <WT 相対のテストファイル>... は、そのパスを 1 行 1 件で $LOG_DIR/test-files.txt に書き、
+# tests/run-*.sh に DEVFLOW_TEST_FILES=<その絶対パス> を渡す（DEVFLOW_CHANGED_FILES / DEVFLOW_BASE は渡さない）。
+# ランナーは一覧のうち自分が扱うファイルだけを実行し、扱うファイルが無ければ何も実行せず exit 0 する。
+# 変数を読まないランナーは全件を実行する（遅くなるだけで green を緩めない）。どのファイルを誰が扱うかは repo 側が決める。
+# 一覧のパスが WT 内の通常ファイルでなければ引数不正（exit 2）。tests/run-*.sh が無い repo はフォールバックの
+# コマンドにファイルを渡す規約が無いため status "error" を返す（呼び出し側は flake と判定しない）。
 #
 # 手順:
 #   0. <WT> の untracked で ignore 対象外のファイル（.devflow-tmp/ を除く）を git add --intent-to-add で index に
@@ -57,13 +65,16 @@ emit() {
         '{status: $s, tests: $t, green: $g, summary: $m, scripts: $sc, failed_files: $ff, epoch: $e}'
 }
 
-unset DEVFLOW_CHANGED_FILES DEVFLOW_BASE
+unset DEVFLOW_CHANGED_FILES DEVFLOW_BASE DEVFLOW_TEST_FILES
 
 BASE_REF=""
+TEST_FILES=()
 if [[ $# -eq 3 && "$2" == "--base" && -n "$3" ]]; then
     BASE_REF="$3"
+elif [[ $# -ge 3 && "$2" == "--files" ]]; then
+    TEST_FILES=("${@:3}")
 elif [[ $# -ne 1 ]]; then
-    emit error error false "usage: run-tests <worktree> [--base <ref>]" '[]' '[]'
+    emit error error false "usage: run-tests <worktree> [--base <ref> | --files <test file>...]" '[]' '[]'
     exit 2
 fi
 WT=$(cd "$1" 2>/dev/null && pwd) || { emit error error false "cd failed: $1" '[]' '[]'; exit 2; }
@@ -71,8 +82,21 @@ WT_PHYS=$(cd "$WT" && pwd -P)
 # テスト script・フォールバックとも <WT> を cwd にして実行する
 cd "$WT" || { emit error error false "cd failed: $WT" '[]' '[]'; exit 2; }
 
+for p in "${TEST_FILES[@]+"${TEST_FILES[@]}"}"; do
+    if [[ -z "$p" || "$p" == /* || "/$p/" == */../* || ! -f "$WT/$p" ]]; then
+        emit error error false "--files: not a test file under the worktree: $p" '[]' '[]'
+        exit 2
+    fi
+done
+
 LOG_DIR=$(mktemp -d "${TMPDIR:-/tmp}/run-tests-XXXXXX") \
     || { emit error error false "cannot create log dir under ${TMPDIR:-/tmp}" '[]' '[]'; exit 0; }
+
+TEST_FILES_LIST=""
+if [[ ${#TEST_FILES[@]} -gt 0 ]]; then
+    TEST_FILES_LIST="$LOG_DIR/test-files.txt"
+    printf '%s\n' "${TEST_FILES[@]}" > "$TEST_FILES_LIST"
+fi
 
 # 変更ファイルの一覧（--base があるときだけ。intent-to-add の前に取る — 載せた後は untracked に出ないが、
 # git diff <merge-base> には intent-to-add のファイルも出るので、再実行時も一覧は変わらない）。
@@ -134,6 +158,11 @@ if [[ ${#CANDIDATES[@]} -gt 0 ]]; then
         TARGETS+=("$f")
         COMMANDS+=("")
     done <<< "$(printf '%s\n' "${CANDIDATES[@]}" | LC_ALL=C sort)"
+fi
+
+if [[ ${#TARGETS[@]} -eq 0 && -n "$TEST_FILES_LIST" ]]; then
+    emit error error false "--files needs tests/run-*.sh (fallback test runners have no file-list contract)" '[]' '[]'
+    exit 0
 fi
 
 if [[ ${#TARGETS[@]} -eq 0 ]]; then
@@ -205,7 +234,10 @@ SUMMARY_BODY=""
 for i in "${!TARGETS[@]}"; do
     target="${TARGETS[$i]}"
     log="$LOG_DIR/$i.log"
-    if [[ -z "${COMMANDS[$i]}" && -n "$CHANGED_FILES" ]]; then
+    if [[ -z "${COMMANDS[$i]}" && -n "$TEST_FILES_LIST" ]]; then
+        DEVFLOW_TEST_FILES="$TEST_FILES_LIST" "$target" > "$log" 2>&1 < /dev/null
+        rc=$?
+    elif [[ -z "${COMMANDS[$i]}" && -n "$CHANGED_FILES" ]]; then
         DEVFLOW_CHANGED_FILES="$CHANGED_FILES" DEVFLOW_BASE="$MERGE_BASE" "$target" > "$log" 2>&1 < /dev/null
         rc=$?
     elif [[ -z "${COMMANDS[$i]}" ]]; then
