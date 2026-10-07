@@ -2481,6 +2481,51 @@ test('issue #658 AC-4: あなたがやること に danger class 由来のマー
   assert.ok(youDoLines[3].includes('PR CI に委譲済み'), '4件目は ci_verified 追加行');
 });
 
+// ─── issue #858: security clearance で cleared の danger class は未解決の危険として出さない ─────
+
+const PUBLIC_API_NOTICE = 'マージ後: 公開 API の変更を含む';
+
+test('issue #858: public-api 検出 + SEC seed cleared -> マージ後の告知行が無く、危険検出セルは ✅ cleared、検出クラス行に（cleared）が付く', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    dangerHits: ['public-api'],
+    blockingItems: [secLedgerItem('public-api', { checked: true, evidence: 'security cleared: 公開 API の追加・変更は diff に無い' })],
+  });
+  assert.ok(!body.includes(PUBLIC_API_NOTICE), 'cleared クラスのマージ後の告知行は出ない');
+  assert.equal(glanceCells(body)[6], '✅ cleared（1 クラス）', '危険検出セルは cleared 表示');
+  assert.ok(body.includes('検出クラス: public-api（cleared）'), '検出クラス行は残し cleared と分かる形');
+});
+
+test('issue #858: public-api 検出 + SEC seed unchecked -> 従来どおり告知行と ⚠️ が出る', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    mergeTier: 'HOLD',
+    dangerHits: ['public-api'],
+    blockingItems: [secLedgerItem('public-api', { checked: false, evidence: null })],
+  });
+  assert.ok(body.includes(PUBLIC_API_NOTICE), '未確認クラスのマージ後の告知行は出る');
+  assert.equal(glanceCells(body)[6], '⚠️ 1 クラス', '危険検出セルは ⚠️');
+  assert.ok(body.split('\n').includes('検出クラス: public-api'), '未確認クラスに（cleared）は付かない');
+});
+
+test('issue #858: 2 クラス検出で片方だけ cleared -> cleared でない方だけマージ後の行が出て、セルは ⚠️ のまま', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    mergeTier: 'HOLD',
+    dangerHits: ['public-api', 'data-migration'],
+    blockingItems: [
+      secLedgerItem('public-api', { checked: true, evidence: 'security cleared: 既存 export の import のみ' }),
+      secLedgerItem('data-migration', { checked: false, evidence: null }),
+    ],
+  });
+  const postMerge = body.split('\n').filter(l => l.includes('マージ後:'));
+  assert.equal(postMerge.length, 1, 'マージ後の行は cleared でない 1 クラス分だけ');
+  assert.ok(postMerge[0].includes('migration を含む'), 'data-migration の定型文');
+  assert.ok(!body.includes(PUBLIC_API_NOTICE), 'cleared の public-api は出ない');
+  assert.equal(glanceCells(body)[6], '⚠️ 2 クラス', 'cleared でないクラスが残るので ⚠️');
+  assert.ok(body.includes('検出クラス: public-api（cleared）, data-migration'), 'cleared の方だけ（cleared）が付く');
+});
+
 test('issue #658 AC-4: HOLD kind ごとに「あなたがやること」の定型文が切り替わる', () => {
   const bodyFixRequired = buildDevflowSummaryBody({
     ...BASE_INPUT,
@@ -3137,8 +3182,9 @@ test('issue #829 AC6: HOLD の理由・blocking・ESCALATE・未達 AC は 1 件
   assert.ok(body.includes(`| ❌ 未解消 | 必須（blocking） | correctness | ${BLOCKING_OPEN_829.text} | ${BLOCKING_OPEN_829.evidence} | 修正が必要 |`), 'blocking の行が残る');
   assert.ok(body.includes(`| ${ESCALATE_OPEN_829.text} |`), 'ESCALATE の行が残る');
   assert.ok(body.includes('| ❌ 未達 | AC#2 | test | 上限超過で例外を握りつぶしている |'), '未達 AC の行が残る');
-  assert.ok(body.includes('検出クラス: auth'), 'danger の検出クラスが残る');
-  assert.ok(body.includes('マージ後: 認証・認可経路の変更を含む'), 'danger class 由来のマージ後確認が残る');
+  // auth は evaluator が clear 済みなので、検出クラス行には cleared と分かる形で残り、マージ後確認は出ない（issue #858）
+  assert.ok(body.includes('検出クラス: auth（cleared）'), 'danger の検出クラスが残る');
+  assert.ok(!body.includes('マージ後: 認証・認可経路の変更を含む'), 'cleared の danger class 由来のマージ後確認は出ない');
 
   // holdReasons が無い HOLD のフォールバックでも mergeTierReasons は全件残る
   const fallback = buildDevflowSummaryBody({ ...input, holdReasons: null });

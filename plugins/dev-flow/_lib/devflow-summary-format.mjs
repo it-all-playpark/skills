@@ -439,7 +439,14 @@ export function buildDevflowSummaryBody({
     acCell = s === t ? `✅ ${s}/${t}` : `❌ ${s}/${t}`;
   }
   const dangerArr = dangerHits && dangerHits.length > 0 ? dangerHits : null;
-  const dangerCell = dangerArr ? `⚠️ ${dangerArr.length} クラス` : '✅ clean';
+  // evaluator が security clearance で cleared にした danger class。危険検出セル・検出クラス行・マージ後の行で
+  // 「未解決の危険」として扱わない（同じサマリの解消済み証跡と矛盾させない。issue #858）。
+  // SEC seed が無い・unchecked・fail-closed のクラスは cleared に入らず従来どおり ⚠️ / マージ後の行を出す。
+  const clearedDangerClasses = new Set(securityClearance.filter(sc => sc.cleared === true).map(sc => sc.danger_class));
+  let dangerCell;
+  if (!dangerArr) dangerCell = '✅ clean';
+  else if (dangerArr.every(cls => clearedDangerClasses.has(cls))) dangerCell = `✅ cleared（${dangerArr.length} クラス）`;
+  else dangerCell = `⚠️ ${dangerArr.length} クラス`;
   const testsurfArr = testsurfHits && testsurfHits.length > 0 ? testsurfHits : null;
   const hasTestsurf = testsurfArr != null || testsurfClearance.length > 0;
 
@@ -488,7 +495,7 @@ export function buildDevflowSummaryBody({
 
   // 4. dangerHits 検出クラス行（1件以上のとき）。gate_policy は本文に出さず末尾の HTML コメントに置く。
   if (dangerArr) {
-    lines.push(`検出クラス: ${dangerArr.join(', ')}`);
+    lines.push(`検出クラス: ${dangerArr.map(cls => clearedDangerClasses.has(cls) ? `${cls}（cleared）` : cls).join(', ')}`);
   }
 
   // 4b. testsurfHits 検出パターン行（1件以上のとき。issue #362）
@@ -519,7 +526,7 @@ export function buildDevflowSummaryBody({
   const seenDangerClasses = new Set();
   const dangerForYouDo = Array.isArray(dangerHits) ? dangerHits : [];
   for (const cls of dangerForYouDo) {
-    if (seenDangerClasses.has(cls)) continue;
+    if (seenDangerClasses.has(cls) || clearedDangerClasses.has(cls)) continue;
     seenDangerClasses.add(cls);
     const msg = POST_MERGE_CHECK[cls] ?? `danger class "${cls}" の変更箇所の初回動作を確認する`;
     youDoLines.push(`${youDoN}. マージ後: ${msg}`);
