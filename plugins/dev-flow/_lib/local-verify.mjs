@@ -23,6 +23,13 @@ export const LOCAL_VERIFY_TAIL_MAX = 4000
 // local-verify の state dir（worktree 内の .devflow-tmp は realized diff から除外される）。
 export const LOCAL_VERIFY_STATE_DIR = '.devflow-tmp/local-verify'
 
+// local-verify start の --config-pct に渡す値。Setup 時に検証した宣言（normalizeLocalVerify の結果）を JSON にして
+// percent-encoding し、shell のクォートが要らない文字（英数字と . _ - %）だけの 1 トークンにする。
+// local-verify はこれを宣言として使い、worktree の宣言（実装で書き換えられうる）が一致しなければ error を返す。
+export function localVerifyConfigArg(cfg) {
+  return encodeURIComponent(JSON.stringify(cfg)).replace(/[!'()*~]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase())
+}
+
 // wait の最大回数。timeout_seconds を 1 回の待機秒数で割った回数 + 1（local-verify 側も timeout_seconds で
 // command を止めて timeout を返すので、これは応答が欠けたときの workflow 側の安全上限）。
 export function localVerifyWaitPolls(timeoutSeconds) {

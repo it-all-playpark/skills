@@ -94,6 +94,7 @@ const DF_FINAL_RECHECK = DEV_FLOW_SCENARIOS['final-recheck'];
 const DF_LITE = DEV_FLOW_SCENARIOS['lite'];
 const DF_CROSS_REPO = DEV_FLOW_SCENARIOS['cross-repo'];
 const DF_LOCAL_VERIFY = DEV_FLOW_SCENARIOS['local-verify'];
+const DF_LOCAL_VERIFY_REIMPL = DEV_FLOW_SCENARIOS['local-verify-reimpl'];
 // journal-log-abort は top-level abort catch 内でのみ呼ばれる — DEV_FLOW_SCENARIOS['abort'] の
 // トリガ throw message が THROW 定数と同じ 'injected' のため使うと自身の throw が吸収されたのか
 // 元の abort が伝播したのか区別できない。message を変えた専用 base で「元の error message が
@@ -254,6 +255,21 @@ const EXPECTED_DEV_FLOW = {
   'local-verify-start#1': { config: DF_LOCAL_VERIFY, policy: 'continue', reason: 'failOpenAgent経由。ローカル実行の起動結果が無ければfail-openでCIのcheck待ちに回す' },
   'local-verify-wait#1.1': { config: DF_LOCAL_VERIFY, policy: 'continue', reason: 'failOpenAgent経由。ローカル実行の結果が無ければfail-openでCIのcheck待ちに回す' },
   'local-verify-stop#1': { config: DF_LOCAL_VERIFY, policy: 'continue', reason: 'failOpenAgent経由。停止確認の失敗はlogのみでDBの削除はlocal-verifyのtrapに委ねる' },
+  'diff-hash-local-verify-final': {
+    config: DF_LOCAL_VERIFY,
+    policy: 'continue',
+    reason: 'failOpenAgent経由。最終treeのhashが取れなければexit 0をstaleにしてac_ci_pendingでHOLDに倒す',
+    extra: async ({ result }) => {
+      assert.equal(result?.local_verify?.status, 'stale', 'diff-hash-local-verify-final throw では passed を最終 tree の根拠にしない');
+      assert.equal(result?.merge_tier, 'HOLD');
+    },
+  },
+  'diff-hash-local-verify#2': { config: DF_LOCAL_VERIFY_REIMPL, policy: 'continue', reason: 'failOpenAgent経由。実行treeのhashが取れなければnullとしFinal reconcileで最終treeでの再実行に倒す' },
+  'reimpl-local-verify#1:serial:issue-1': { config: DF_LOCAL_VERIFY_REIMPL, policy: 'continue', reason: 'failOpenAgent経由。local-verify差し戻しのdev-implementer失敗はnullとしてdropし再実行で判定する' },
+  'test#local-verify-1': { config: DF_LOCAL_VERIFY_REIMPL, policy: 'continue', reason: 'try/catchで合成redへ変換しgreen-fixループへ継続する既存のfail-safe経路（local-verify差し戻し後）' },
+  'local-verify-start#2': { config: DF_LOCAL_VERIFY_REIMPL, policy: 'continue', reason: 'failOpenAgent経由。差し戻し後のローカル実行の起動結果が無ければfail-openでCIのcheck待ちに回す' },
+  'local-verify-wait#2.1': { config: DF_LOCAL_VERIFY_REIMPL, policy: 'continue', reason: 'failOpenAgent経由。差し戻し後のローカル実行の結果が無ければfail-openでCIのcheck待ちに回す' },
+  'local-verify-stop#2': { config: DF_LOCAL_VERIFY_REIMPL, policy: 'continue', reason: 'failOpenAgent経由。停止確認の失敗はlogのみでDBの削除はlocal-verifyのtrapに委ねる（差し戻し後）' },
   'redgreen': { config: DF_REDGREEN, policy: 'abort', reason: 'bare据え置き。red→green実証呼び出し自体の例外は吸収されずrunを中断させる' },
   'reimpl#1:serial:issue-1': { config: DF_COMPLEX_FIX, policy: 'continue', reason: 'failOpenAgent経由。evaluator差し戻しのdev-implementer失敗はnullとしてdropし継続する' },
   'eval#2': { config: DF_COMPLEX_FIX, policy: 'abort', reason: 'need()包み。2周目の評価取得不能のままPRへ進めない致命契約' },

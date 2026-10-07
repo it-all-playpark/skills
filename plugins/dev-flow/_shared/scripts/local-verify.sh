@@ -7,7 +7,9 @@
 # 宣言コマンドは worktree のコードを実行するので、呼び出し元と同じ sandbox 内で動かす
 # （本スクリプトを sandbox の excludedCommands に入れない — 入れると worktree の任意コードが sandbox 外で動く）。
 #
-# 宣言（skill-config.json / .claude/skill-config.json の順に探す。--config で JSON ファイルを直接渡してもよい）:
+# 宣言（skill-config.json / .claude/skill-config.json の順に探す。--config で JSON ファイルを直接渡してもよい）。
+# dev-flow は Setup 時に検証した宣言を --config-pct（JSON を percent-encoding した 1 トークン）で渡す。そのときは
+# それを宣言として使い、worktree の宣言が一致しなければ error を返す（実装による宣言のすり替えを判定に使わない）:
 #   "dev-flow": { "local_verify": {
 #     "command": "pnpm test:e2e:local",              # worktree を cwd に bash -c で実行する
 #     "db": { "engine": "postgres", "version": "17" }, # pg-broker create --version に渡す
@@ -28,7 +30,7 @@
 #           stopped（stop で停止）/ unavailable（pg-broker に届かない・DB を確保できない）/ error（宣言不正等）
 #
 # Usage:
-#   local-verify start --worktree <abs> --state-dir <abs> [--config <json file>] [--wait-sec <n=300>]
+#   local-verify start --worktree <abs> --state-dir <abs> [--config-pct <percent-encoded json> | --config <json file>] [--wait-sec <n=300>]
 #   local-verify wait  --state-dir <abs> [--wait-sec <n=480>]
 #   local-verify stop  --state-dir <abs> [--timeout-sec <n=60>]
 #   （内部）local-verify supervise --state-dir <abs>
@@ -87,19 +89,43 @@ log_tail() {
 # config
 # ---------------------------------------------------------------------------
 
+# worktree の skill-config.json / .claude/skill-config.json から "dev-flow".local_verify を探して stdout に出す。
+# 無ければ何も出さない。
+worktree_declaration() {
+    local worktree="$1" rel raw
+    for rel in skill-config.json .claude/skill-config.json; do
+        [[ -f "$worktree/$rel" ]] || continue
+        raw="$(jq -c 'if type == "object" and (.["dev-flow"] | type) == "object" then .["dev-flow"].local_verify else null end' "$worktree/$rel" 2>/dev/null)" || raw=''
+        [[ -n "$raw" && "$raw" != 'null' ]] && { printf '%s' "$raw"; return; }
+    done
+}
+
+# 宣言を dev-flow の normalizeLocalVerify と同じ形に畳む（前後の空白を落とし、使うキーだけ残す。キーは整列）。
+normalize_declaration() {
+    jq -cS '{command: (.command | gsub("^\\s+|\\s+$"; "")), db: {engine: .db.engine, version: (.db.version | gsub("^\\s+|\\s+$"; ""))}, env: .env, timeout_seconds: .timeout_seconds}'
+}
+
+# --config-pct の値（JSON を percent-encoding した 1 トークン）を戻す。形が違えば 1 を返す。
+decode_pct() {
+    local s="$1"
+    [[ "$s" =~ ^[A-Za-z0-9._%-]+$ ]] || return 1
+    printf '%b' "${s//%/\\x}"
+}
+
 # 宣言を読み、形を検証して spec に書く。不正なら理由を stdout に 1 行出して 1 を返す。
+# --config-pct（dev-flow が Setup 時に検証した宣言）があればそれを宣言として使い、worktree の宣言が一致することも
+# 確かめる。worktree は実装で書き換えられうるので、Setup 時と異なる宣言（例: command を `true` にする）で
+# ci の AC を satisfied にさせない — 不一致は error（dev-flow は CI の check 待ちに戻し、理由をサマリーに出す）。
 load_config() {
-    local worktree="$1" config_path="$2" raw=''
-    if [[ -n "$config_path" ]]; then
+    local worktree="$1" config_path="$2" config_pct="$3" raw=''
+    if [[ -n "$config_pct" ]]; then
+        local decoded
+        decoded="$(decode_pct "$config_pct")" || { echo '--config-pct が percent-encoding の形でない'; return 1; }
+        raw="$(jq -c '.' <<<"$decoded" 2>/dev/null)" || { echo '--config-pct を JSON として読めない'; return 1; }
+    elif [[ -n "$config_path" ]]; then
         raw="$(jq -c '.' "$config_path" 2>/dev/null)" || { echo "--config を JSON として読めない: $config_path"; return 1; }
     else
-        local rel
-        for rel in skill-config.json .claude/skill-config.json; do
-            [[ -f "$worktree/$rel" ]] || continue
-            raw="$(jq -c 'if type == "object" and (.["dev-flow"] | type) == "object" then .["dev-flow"].local_verify else null end' "$worktree/$rel" 2>/dev/null)" || raw=''
-            [[ -n "$raw" && "$raw" != 'null' ]] && break
-            raw=''
-        done
+        raw="$(worktree_declaration "$worktree")"
         [[ -n "$raw" ]] || { echo 'skill-config.json / .claude/skill-config.json に "dev-flow".local_verify が無い'; return 1; }
     fi
     local problem
@@ -112,6 +138,14 @@ load_config() {
         elif (.timeout_seconds | type) != "number" or .timeout_seconds <= 0 or (.timeout_seconds | floor) != .timeout_seconds then "timeout_seconds が正の整数でない"
         else empty end' <<<"$raw")"
     [[ -z "$problem" ]] || { echo "local_verify の宣言が不正: $problem"; return 1; }
+    if [[ -n "$config_pct" ]]; then
+        local current expected actual
+        current="$(worktree_declaration "$worktree")"
+        [[ -n "$current" ]] || { echo 'worktree の "dev-flow".local_verify が消えている（Setup 時の宣言と異なる）— 実装中に書き換えられた宣言では判定しない'; return 1; }
+        expected="$(normalize_declaration <<<"$raw")"
+        actual="$(normalize_declaration <<<"$current" 2>/dev/null)"
+        [[ "$expected" == "$actual" ]] || { echo "worktree の \"dev-flow\".local_verify が Setup 時の宣言と異なる（Setup: $expected / worktree: ${current:0:300}）— 実装中に書き換えられた宣言では判定しない"; return 1; }
+    fi
     write_json "$SPEC" --arg worktree "$worktree" --argjson cfg "$raw" \
         '{worktree: $worktree, command: $cfg.command, engine: $cfg.db.engine, version: $cfg.db.version, env: $cfg.env, timeout_seconds: $cfg.timeout_seconds}'
 }
@@ -301,7 +335,7 @@ cmd_wait() {
 }
 
 cmd_start() {
-    local worktree="$1" config_path="$2" wait_sec="$3"
+    local worktree="$1" config_path="$2" wait_sec="$3" config_pct="$4"
     case "$worktree/" in
         "${STATE_DIR%/}/"*) emit --arg error "--state-dir ($STATE_DIR) が worktree と同じかその親になっている" '{ok: false, status: "error", error: $error}'; return ;;
     esac
@@ -310,7 +344,7 @@ cmd_start() {
     rm -rf "$STATE_DIR"
     mkdir -p "$LOG_DIR"
     local problem
-    if ! problem="$(load_config "$worktree" "$config_path")"; then
+    if ! problem="$(load_config "$worktree" "$config_path" "$config_pct")"; then
         emit --arg error "$problem" '{ok: false, status: "error", error: $error}'
         return
     fi
@@ -351,13 +385,14 @@ main() {
     local sub="${1:-}"
     [[ -n "$sub" ]] || usage 'subcommand (start|wait|stop) required'
     shift
-    local state_dir='' worktree='' config_path='' wait_sec='' timeout_sec=60
+    local state_dir='' worktree='' config_path='' config_pct='' wait_sec='' timeout_sec=60
     while (( $# > 0 )); do
         (( $# >= 2 )) || usage "Unknown or incomplete option: $1"
         case "$1" in
             --state-dir) state_dir="$2" ;;
             --worktree) worktree="$2" ;;
             --config) config_path="$2" ;;
+            --config-pct) config_pct="$2" ;;
             --wait-sec) wait_sec="$2" ;;
             --timeout-sec) timeout_sec="$2" ;;
             *) usage "Unknown option: $1" ;;
@@ -374,7 +409,7 @@ main() {
         supervise) supervise ;;
         start)
             [[ -n "$worktree" ]] || usage '--worktree is required'
-            cmd_start "$(cd "$worktree" 2>/dev/null && pwd || echo "$worktree")" "$config_path" "${wait_sec:-300}" ;;
+            cmd_start "$(cd "$worktree" 2>/dev/null && pwd || echo "$worktree")" "$config_path" "${wait_sec:-300}" "$config_pct" ;;
         wait) cmd_wait "${wait_sec:-480}" ;;
         stop) cmd_stop "$timeout_sec" ;;
         *) usage "unknown subcommand: $sub" ;;

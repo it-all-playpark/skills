@@ -157,6 +157,46 @@ wait_supervisor_done() {
     [ ! -s "$BROKER_CALLS" ]
 }
 
+# dev-flow が渡す --config-pct（Setup 時に検証した宣言の JSON を percent-encoding した 1 トークン）
+# $1 = command
+setup_config_pct() {
+    jq -rn --arg cmd "$1" '{command: $cmd, db: {engine: "postgres", version: "17"}, env: "E2E_EXTERNAL_DATABASE_URL", timeout_seconds: 60} | tojson | @uri'
+}
+
+start_verify_pct() {
+    run bash "$SCRIPT" start --worktree "$WT" --state-dir "$STATE_DIR" --wait-sec 20 --config-pct "$1" 3>&-
+}
+
+@test "--config-pct: worktree の宣言が Setup 時の宣言と一致すれば、Setup 時の宣言の command を実行する" {
+    declare_local_verify "  echo 'setup-command ran'  "
+    start_verify_pct "$(setup_config_pct "echo 'setup-command ran'")"
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.status == "running"'
+    wait_verify
+    echo "$output" | jq -e '.status == "passed" and (.log_tail | contains("setup-command ran"))'
+}
+
+@test "--config-pct: 実装が worktree の宣言を書き換えた（command を true に）なら error を返し、command も pg-broker も実行しない" {
+    declare_local_verify 'true'
+    start_verify_pct "$(setup_config_pct 'exit 1')"
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.ok == false and .status == "error" and (.error | contains("Setup 時の宣言と異なる"))'
+    [ ! -s "$BROKER_CALLS" ]
+
+    # 宣言を消しても同じ
+    echo '{}' > "$WT/.claude/skill-config.json"
+    start_verify_pct "$(setup_config_pct 'exit 1')"
+    echo "$output" | jq -e '.status == "error" and (.error | contains("消えている"))'
+    [ ! -s "$BROKER_CALLS" ]
+}
+
+@test "--config-pct: percent-encoding の形でない値は error" {
+    declare_local_verify 'true'
+    start_verify_pct "{\"command\":\"true\"}"
+    echo "$output" | jq -e '.status == "error" and (.error | contains("percent-encoding"))'
+    [ ! -s "$BROKER_CALLS" ]
+}
+
 @test "wait: start 前は error、usage error は exit 2" {
     run bash "$SCRIPT" wait --state-dir "$STATE_DIR" --wait-sec 1
     [ "$status" -eq 0 ]

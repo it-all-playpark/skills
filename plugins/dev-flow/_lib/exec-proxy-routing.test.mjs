@@ -25,6 +25,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { makeDevFlowSandbox, makePrIterateSandbox, runWorkflowCapture, assertNoCrash } from './test-helpers/vm-sandbox.mjs';
 import { DEV_FLOW_SCENARIOS } from './test-helpers/dev-flow-scenarios.mjs';
+import { localVerifyConfigArg } from './local-verify.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const workflowDir = join(here, '..', '.claude', 'workflows');
@@ -46,6 +47,9 @@ const EXPECTED_DEV_FLOW = {
   'ui-verify-config-final': RO,
   'diff-hash-eval': RO,
   'diff-hash-pr': RO,
+  // local-verify を実行した tree / 最終 tree の diff hash（issue #863。exit 0 を最終 tree と突き合わせる）
+  'diff-hash-local-verify#*': RO,
+  'diff-hash-local-verify-final': RO,
   'merge-tier-facts': RO,
   'changed-files-final': RO,
   'ci-final': RO,
@@ -186,8 +190,11 @@ test('[exec-proxy-routing] dev-flow.js: local-verify は bare 名 `local-verify 
   const lv = calls.filter((c) => c.label.startsWith('local-verify-'));
   assert.deepEqual(lv.map((c) => c.label), ['local-verify-start#1', 'local-verify-wait#1.1', 'local-verify-stop#1']);
   const stateDir = "'/tmp/wt/.devflow-tmp/local-verify'";
+  // start は Setup 時に検証した宣言を --config-pct（クォート不要な 1 トークン）で渡す
+  const configPct = localVerifyConfigArg({ command: 'pnpm test:e2e:local', db: { engine: 'postgres', version: '17' }, env: 'E2E_EXTERNAL_DATABASE_URL', timeout_seconds: 1500 });
+  assert.match(configPct, /^[A-Za-z0-9._%-]+$/);
   const forms = [
-    `\nlocal-verify start --worktree '/tmp/wt' --state-dir ${stateDir} --wait-sec 300`,
+    `\nlocal-verify start --worktree '/tmp/wt' --state-dir ${stateDir} --wait-sec 300 --config-pct ${configPct}`,
     `\nlocal-verify wait --state-dir ${stateDir} --wait-sec 480`,
     `\nlocal-verify stop --state-dir ${stateDir}`,
   ];

@@ -51,7 +51,8 @@ function ciAcAction(ciVerify) {
   return `CI の ${checks} の結果を確認して merge`;
 }
 
-// local-verify の結果の 1 行（「参考」節。issue #863）。unavailable / error / skipped は CI の check 待ちに回した理由を出す。
+// local-verify の結果の 1 行（「参考」節。issue #863）。unavailable / error / skipped は CI の check 待ちに回した理由、
+// stale は passed を最終 tree の根拠にしなかった理由を出す。
 function localVerifyLine(lv) {
   const cmd = `\`${lv.command ?? 'local_verify'}\``;
   const log = lv.log_path ? `log: ${lv.log_path}` : 'log なし';
@@ -59,6 +60,8 @@ function localVerifyLine(lv) {
   if (lv.status === 'failed') {
     return `${cmd} が exit ${lv.exit_code ?? '?'}（差し戻し ${Number.isInteger(lv.reimpl_count) ? lv.reimpl_count : '?'} 回後も失敗。${log}）— ci の AC は未達（エージェント）`;
   }
+  // stale: passed を出した tree と最終 tree が異なり、最終 tree で確かめられなかった。CI の check は待っていない
+  if (lv.status === 'stale') return `${cmd} の exit 0 は最終 tree の結果ではない（${mdCell(lv.reason ?? '最終 tree で確かめられない')}）— ci の AC は未確定。PR の CI の結果で判定する`;
   return `${mdCell(lv.reason ?? '実行できなかった')} — ci の AC は CI の check の結果で判定した`;
 }
 

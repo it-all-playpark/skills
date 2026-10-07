@@ -2,7 +2,7 @@ import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import {
   LOCAL_VERIFY_WAIT_SEC, LOCAL_VERIFY_TAIL_MAX,
-  localVerifyWaitPolls, localVerifyVerdict, localVerifyFeedback, localVerifyCiOutcome,
+  localVerifyWaitPolls, localVerifyVerdict, localVerifyFeedback, localVerifyCiOutcome, localVerifyConfigArg,
 } from './local-verify.mjs';
 
 test('[local-verify] localVerifyVerdict: passed は exit_code 0 が揃ったときだけ。timeout は failed、応答なし・未知の status は error', () => {
@@ -45,4 +45,11 @@ test('[local-verify] localVerifyCiOutcome: passed / failed で決着した run �
   assert.equal(localVerifyCiOutcome({ ...lv, status: 'failed', exit_code: 2 }).status, 'failed');
   for (const status of ['unavailable', 'error', 'skipped']) assert.equal(localVerifyCiOutcome({ status, reason: 'x' }), null, status);
   assert.equal(localVerifyCiOutcome(null), null);
+});
+
+test('[local-verify] localVerifyConfigArg: shell のクォートが要らない 1 トークンになり、戻すと宣言そのものになる', () => {
+  const cfg = { command: `pnpm test:e2e:local -- --grep 'tenant (a)' && echo "!~*" ; true`, db: { engine: 'postgres', version: '17' }, env: 'E2E_URL', timeout_seconds: 1500 };
+  const arg = localVerifyConfigArg(cfg);
+  assert.match(arg, /^[A-Za-z0-9._%-]+$/);
+  assert.deepEqual(JSON.parse(decodeURIComponent(arg)), cfg);
 });

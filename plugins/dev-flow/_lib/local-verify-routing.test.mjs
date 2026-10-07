@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash, devFlowArgs, prerunAnalyze } from './test-helpers/vm-sandbox.mjs';
 import { AGENT_AC_REIMPL_MAX } from './ac-actor.mjs';
+import { localVerifyConfigArg } from './local-verify.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const src = readFileSync(join(here, '..', '.claude/workflows/dev-flow.js'), 'utf8');
@@ -60,7 +61,11 @@ test('[local-verify-routing] (P) exit 0 → ci の AC を satisfied（HOLD し�
 
   assert.equal(result.merge_tier, 'REVIEW', JSON.stringify(result.merge_tier_hold_reasons));
   assert.deepEqual(plain(result.final_unsatisfied_ac_by_actor), { agent: [], human: [], ci: [] });
-  assert.deepEqual(plain(result.local_verify), { status: 'passed', command: 'pnpm test:e2e:local', label: 'full-ci', exit_code: 0, log_path: LOG_PATH, reimpl_count: 0 });
+  // tree_hash は Validate の diff-gate の hash（最後に test を走らせた tree）。最終 tree と一致するので再実行しない
+  assert.deepEqual(plain(result.local_verify), { status: 'passed', command: 'pnpm test:e2e:local', label: 'full-ci', exit_code: 0, log_path: LOG_PATH, reimpl_count: 0, tree_hash: 'AAA' });
+  assert.ok(calls.some((c) => c.label === 'diff-hash-local-verify-final'), '最終 tree の hash を取って突き合わせる');
+  // start には Setup 時に検証した宣言を渡す（worktree の宣言を読み直させない）
+  assert.ok(calls.find((c) => c.label === 'local-verify-start#1').prompt.endsWith(` --config-pct ${localVerifyConfigArg(LOCAL_VERIFY)}`));
   assert.equal(result.ci_verify, null);
 
   assert.ok(calls.find((c) => c.label === 'pr#1').prompt.includes('--label "full-ci"'), 'ローカルで satisfied でも PR に label は付ける');
@@ -104,6 +109,58 @@ test(`[local-verify-routing] (F) 失敗 → log_tail 付きで dev-implementer �
   assert.equal(result.local_verify.status, 'failed');
   assert.equal(iterateArgs[0].ci_verify.wait, false, 'ローカルで決着した run は CI の check を待たない');
   assert.ok(summary.includes(`exit 1（差し戻し ${AGENT_AC_REIMPL_MAX} 回後も失敗。log: ${LOG_PATH}）`), summary);
+});
+
+// (T) exit 0 を出した tree と最終 tree（Evaluate の差し戻し・pr-iterate の fix 後）が異なる run
+const passedOnce = { 'local-verify-start#1': running, 'local-verify-wait#1.1': passed, 'local-verify-stop#1': stopped };
+
+test('[local-verify-routing] (T1) pr-iterate の fix で最終 tree が変わった → 最終 tree で再実行し、その exit 0 で ci の AC を satisfied にする', async () => {
+  const { result, calls } = await run({
+    overrides: {
+      ...passedOnce,
+      'reconcile-sync': { ok: true, head: 'a'.repeat(40) },
+      'diff-hash-local-verify-final': { hash: 'BBB', empty: false },
+      'local-verify-start#final': running, 'local-verify-wait#final.1': passed, 'local-verify-stop#final': stopped,
+    },
+    iterate: { fixes_applied: 1 },
+  });
+  assert.deepEqual(localVerifyCalls(calls).map((c) => c.label), ['local-verify-start#1', 'local-verify-wait#1.1', 'local-verify-stop#1', 'local-verify-start#final', 'local-verify-wait#final.1', 'local-verify-stop#final']);
+  const at = (label) => calls.findIndex((c) => c.label === label);
+  assert.ok(at('reconcile-sync') < at('diff-hash-local-verify-final') && at('diff-hash-local-verify-final') < at('local-verify-start#final'), calls.map((c) => c.label).join(', '));
+  assert.equal(localReimplCalls(calls).length, 0, '最終 tree の再実行では差し戻さない');
+  assert.equal(result.local_verify.status, 'passed');
+  assert.equal(result.local_verify.tree_hash, 'BBB');
+  assert.ok(!result.merge_tier_hold_reasons.some((r) => ['ac_ci_pending', 'ac_agent_unsatisfied'].includes(r.code)), JSON.stringify(result.merge_tier_hold_reasons));
+  assert.deepEqual(plain(result.final_unsatisfied_ac_by_actor).ci, []);
+});
+
+test('[local-verify-routing] (T2) 最終 tree が変わり再実行の結果が取れない → exit 0 を捨てて stale、ci の AC は ac_ci_pending で HOLD', async () => {
+  const reason = 'pg-broker: cannot reach broker.sock';
+  const { result, calls, summary } = await run({
+    overrides: {
+      ...passedOnce,
+      'diff-hash-local-verify-final': { hash: 'BBB', empty: false },
+      'local-verify-start#final': { ok: false, status: 'unavailable', reason }, 'local-verify-stop#final': stopped,
+    },
+  });
+  assert.ok(calls.some((c) => c.label === 'local-verify-start#final'));
+  assert.equal(result.local_verify.status, 'stale');
+  assert.equal(result.merge_tier, 'HOLD');
+  assert.ok(result.merge_tier_hold_reasons.some((r) => r.code === 'ac_ci_pending'), JSON.stringify(result.merge_tier_hold_reasons));
+  assert.deepEqual(plain(result.final_unsatisfied_ac_by_actor).ci, [1]);
+  const line = summary.split('\n').find((l) => l.startsWith('- ローカル検証 (local_verify):')) ?? '';
+  assert.ok(line.includes('の exit 0 は最終 tree の結果ではない') && line.includes(reason), line);
+});
+
+test('[local-verify-routing] (T3) fix 後の worktree を最終 HEAD に同期できない → 再実行せず stale、ci の AC は ac_ci_pending で HOLD', async () => {
+  const { result, calls } = await run({
+    overrides: { ...passedOnce, 'reconcile-sync': { ok: false, error: 'not fast-forward' } },
+    iterate: { fixes_applied: 1 },
+  });
+  assert.ok(!calls.some((c) => c.label === 'diff-hash-local-verify-final' || c.label === 'local-verify-start#final'));
+  assert.equal(result.local_verify.status, 'stale');
+  assert.equal(result.merge_tier, 'HOLD');
+  assert.ok(result.merge_tier_hold_reasons.some((r) => r.code === 'ac_ci_pending'), JSON.stringify(result.merge_tier_hold_reasons));
 });
 
 test('[local-verify-routing] (U) pg-broker に届かない → #861 の CI 待ち（wait 無しの ci_verify）で判定し、理由をサマリーに 1 行出す', async () => {
