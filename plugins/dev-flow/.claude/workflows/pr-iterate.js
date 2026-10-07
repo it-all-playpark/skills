@@ -277,6 +277,22 @@ const NESTED = args?.nested == null
       }
       return n
     })()
+// ci_verify: dev-flow が ci の AC（repo が "dev-flow".ci_verify で CI の check で判定すると宣言した AC）を
+// 持つ run でだけ渡す { label, checks, wait_ceiling_seconds }。checks は review ⇄ fix の各 round の CI 判定から外し
+// （CI_EXCLUDE — E2E 等は round の待機上限 CI_WAIT_CEILING_SECONDS に収まらず ci_pending で終端するため）、LGTM 後に
+// 別ループ（waitCiVerify）で wait_ceiling_seconds まで完了を待つ。単体起動（/pr-iterate）は渡さない。不正形は明示 throw。
+const CI_VERIFY = args?.ci_verify == null
+  ? null
+  : (() => {
+      const v = args.ci_verify
+      const validChecks = Array.isArray(v?.checks) && v.checks.length > 0 && v.checks.every((c) => typeof c === 'string' && c.trim() !== '')
+      if (typeof v !== 'object' || v === null || typeof v.label !== 'string' || !validChecks
+        || !(Number.isInteger(v.wait_ceiling_seconds) && v.wait_ceiling_seconds > 0)) {
+        throw new Error(`pr-iterate: args.ci_verify が不正形です（label: string / checks: 非空の string[] / wait_ceiling_seconds: 正の整数）: ${JSON.stringify(v)}`)
+      }
+      return v
+    })()
+const CI_EXCLUDE = CI_VERIFY ? CI_VERIFY.checks : []
 // 終端サマリーの PR コメント投稿。dev-flow は自分の終端サマリーを投稿するので caller:'dev-flow' のときだけ止め、
 // 単体起動（wrapper 経由の caller:'standalone' / nested 無しの直接起動）は投稿する
 const POST_TERMINAL_SUMMARY = NESTED?.caller !== 'dev-flow'
@@ -753,16 +769,22 @@ const CI_STATUS = {
 const CI_COUNTS_NOTE = '`passed` / `failed` / `pending` / `skipped` の件数は stdout の値を一字一句そのまま写せ'
   + '（stdout に件数キーが無い場合 — status が error のとき — だけ各 0 を入れよ）。';
 
-function ciFetchSteps({ pr, repo, n }) {
-  return `${n}. \`gh pr checks ${pr}${repo ? ' --repo ' + repo : ''} --json name,state,bucket\` を gh を先頭トークンとする bare 単文で実行せよ`
+function checkNameArgs(flag, names) {
+  return (Array.isArray(names) ? names : []).map((name) => ` ${flag} '${String(name).split("'").join("'\\''")}'`).join('');
+}
+
+function ciFetchSteps({ pr, repo, n, exclude = [], only = [] }) {
+  const withLink = Array.isArray(only) && only.length > 0;
+  return `${n}. \`gh pr checks ${pr}${repo ? ' --repo ' + repo : ''} --json name,state,bucket${withLink ? ',link' : ''}\` を gh を先頭トークンとする bare 単文で実行せよ`
     + `（リダイレクト・パイプ・複合コマンドは使わない）。`
     + `このコマンドの exit code を判定に使ってはならない（pending で 8、失敗ありで 1 を返す仕様であり、fetch 自体の成否とは無関係）。\n`
     + `${n + 1}. \`check-ci --checks-data '<手順${n}の stdout を一字一句そのまま。要約・整形・省略禁止>' `
-    + `--fetch-error-data '<手順${n}の stderr を一字一句そのまま。stderr が空なら本オプション自体を省略>'\` `
+    + `--fetch-error-data '<手順${n}の stderr を一字一句そのまま。stderr が空なら本オプション自体を省略>'`
+    + `${checkNameArgs('--only', only)}${checkNameArgs('--exclude', exclude)}\` `
     + `を単文で実行し、stdout の JSON を読め。\n`;
 }
 
-function ciCheckPrompt({ pr, repo }) {
+function ciCheckPrompt({ pr, repo, exclude = [] }) {
   return `## Objective\nPR #${pr} の head commit sha と CI ステータスを取得し、JSON を返せ。\n\n`
     + `## Tools\n`
     + `- 使用可: Bash のみ\n`
@@ -773,7 +795,7 @@ function ciCheckPrompt({ pr, repo }) {
     + `## Steps\n`
     + `1. \`gh pr view ${pr}${repo ? ' --repo ' + repo : ''} --json headRefOid -q .headRefOid\` を gh を先頭トークンとする bare 単文で実行せよ`
     + `（リダイレクト・パイプ・複合コマンドは使わない）。stdout の 40 桁 hex を一字一句そのまま head_sha とする（失敗・空なら head_sha は省略）。\n`
-    + ciFetchSteps({ pr, repo, n: 2 })
+    + ciFetchSteps({ pr, repo, n: 2, exclude })
     + `4. 手順 3 の stdout JSON（{status, passed, failed, pending, skipped, failed_checks, waited_seconds, poll_attempts, ...}）に手順 1 の \`"head_sha"\` を加えて返せ。`
     + `それ以外のキーは要約・加工するな。${CI_COUNTS_NOTE}1 回の取得で判定を確定させ、待機や再取得は行うな。\n\n`
     + `## Output format\n`
@@ -793,7 +815,7 @@ const CI_WAIT_CHECK = {
   },
 };
 
-function ciWaitCheckPrompt({ pr, repo, seconds }) {
+function ciWaitCheckPrompt({ pr, repo, seconds, exclude = [] }) {
   return `## Objective\nCI 完了待ちのため ${seconds} 秒待機してから PR #${pr} の CI ステータスを 1 回取得し、JSON を返せ。\n\n`
     + `## Tools\n`
     + `- 使用可: Bash のみ\n`
@@ -805,7 +827,7 @@ function ciWaitCheckPrompt({ pr, repo, seconds }) {
     + `1. \`ci-wait ${seconds}\` を ci-wait を先頭トークンとする bare 単文で実行せよ（リダイレクト・パイプ・複合コマンドは使わない）。`
     + `stdout の JSON が \`"slept": true\` でなければ（stdout が空・exit 非0 を含む）手順 2〜4 を実行せず、`
     + `\`{ "slept": false, "status": "pending", "passed": 0, "failed": 0, "pending": 0, "skipped": 0 }\` を返して終了せよ。\n`
-    + ciFetchSteps({ pr, repo, n: 2 })
+    + ciFetchSteps({ pr, repo, n: 2, exclude })
     + `4. 手順 3 の stdout JSON（{status, passed, failed, pending, skipped, failed_checks, waited_seconds, poll_attempts, ...}）に \`"slept": true\` を加えて返せ。`
     + `それ以外のキーは要約・加工するな。${CI_COUNTS_NOTE}ci-wait と取得は各 1 回だけ実行し、再待機や再取得は行うな。\n\n`
     + `## Output format\n`
@@ -814,6 +836,52 @@ function ciWaitCheckPrompt({ pr, repo, seconds }) {
     + `prose 禁止。JSON のみ返せ。\n\n`
     + `## Token cap\n`
     + `JSON のみ。1 行以内。`;
+}
+
+const CI_VERIFY_POLL_SECONDS = 90;
+
+const CI_VERIFY_CHECK = {
+  type: 'object',
+  required: [...CI_STATUS.required],
+  properties: {
+    slept: { type: 'boolean' },
+    ...CI_STATUS.properties,
+    passed_checks: CI_STATUS.properties.failed_checks,
+  },
+};
+
+function ciVerifyPrompt({ pr, repo, checks, seconds }) {
+  const wait = Number(seconds) > 0;
+  const names = (Array.isArray(checks) ? checks : []).join(', ');
+  return `## Objective\n${wait ? `${seconds} 秒待機してから ` : ''}PR #${pr} の CI check（${names}）の状態を 1 回取得し、JSON を返せ。\n\n`
+    + `## Tools\n`
+    + `- 使用可: Bash のみ\n`
+    + `- 禁止: Write, Edit, git commit, git push\n\n`
+    + `## Boundary\n`
+    + `- 読み取り専用。git mutation（commit/push/reset 等）禁止\n`
+    + `- 実行するスクリプト以外のファイルを変更しない\n\n`
+    + `## Steps\n`
+    + (wait
+      ? `1. \`ci-wait ${seconds}\` を ci-wait を先頭トークンとする bare 単文で実行せよ（リダイレクト・パイプ・複合コマンドは使わない）。`
+        + `stdout の JSON が \`"slept": true\` でなければ（stdout が空・exit 非0 を含む）手順 2〜4 を実行せず、`
+        + `\`{ "slept": false, "status": "pending", "passed": 0, "failed": 0, "pending": 0, "skipped": 0 }\` を返して終了せよ。\n`
+      : `1. 待機はしない（ci-wait を実行しない）。\n`)
+    + ciFetchSteps({ pr, repo, n: 2, only: checks })
+    + `4. 手順 3 の stdout JSON（{status, passed, failed, pending, skipped, failed_checks, pending_checks, passed_checks, waited_seconds, poll_attempts, ...}）${wait ? 'に `"slept": true` を加えて' : 'を'}返せ。`
+    + `それ以外のキーは要約・加工するな。failed_checks / passed_checks の link は一字一句そのまま写せ。${CI_COUNTS_NOTE}`
+    + `${wait ? 'ci-wait と' : ''}取得は 1 回だけ実行し、再待機や再取得は行うな。\n\n`
+    + `## Output format\n`
+    + `{ ${wait ? '"slept": boolean, ' : ''}"status": "passed"|"failed"|"pending"|"no_checks"|"error", "passed": number, "failed": number, "pending": number, "skipped": number, `
+    + `"failed_checks": [{name, bucket, state, link}, ...], "passed_checks": [{name, bucket, state, link}, ...], "waited_seconds": number, "poll_attempts": number }\n`
+    + `prose 禁止。JSON のみ返せ。\n\n`
+    + `## Token cap\n`
+    + `JSON のみ。1 行以内。`;
+}
+
+function ciVerifyVerdict(eff) {
+  const s = eff?.status;
+  if (s === 'passed' || s === 'failed' || s === 'error') return s;
+  return 'pending';
 }
 
 function ciStatusFromCounts(ci) {
@@ -1078,7 +1146,7 @@ function observeCi(ciEff) {
 async function firstCiCheck(iteration, adopted, parallelLaunched) {
   if (adopted != null) return adopted
   return failOpenAgent(
-    ciCheckPrompt({ pr: PR, repo: REPO }),
+    ciCheckPrompt({ pr: PR, repo: REPO, exclude: CI_EXCLUDE }),
     { agentType: 'dev-runner-haiku-ro', schema: CI_STATUS, label: `ci-check#${iteration}${parallelLaunched ? '-serial' : ''}`, phase: 'Iterate' },
   )
 }
@@ -1162,6 +1230,71 @@ function fixPrompt({ objective, issuesHeading, issuesText, guidance = '' }) {
     + `- \`gh api\` で GitHub 上の状態を変更しない（ref・ブランチ・PR・issue・comment の作成・更新・削除を含む）\n`
     + `- 直すのに worktree の外の変更が要る指摘は直さず、その旨を summary に書く\n`
     + `\n## Token cap\nsummary は 300 字以内。指摘に関係するファイルだけを読み、無関係な探索・リファクタをしない。\n`
+}
+// ci-verify（CI_VERIFY がある run だけ）: LGTM 後に CI_VERIFY.checks の完了を待つ別ループの状態。返り値 ci_verify に載る。
+// status は最後の待ちの結果（'passed' | 'failed' | 'pending' | 'error'）で、待ちに入らなかった run は null（返り値では 'not_run'）。
+let ciVerifyStatus = null
+let ciVerifyUrls = []          // success の根拠（check run の URL）
+let ciVerifyWaitSeconds = 0    // 全待ちの nominal 累積待機秒（round の CI 待ち totalCiWaitSeconds とは別に数える）
+let ciVerifyPolls = 0          // 同上の判定 spawn 回数
+// CI_VERIFY.checks の完了を待つ（review ⇄ fix の round の CI 待ちとは別ループ）。1 回目は待たずに判定し、
+// 2 回目以降は CI_VERIFY_POLL_SECONDS 待ってから判定する（ci-verify#i.k。1 spawn = 1 判定）。次の待ちを足すと
+// CI_VERIFY.wait_ceiling_seconds を超える時点で pending で打ち切る。待機の不成立（slept:true 以外）は ci-wait-check と
+// 同じく積算せず pending で打ち切る。返り値 { verdict: 'passed'|'failed'|'pending'|'error', eff, waited, polls }。
+async function waitCiVerify(iteration) {
+  let waited = 0
+  let polls = 0
+  let eff = null
+  for (;;) {
+    const seconds = polls === 0 ? 0 : CI_VERIFY_POLL_SECONDS
+    const label = `ci-verify#${iteration}.${polls + 1}`
+    const res = await failOpenAgent(
+      ciVerifyPrompt({ pr: PR, repo: REPO, checks: CI_VERIFY.checks, seconds }),
+      { agentType: 'dev-runner-haiku-ro', schema: CI_VERIFY_CHECK, label, phase: 'Iterate' },
+    )
+    if (seconds > 0 && res?.slept !== true) {
+      log(`⚠️ iteration ${iteration}: ${label} が実待機を報告しなかった（${res == null ? 'null/throw' : 'slept=false'}）— 積算せず ci-verify を pending で打ち切る（累積 ${waited}s / poll ${polls} 回）`)
+      return { verdict: 'pending', eff, waited, polls }
+    }
+    polls += 1
+    waited += seconds
+    eff = effectiveCi(res, label)
+    const verdict = ciVerifyVerdict(eff)
+    if (verdict !== 'pending') return { verdict, eff, waited, polls }
+    if (waited + CI_VERIFY_POLL_SECONDS > CI_VERIFY.wait_ceiling_seconds) {
+      log(`iteration ${iteration}: CI の ${CI_VERIFY.checks.join(', ')} が待機上限 ${CI_VERIFY.wait_ceiling_seconds}s までに完了しない（累積 ${waited}s / poll ${polls} 回）— pending で打ち切る`)
+      return { verdict: 'pending', eff, waited, polls }
+    }
+  }
+}
+// CI 失敗の fix（round の CI gate の failed と ci-verify の failure で共用）: fix agent に直させ、commit 保証まで取る。
+// 失敗（fix の null / applied:false / commit 保証の失敗）は terminal='fix_failed' を立てて false を返す（呼び出し側が break）。
+// 成功は shaNow / pendingDeltaLines を進め fixesApplied を数えて true を返す（呼び出し側が次 iteration へ continue）。
+// 呼び出しは review ⇄ fix ループの中だけで、fix#i / commit-ensure#i の i はループの現在の iteration。
+async function applyCiFix({ round, objective, issuesText, guidance }) {
+  const ciFixPrompt = fixPrompt({ objective, issuesHeading: ' CI 失敗', issuesText, guidance })
+  const { fix, retried } = await callFixAgent(ciFixPrompt, i)
+  if (retried) round.fix_retried = true
+
+  if (fix == null || fix.applied !== true) {
+    fixTerminalReason = fix == null ? 'null_after_retry' : 'applied_false'
+    terminal = 'fix_failed'
+    log(`⚠️ fix#${i} が適用されず（applied=${fix?.applied ?? 'null'}）— ${fix?.summary ?? '理由不明'}${retried ? '（retry 後も null）' : ''}。`
+      + `無言で再レビューを繰り返さず人間へエスカレーション`)
+    return false
+  }
+
+  const ciEnsure = await ensureFixCommitted(i, shaPrev)
+  if (!ciEnsure.ensured) {
+    fixTerminalReason = 'commit_unensured'
+    terminal = 'fix_failed'
+    log(`⚠️ fix#${i} 適用後の commit 保証に失敗（未コミット変更の残存 또는 commit/push 失敗/状態不明）— 未コミットのまま次 iteration へ進まず人間へエスカレーション`)
+    return false
+  }
+  shaNow = ciEnsure.headSha
+  pendingDeltaLines = ciEnsure.deltaLines
+  fixesApplied++
+  return true
 }
 const reviewSeen = makeSeenTracker(REVIEW_STUCK)  // findings 累積 & stuck 検出（_lib/stuck-detector.mjs）
 const history = []               // ラウンド履歴 [{iteration, decision, summary, blocking, minor, scope, delta_lines}]
@@ -1323,7 +1456,7 @@ for (i = 1; i <= MAX; i++) {
     ? await parallel([
         () => callReviewAgent(reviewPrompt, `review#${i}`),
         () => failOpenAgent(
-          ciCheckPrompt({ pr: PR, repo: REPO }),
+          ciCheckPrompt({ pr: PR, repo: REPO, exclude: CI_EXCLUDE }),
           { agentType: 'dev-runner-haiku-ro', schema: CI_STATUS, label: `ci-check#${i}`, phase: 'Iterate' },
         ),
       ])
@@ -1423,7 +1556,7 @@ for (i = 1; i <= MAX; i++) {
       } else {
         const waitLabel = `ci-wait-check#${i}.${gatePolls + 1}`
         const waitResult = await failOpenAgent(
-          ciWaitCheckPrompt({ pr: PR, repo: REPO, seconds: CI_POLL_SECONDS }),
+          ciWaitCheckPrompt({ pr: PR, repo: REPO, seconds: CI_POLL_SECONDS, exclude: CI_EXCLUDE }),
           { agentType: 'dev-runner-haiku-ro', schema: CI_WAIT_CHECK, label: waitLabel, phase: 'Iterate' },
         )
         if (waitResult?.slept !== true) {
@@ -1450,6 +1583,44 @@ for (i = 1; i <= MAX; i++) {
     log(`iteration ${i}: ci-check waited_seconds=${gateWaited} poll_attempts=${gatePolls}（累積 waited=${totalCiWaitSeconds}s poll=${totalCiPollAttempts}）`)
 
     if (ciEff.status === 'passed' || ciEff.status === 'no_checks') {
+      // ci-verify: review と round の CI（CI_VERIFY.checks を除く）が揃った後に、CI_VERIFY.checks の完了を別ループで待つ。
+      // failure は失敗した job のログを fix に渡して直させ、次 iteration（再 review → round の CI → ここ）でもう一度待つ
+      // （再修正は MAX に含める）。success / 上限超過（pending）/ 取得不能（error）は LGTM のまま結果を返り値 ci_verify に載せ、
+      // ci の AC の判定（satisfied / ac_ci_pending）は dev-flow が行う。
+      if (CI_VERIFY) {
+        const verify = await waitCiVerify(i)
+        ciVerifyWaitSeconds += verify.waited
+        ciVerifyPolls += verify.polls
+        ciVerifyStatus = verify.verdict
+        log(`iteration ${i}: ci-verify（${CI_VERIFY.checks.join(', ')}）= ${verify.verdict}（待機 ${verify.waited}s / poll ${verify.polls} 回）`)
+        if (verify.verdict === 'passed') {
+          ciVerifyUrls = (verify.eff?.passed_checks ?? []).map((c) => c?.link).filter((u) => typeof u === 'string' && u !== '')
+        }
+        if (verify.verdict === 'failed') {
+          const verifyFindings = ciFailedFindings(verify.eff)
+          terminalPath = 'ci'
+          for (const x of verifyFindings) reviewSeen.register(x)
+          const verifyStuckTopics = reviewSeen.stuckTopics()
+          const verifyRound = { iteration: i, decision: effReview.decision, summary: effReview.summary, blocking: verifyFindings, minor: outcome.minor, scope: roundScope, delta_lines: roundDeltaLines }
+          history.push(verifyRound)
+          if (verifyStuckTopics.length) {
+            terminal = 'stuck'
+            log(`⚠️ Review STUCK — 同一 CI failure topic が ${REVIEW_STUCK} 回反復（${verifyStuckTopics.join(' / ')}）。人間レビューへエスカレーション`)
+            break
+          }
+          const links = (verify.eff?.failed_checks ?? []).map((c) => c?.link).filter((u) => typeof u === 'string' && u !== '')
+          const fixed = await applyCiFix({
+            round: verifyRound,
+            objective: `PR #${PR} の CI check（${CI_VERIFY.checks.join(', ')}）の失敗を修正し、PR ブランチへ commit・push する。`,
+            issuesText: buildCiIssuesText(verifyFindings) + (links.length ? `\n失敗した check の link: ${links.join(' ')}` : ''),
+            guidance: ciFixGuidance({ pr: PR, base: prMeta?.base_ref })
+              + `失敗した job のログは link の \`/runs/<run-id>/job/<job-id>\` から \`gh run view <run-id> --log-failed --job <job-id>\` で取得して原因を特定せよ。`
+              + `この check（${CI_VERIFY.checks.join(', ')}）は worktree では実行できない — ログとコードから直し、push 後の CI で確かめる。\n`,
+          })
+          if (!fixed) break
+          continue
+        }
+      }
       lgtm = true
       log(`iteration ${i}: LGTM（CI status=${ciEff.status}）`)
 
@@ -1494,37 +1665,14 @@ for (i = 1; i <= MAX; i++) {
         break
       }
 
-      const issuesText = buildCiIssuesText(ciFindings)
-
-      const ciFixPrompt = fixPrompt({
+      const fixed = await applyCiFix({
+        round: ciRound,
         objective: `PR #${PR} の CI 失敗を修正し、PR ブランチへ commit・push する。`,
-        issuesHeading: ' CI 失敗',
-        issuesText,
+        issuesText: buildCiIssuesText(ciFindings),
         guidance: ciFixGuidance({ pr: PR, base: prMeta?.base_ref }),
       })
-      const { fix, retried } = await callFixAgent(ciFixPrompt, i)
-      if (retried) ciRound.fix_retried = true
-
-      if (fix == null || fix.applied !== true) {
-        fixTerminalReason = fix == null ? 'null_after_retry' : 'applied_false'
-        terminal = 'fix_failed'
-        log(`⚠️ fix#${i} が適用されず（applied=${fix?.applied ?? 'null'}）— ${fix?.summary ?? '理由不明'}${retried ? '（retry 後も null）' : ''}。`
-          + `無言で再レビューを繰り返さず人間へエスカレーション`)
-        break
-      }
-
-      const ciEnsure = await ensureFixCommitted(i, shaPrev)
-      if (!ciEnsure.ensured) {
-        fixTerminalReason = 'commit_unensured'
-        terminal = 'fix_failed'
-        log(`⚠️ fix#${i} 適用後の commit 保証に失敗（未コミット変更の残存 또는 commit/push 失敗/状態不明）— 未コミットのまま次 iteration へ進まず人間へエスカレーション`)
-        break
-      }
-      shaNow = ciEnsure.headSha
-      pendingDeltaLines = ciEnsure.deltaLines
-
+      if (!fixed) break
       // CI fix applied — continue to next iteration for re-review + re-CI-check
-      fixesApplied++
       continue
     }
   } else {
@@ -1722,6 +1870,17 @@ return {
   fix_terminal_reason: fixTerminalReason,
   history,
   human_followups: humanFollowups,  // worktree の外を指すとして fix から外した blocking finding（nested では dev-flow の終端サマリーが表示する）
+  // LGTM 後の CI_VERIFY.checks の待ち結果（args.ci_verify を受けた run だけ）。dev-flow が ci の AC の判定に使う
+  ...(CI_VERIFY ? {
+    ci_verify: {
+      status: ciVerifyStatus ?? 'not_run',
+      label: CI_VERIFY.label,
+      checks: CI_VERIFY.checks,
+      urls: ciVerifyUrls,
+      waited_seconds: ciVerifyWaitSeconds,
+      poll_attempts: ciVerifyPolls,
+    },
+  } : {}),
   subagent_invocations: buildSubagentInvocations(SUBAGENT_COUNTS),
   journal_log_status: journalLogStatus,
   ...(lastCiEpoch != null ? { end_epoch: lastCiEpoch } : {}),

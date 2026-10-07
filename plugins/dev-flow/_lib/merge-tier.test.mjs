@@ -317,6 +317,17 @@ test('classifyMergeTier: 両方未達 → ac_agent_unsatisfied と ac_human_pend
   assert.deepEqual(r.holdReasons.map((x) => x.code), ['ac_agent_unsatisfied', 'ac_human_pending']);
 });
 
+// ---- issue #861: ci の AC（ci_verify）が CI で success にならなかった ----
+
+test('classifyMergeTier: ci の AC が未確定 → HOLD 理由は ac_ci_pending（CI 判定待ち）で、人手・エージェントの AC 未達とは別 code', () => {
+  const r = classifyMergeTier({ ...standardBase(), iterateStatus: 'lgtm', evalStaleness: 'none', unsatisfiedCiAc: true });
+  assert.equal(r.tier, 'HOLD');
+  assert.deepEqual(r.holdReasons.map((x) => x.code), ['ac_ci_pending']);
+  assert.match(r.holdReasons[0].reason, /CI 判定待ち/);
+  assert.equal(classifyMergeTier({ ...standardBase(), iterateStatus: 'lgtm', evalStaleness: 'none', unsatisfiedCiAc: false }).tier, 'REVIEW');
+  assert.throws(() => classifyMergeTier({ ...standardBase(), unsatisfiedCiAc: 'yes' }), /invalid unsatisfiedCiAc/);
+});
+
 test('classifyMergeTier: 旧キー unsatisfiedAc は actor を区別できないので明示 error', () => {
   assert.throws(() => classifyMergeTier({ ...standardBase(), iterateStatus: 'lgtm', unsatisfiedAc: true }), /unsatisfiedAc は廃止/);
 });
@@ -1263,12 +1274,12 @@ test('classifyMergeTier: evalStaleness:undefined/null → throw しない(従来
 
 // ---- issue #658: HOLD_REASON_CODES + holdReasons[].code + disclosures ----
 
-test('HOLD_REASON_CODES は 17 の閉じた enum と一致', () => {
+test('HOLD_REASON_CODES は 18 の閉じた enum と一致', () => {
   assert.deepEqual(HOLD_REASON_CODES, [
     'ledger_unconverged', 'danger_unresolved', 'breaking_structured', 'escalate',
     'ac_agent_unsatisfied', 'ac_human_pending', 'danger_fail_closed', 'final_reconcile_unavailable', 'final_test_red',
     'final_ac_unavailable', 'iterate_non_lgtm', 'hash_mismatch', 'testsurf_uncleared',
-    'mergeable_conflicting', 'pr_closes_missing', 'merge_facts_dropped', 'ci_checks_failed',
+    'mergeable_conflicting', 'pr_closes_missing', 'merge_facts_dropped', 'ci_checks_failed', 'ac_ci_pending',
   ]);
 });
 

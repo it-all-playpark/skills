@@ -89,6 +89,13 @@ feedback は `pass` でも返せる（escalate だけの報告など）。
 - `test_files` / `impl_files`（`"test"` のときのみ）: その AC を守るテストと対象実装を worktree 相対パスで。
   red→green の証明は呼び出し側が別途行うので、申告だけでよい。
   test_files は repo の test discovery（`*.test.mjs` / `*.bats` / `*.test.ts` / `*.test.tsx`）に一致するものに限り、playwright の `*.spec.ts` / `*.spec.tsx` と混在ファイルは挙げない
+- `unreachable_env`（任意、`satisfied:false` のときだけ）: 未達の理由が実装ではなく実行環境にあるとき `true`
+  （DB コンテナ・ブラウザ・外部サービス等が sandbox 内で動かず、AC が求める実行をここでは確かめられない。
+  コード上に未達の根拠が無い）。`true` の AC は実装へ差し戻されず、人間が実行して確かめる。コードの欠落・バグ・
+  テスト不足が根拠なら付けない（差し戻して直させる）
+
+`requirements.ac_actors` が `ci` の AC は、PR の CI の check が判定する（呼び出し側が check の結果で satisfied を決める）。
+判定せず、その AC に結び付く feedback も出さない（ac_results に含めても使われない）。
 
 ## critical_resolutions / security_clearance / concern_resolutions 契約
 
@@ -147,7 +154,8 @@ verdict とは独立に付ける。根拠の無い高い値や一律の値を乱
   "feedback_level": "implementation",
   "task_type": "api",
   "ac_results": [
-    {"ac_index": 0, "satisfied": true, "evidence": "src/user.test.mjs::creates user", "verified_by": "test", "test_files": ["src/user.test.mjs"], "impl_files": ["src/user.mjs"]}
+    {"ac_index": 0, "satisfied": true, "evidence": "src/user.test.mjs::creates user", "verified_by": "test", "test_files": ["src/user.test.mjs"], "impl_files": ["src/user.mjs"]},
+    {"ac_index": 1, "satisfied": false, "evidence": "e2e/tenant.spec.ts は追加済みだが DB コンテナが sandbox 内で起動せず実行できない", "verified_by": "inspection", "unreachable_env": true}
   ],
   "critical_resolutions": [
     {"id": "EVAL-1-input-validation-missing", "resolved": true, "evidence": "src/user.ts:42 で zod による email 検証を確認"}

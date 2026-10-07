@@ -13,6 +13,7 @@
 // summarizePrerunDeps: prerun の deps 結果（advisory）を implementer prompt 注入用の警告文と
 //   ログ行に要約する純関数。deps.ok:false でも top-level ok には影響しない（fail-open）。
 // hasNextJs: stack.frameworks に 'next' が含まれるかを判定する純関数。Turbopack 規約注入の判定に使う。
+// normalizeCiVerify: prerun の ci_verify（repo の CI 判定の宣言。null は未設定）を検証・正規化する純関数。
 // analyze: prerun の analyze 段の結果（{ok, ...}）。ok:true の中身の whitelist 検証は
 //   buildReqFromContract（_lib/analyze-contract.mjs）が担い、ここでは object / ok boolean /
 //   ok:false のときの reason string だけを fail-closed に検証して verbatim で返す。
@@ -94,6 +95,7 @@ export function validatePrerunSetup(raw, issue) {
   const repo = isNonEmptyString(raw.repo) ? raw.repo : null;
   const branch = isNonEmptyString(raw.branch) ? raw.branch : `feature/issue-${issue}`;
   const frameworks = raw.stack.frameworks.filter((f) => typeof f === 'string');
+  const ciVerify = normalizeCiVerify(raw.ci_verify);
 
   return {
     base: raw.base.trim(),
@@ -106,6 +108,34 @@ export function validatePrerunSetup(raw, issue) {
     analyze: raw.analyze,
     epoch: raw.epoch,
     epoch_end: raw.epoch_end,
+    ci_verify: ciVerify,
+  };
+}
+
+// ci_verify（issue #861）: prerun が worktree の skill-config.json / .claude/skill-config.json（前者優先）から読んだ
+// "dev-flow".ci_verify。sandbox 内で実行できない検証（E2E 等）を CI のどの check で判定するかを repo が宣言する。
+//   label: AC に ci があれば PR に付けるラベル（CI がこのラベルで対象 job を回す）
+//   checks: LGTM 後に完了を待つ check 名（gh pr checks の name）
+//   commands: AC の inline code がこれに当たれば actor を ci にする（_lib/ac-actor.mjs の matchesCiVerify）
+//   wait_ceiling_seconds: checks の完了を待つ上限（秒）
+// null / 欠落は未設定（従来どおり）。設定されていて形が不正なら fail-closed で throw する — 不正な宣言を黙って
+// 無視すると、CI に回すはずの AC が agent に戻って reimpl を空回りさせるため。
+export function normalizeCiVerify(raw) {
+  if (raw == null) return null;
+  const fail = (key, value) => {
+    throw new Error(`dev-flow: skill-config の "dev-flow".ci_verify.${key} が不正（受信: ${stringifyForError(value)}）— { label: string, checks: string[]（1 件以上）, commands: string[], wait_ceiling_seconds: 正の整数 } に直してから再実行せよ`);
+  };
+  if (!isPlainObject(raw)) fail('(object)', raw);
+  if (!isNonEmptyString(raw.label)) fail('label', raw.label);
+  const isNameList = (v) => Array.isArray(v) && v.every(isNonEmptyString);
+  if (!isNameList(raw.checks) || raw.checks.length === 0) fail('checks', raw.checks);
+  if (!isNameList(raw.commands)) fail('commands', raw.commands);
+  if (!(Number.isInteger(raw.wait_ceiling_seconds) && raw.wait_ceiling_seconds > 0)) fail('wait_ceiling_seconds', raw.wait_ceiling_seconds);
+  return {
+    label: raw.label.trim(),
+    checks: raw.checks.map((c) => c.trim()),
+    commands: raw.commands.map((c) => c.trim()),
+    wait_ceiling_seconds: raw.wait_ceiling_seconds,
   };
 }
 

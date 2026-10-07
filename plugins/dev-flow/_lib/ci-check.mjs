@@ -85,12 +85,22 @@ export const CI_STATUS = {
 const CI_COUNTS_NOTE = '`passed` / `failed` / `pending` / `skipped` の件数は stdout の値を一字一句そのまま写せ'
   + '（stdout に件数キーが無い場合 — status が error のとき — だけ各 0 を入れよ）。';
 
-export function ciFetchSteps({ pr, repo, n }) {
-  return `${n}. \`gh pr checks ${pr}${repo ? ' --repo ' + repo : ''} --json name,state,bucket\` を gh を先頭トークンとする bare 単文で実行せよ`
+// check-ci の --only / --exclude に渡す check 名の引数列（名前は単一引用符で囲む。空なら空文字）。
+function checkNameArgs(flag, names) {
+  return (Array.isArray(names) ? names : []).map((name) => ` ${flag} '${String(name).split("'").join("'\\''")}'`).join('');
+}
+
+// exclude: check-ci に --exclude で渡す check 名（ci_verify.checks。review ⇄ fix の round の CI 判定から外す）。
+// only: check-ci に --only で渡す check 名（LGTM 後の ci-verify 待ち）。only を渡すときは gh の --json に link を足し、
+// check run の URL を AC の根拠に残す。
+export function ciFetchSteps({ pr, repo, n, exclude = [], only = [] }) {
+  const withLink = Array.isArray(only) && only.length > 0;
+  return `${n}. \`gh pr checks ${pr}${repo ? ' --repo ' + repo : ''} --json name,state,bucket${withLink ? ',link' : ''}\` を gh を先頭トークンとする bare 単文で実行せよ`
     + `（リダイレクト・パイプ・複合コマンドは使わない）。`
     + `このコマンドの exit code を判定に使ってはならない（pending で 8、失敗ありで 1 を返す仕様であり、fetch 自体の成否とは無関係）。\n`
     + `${n + 1}. \`check-ci --checks-data '<手順${n}の stdout を一字一句そのまま。要約・整形・省略禁止>' `
-    + `--fetch-error-data '<手順${n}の stderr を一字一句そのまま。stderr が空なら本オプション自体を省略>'\` `
+    + `--fetch-error-data '<手順${n}の stderr を一字一句そのまま。stderr が空なら本オプション自体を省略>'`
+    + `${checkNameArgs('--only', only)}${checkNameArgs('--exclude', exclude)}\` `
     + `を単文で実行し、stdout の JSON を読め。\n`;
 }
 
@@ -100,9 +110,10 @@ export function ciFetchSteps({ pr, repo, n }) {
  * @param {object} opts
  * @param {number|string} opts.pr - 対象 PR 番号
  * @param {string|null} opts.repo - owner/name。null / 空なら --repo を付けない（cwd の repo を使う）
+ * @param {string[]} [opts.exclude] - CI 判定から外す check 名（ci_verify.checks）
  * @returns {string} dev-runner-haiku-ro へ渡す prompt
  */
-export function ciCheckPrompt({ pr, repo }) {
+export function ciCheckPrompt({ pr, repo, exclude = [] }) {
   return `## Objective\nPR #${pr} の head commit sha と CI ステータスを取得し、JSON を返せ。\n\n`
     + `## Tools\n`
     + `- 使用可: Bash のみ\n`
@@ -113,7 +124,7 @@ export function ciCheckPrompt({ pr, repo }) {
     + `## Steps\n`
     + `1. \`gh pr view ${pr}${repo ? ' --repo ' + repo : ''} --json headRefOid -q .headRefOid\` を gh を先頭トークンとする bare 単文で実行せよ`
     + `（リダイレクト・パイプ・複合コマンドは使わない）。stdout の 40 桁 hex を一字一句そのまま head_sha とする（失敗・空なら head_sha は省略）。\n`
-    + ciFetchSteps({ pr, repo, n: 2 })
+    + ciFetchSteps({ pr, repo, n: 2, exclude })
     + `4. 手順 3 の stdout JSON（{status, passed, failed, pending, skipped, failed_checks, waited_seconds, poll_attempts, ...}）に手順 1 の \`"head_sha"\` を加えて返せ。`
     + `それ以外のキーは要約・加工するな。${CI_COUNTS_NOTE}1 回の取得で判定を確定させ、待機や再取得は行うな。\n\n`
     + `## Output format\n`
@@ -142,9 +153,10 @@ export const CI_WAIT_CHECK = {
  * @param {number|string} opts.pr - 対象 PR 番号
  * @param {string|null} opts.repo - owner/name。null / 空なら --repo を付けない（cwd の repo を使う）
  * @param {number} opts.seconds - 判定前の待機秒数
+ * @param {string[]} [opts.exclude] - CI 判定から外す check 名（ci_verify.checks）
  * @returns {string} dev-runner-haiku-ro へ渡す prompt
  */
-export function ciWaitCheckPrompt({ pr, repo, seconds }) {
+export function ciWaitCheckPrompt({ pr, repo, seconds, exclude = [] }) {
   return `## Objective\nCI 完了待ちのため ${seconds} 秒待機してから PR #${pr} の CI ステータスを 1 回取得し、JSON を返せ。\n\n`
     + `## Tools\n`
     + `- 使用可: Bash のみ\n`
@@ -156,7 +168,7 @@ export function ciWaitCheckPrompt({ pr, repo, seconds }) {
     + `1. \`ci-wait ${seconds}\` を ci-wait を先頭トークンとする bare 単文で実行せよ（リダイレクト・パイプ・複合コマンドは使わない）。`
     + `stdout の JSON が \`"slept": true\` でなければ（stdout が空・exit 非0 を含む）手順 2〜4 を実行せず、`
     + `\`{ "slept": false, "status": "pending", "passed": 0, "failed": 0, "pending": 0, "skipped": 0 }\` を返して終了せよ。\n`
-    + ciFetchSteps({ pr, repo, n: 2 })
+    + ciFetchSteps({ pr, repo, n: 2, exclude })
     + `4. 手順 3 の stdout JSON（{status, passed, failed, pending, skipped, failed_checks, waited_seconds, poll_attempts, ...}）に \`"slept": true\` を加えて返せ。`
     + `それ以外のキーは要約・加工するな。${CI_COUNTS_NOTE}ci-wait と取得は各 1 回だけ実行し、再待機や再取得は行うな。\n\n`
     + `## Output format\n`
@@ -165,6 +177,73 @@ export function ciWaitCheckPrompt({ pr, repo, seconds }) {
     + `prose 禁止。JSON のみ返せ。\n\n`
     + `## Token cap\n`
     + `JSON のみ。1 行以内。`;
+}
+
+// ---- ci-verify（issue #861）: LGTM 後に ci_verify.checks の完了を待つ poll ----
+// repo が "dev-flow".ci_verify で宣言した check（E2E 等。sandbox 内で実行できず、CI でも数十分かかる）は
+// review ⇄ fix の各 round の CI 判定（CI_WAIT_CEILING_SECONDS）から外し（--exclude）、pr-iterate が LGTM に
+// 達した後に別ループで ci_verify.wait_ceiling_seconds まで待つ（--only）。1 spawn = 1 判定・ループは
+// script 側なのは ci-check / ci-wait-check と同じ。2 回目以降の poll は CI_VERIFY_POLL_SECONDS 待ってから判定する
+// （ci-wait は Bash tool の既定 timeout 120 秒に収まる長さにする。長い待ちで poll 間隔を延ばし spawn 数を抑える）。
+export const CI_VERIFY_POLL_SECONDS = 90;
+
+// ci-verify#i.k の応答 schema。slept は待機した poll（2 回目以降）でだけ返る。passed_checks は check-ci --only の出力
+// （link 付き。success の根拠 URL）。
+export const CI_VERIFY_CHECK = {
+  type: 'object',
+  required: [...CI_STATUS.required],
+  properties: {
+    slept: { type: 'boolean' },
+    ...CI_STATUS.properties,
+    passed_checks: CI_STATUS.properties.failed_checks,
+  },
+};
+
+/**
+ * ci-verify exec-proxy の prompt を組み立てる純粋関数（ci_verify.checks だけを判定する。seconds > 0 なら待機してから判定）。
+ *
+ * @param {object} opts
+ * @param {number|string} opts.pr - 対象 PR 番号
+ * @param {string|null} opts.repo - owner/name。null / 空なら --repo を付けない
+ * @param {string[]} opts.checks - 判定する check 名（ci_verify.checks）
+ * @param {number} opts.seconds - 判定前の待機秒数（0 なら待機しない）
+ * @returns {string} dev-runner-haiku-ro へ渡す prompt
+ */
+export function ciVerifyPrompt({ pr, repo, checks, seconds }) {
+  const wait = Number(seconds) > 0;
+  const names = (Array.isArray(checks) ? checks : []).join(', ');
+  return `## Objective\n${wait ? `${seconds} 秒待機してから ` : ''}PR #${pr} の CI check（${names}）の状態を 1 回取得し、JSON を返せ。\n\n`
+    + `## Tools\n`
+    + `- 使用可: Bash のみ\n`
+    + `- 禁止: Write, Edit, git commit, git push\n\n`
+    + `## Boundary\n`
+    + `- 読み取り専用。git mutation（commit/push/reset 等）禁止\n`
+    + `- 実行するスクリプト以外のファイルを変更しない\n\n`
+    + `## Steps\n`
+    + (wait
+      ? `1. \`ci-wait ${seconds}\` を ci-wait を先頭トークンとする bare 単文で実行せよ（リダイレクト・パイプ・複合コマンドは使わない）。`
+        + `stdout の JSON が \`"slept": true\` でなければ（stdout が空・exit 非0 を含む）手順 2〜4 を実行せず、`
+        + `\`{ "slept": false, "status": "pending", "passed": 0, "failed": 0, "pending": 0, "skipped": 0 }\` を返して終了せよ。\n`
+      : `1. 待機はしない（ci-wait を実行しない）。\n`)
+    + ciFetchSteps({ pr, repo, n: 2, only: checks })
+    + `4. 手順 3 の stdout JSON（{status, passed, failed, pending, skipped, failed_checks, pending_checks, passed_checks, waited_seconds, poll_attempts, ...}）${wait ? 'に `"slept": true` を加えて' : 'を'}返せ。`
+    + `それ以外のキーは要約・加工するな。failed_checks / passed_checks の link は一字一句そのまま写せ。${CI_COUNTS_NOTE}`
+    + `${wait ? 'ci-wait と' : ''}取得は 1 回だけ実行し、再待機や再取得は行うな。\n\n`
+    + `## Output format\n`
+    + `{ ${wait ? '"slept": boolean, ' : ''}"status": "passed"|"failed"|"pending"|"no_checks"|"error", "passed": number, "failed": number, "pending": number, "skipped": number, `
+    + `"failed_checks": [{name, bucket, state, link}, ...], "passed_checks": [{name, bucket, state, link}, ...], "waited_seconds": number, "poll_attempts": number }\n`
+    + `prose 禁止。JSON のみ返せ。\n\n`
+    + `## Token cap\n`
+    + `JSON のみ。1 行以内。`;
+}
+
+// ci-verify の 1 回の判定（ciEffectiveStatus 済み）を待ちループの分岐に写す純関数。
+// no_checks は pending（label を付けた直後は対象 job がまだ登録されていない）。error は待たずに終える（状態不明を
+// 待ち続けて上限まで spawn しない）。
+export function ciVerifyVerdict(eff) {
+  const s = eff?.status;
+  if (s === 'passed' || s === 'failed' || s === 'error') return s;
+  return 'pending';
 }
 
 // check-ci の件数から status を導き直す（check-ci.sh の compute_verdict と同じ優先順）。

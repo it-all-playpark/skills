@@ -221,6 +221,7 @@ function validatePrerunSetup(raw, issue) {
   const repo = isNonEmptyString(raw.repo) ? raw.repo : null;
   const branch = isNonEmptyString(raw.branch) ? raw.branch : `feature/issue-${issue}`;
   const frameworks = raw.stack.frameworks.filter((f) => typeof f === 'string');
+  const ciVerify = normalizeCiVerify(raw.ci_verify);
 
   return {
     base: raw.base.trim(),
@@ -233,6 +234,26 @@ function validatePrerunSetup(raw, issue) {
     analyze: raw.analyze,
     epoch: raw.epoch,
     epoch_end: raw.epoch_end,
+    ci_verify: ciVerify,
+  };
+}
+
+function normalizeCiVerify(raw) {
+  if (raw == null) return null;
+  const fail = (key, value) => {
+    throw new Error(`dev-flow: skill-config の "dev-flow".ci_verify.${key} が不正（受信: ${stringifyForError(value)}）— { label: string, checks: string[]（1 件以上）, commands: string[], wait_ceiling_seconds: 正の整数 } に直してから再実行せよ`);
+  };
+  if (!isPlainObject(raw)) fail('(object)', raw);
+  if (!isNonEmptyString(raw.label)) fail('label', raw.label);
+  const isNameList = (v) => Array.isArray(v) && v.every(isNonEmptyString);
+  if (!isNameList(raw.checks) || raw.checks.length === 0) fail('checks', raw.checks);
+  if (!isNameList(raw.commands)) fail('commands', raw.commands);
+  if (!(Number.isInteger(raw.wait_ceiling_seconds) && raw.wait_ceiling_seconds > 0)) fail('wait_ceiling_seconds', raw.wait_ceiling_seconds);
+  return {
+    label: raw.label.trim(),
+    checks: raw.checks.map((c) => c.trim()),
+    commands: raw.commands.map((c) => c.trim()),
+    wait_ceiling_seconds: raw.wait_ceiling_seconds,
   };
 }
 
@@ -683,7 +704,7 @@ const HOLD_REASON_CODES = [
   'ledger_unconverged', 'danger_unresolved', 'breaking_structured', 'escalate',
   'ac_agent_unsatisfied', 'ac_human_pending', 'danger_fail_closed', 'final_reconcile_unavailable', 'final_test_red',
   'final_ac_unavailable', 'iterate_non_lgtm', 'hash_mismatch', 'testsurf_uncleared',
-  'mergeable_conflicting', 'pr_closes_missing', 'merge_facts_dropped', 'ci_checks_failed',
+  'mergeable_conflicting', 'pr_closes_missing', 'merge_facts_dropped', 'ci_checks_failed', 'ac_ci_pending',
 ];
 
 function classifyCiChecks(ciChecks) {
@@ -744,6 +765,9 @@ function classifyMergeTier(s) {
   if (s.unsatisfiedHumanAc != null && typeof s.unsatisfiedHumanAc !== 'boolean') {
     throw new Error('classifyMergeTier: invalid unsatisfiedHumanAc: ' + s.unsatisfiedHumanAc);
   }
+  if (s.unsatisfiedCiAc != null && typeof s.unsatisfiedCiAc !== 'boolean') {
+    throw new Error('classifyMergeTier: invalid unsatisfiedCiAc: ' + s.unsatisfiedCiAc);
+  }
   if (s.riskValueDropped != null && typeof s.riskValueDropped !== 'boolean') {
     throw new Error('classifyMergeTier: invalid riskValueDropped: ' + s.riskValueDropped);
   }
@@ -788,7 +812,8 @@ function classifyMergeTier(s) {
     : null;
   if (s.escalateCount > 0) pushBlocking('escalate', `ESCALATE-TO-HUMAN 項目 ${s.escalateCount} 件`, 'human_judgment');
   if (s.unsatisfiedAgentAc === true) pushBlocking('ac_agent_unsatisfied', 'AC 未達（エージェント AC 未達 — worktree 内で満たせる AC が差し戻し上限後も satisfied:false。ループの取りこぼし。gate_policy に依らず人間確認必須）', 'human_judgment');
-  if (s.unsatisfiedHumanAc === true) pushBlocking('ac_human_pending', 'AC 未達（人手 AC 待ち — （人手）/ staging / 本番等の worktree 外作業を要する AC が satisfied:false。人間が実施して確認する）', 'human_judgment');
+  if (s.unsatisfiedHumanAc === true) pushBlocking('ac_human_pending', 'AC 未達（人手 AC 待ち — （人手）/ staging / 本番等の worktree 外作業、または実行環境に届かない検証を要する AC が satisfied:false。人間が実施して確認する）', 'human_judgment');
+  if (s.unsatisfiedCiAc === true) pushBlocking('ac_ci_pending', 'AC 未確定（CI 判定待ち — ci_verify の check で判定する AC が pr-iterate の LGTM 後の待ちで success にならなかった。CI の結果を確認して merge する）', 'human_judgment');
   if (s.dangerFailClosed === true) {
     if (s.riskValueDropped === true) pushBlocking('merge_facts_dropped', 'merge-tier-facts の転記欠落（subagent 応答から danger-grep 結果 risk.value が落ちた。danger-grep 自体は実行済みの可能性あり）— security 未検証のため人間確認必須', 'human_judgment');
     else pushBlocking('danger_fail_closed', 'danger-grep 実行不能（fail-closed）— security 未検証のため人間確認必須', 'human_judgment');
@@ -868,7 +893,7 @@ function classifyMergeTier(s) {
 // ==== END inline: _lib/merge-tier.mjs ====
 // ==== BEGIN inline: _lib/ac-actor.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 
-const AC_ACTORS = ['agent', 'human']
+const AC_ACTORS = ['agent', 'human', 'ci']
 
 const AGENT_AC_REIMPL_MAX = 2
 
@@ -1020,16 +1045,82 @@ function resolveAcObservational(acObservational, agentResult) {
   })
 }
 
+function mentionsLabel(text, label) {
+  const isWordChar = (c) => c !== undefined && /[A-Za-z0-9_-]/.test(c)
+  for (let at = text.indexOf(label); at >= 0; at = text.indexOf(label, at + 1)) {
+    if (!isWordChar(text[at - 1]) && !isWordChar(text[at + label.length])) return true
+  }
+  return false
+}
+
+function matchesCiVerify(ac, ciVerify) {
+  if (!ciVerify || typeof ciVerify !== 'object') return false
+  const text = String(ac ?? '')
+  const commands = (Array.isArray(ciVerify.commands) ? ciVerify.commands : [])
+    .filter((c) => typeof c === 'string' && c.trim()).map((c) => c.trim())
+  const codes = (text.match(INLINE_CODE_RE) ?? []).map((m) => m.slice(1, -1).trim())
+  if (codes.some((code) => commands.some((cmd) => code === cmd || code.startsWith(cmd + ' ')))) return true
+  const label = typeof ciVerify.label === 'string' ? ciVerify.label.trim() : ''
+  return label !== '' && mentionsLabel(text, label)
+}
+
 function classifyAcActor(ac, opts = {}) {
   const text = String(ac ?? '').replace(INLINE_CODE_RE, ' ')
   if (HUMAN_AC_PATTERNS.some((re) => re.test(text))) return 'human'
+  if (matchesCiVerify(ac, opts?.ciVerify)) return 'ci'
   if (classifyAcScope(ac, opts) === 'external') return 'human'
   return opts?.observational === true ? 'human' : 'agent'
 }
 
 function acActorsOf(acceptanceCriteria, opts = {}) {
   const obs = Array.isArray(opts?.observational) ? opts.observational : []
-  return (Array.isArray(acceptanceCriteria) ? acceptanceCriteria : []).map((ac, i) => classifyAcActor(ac, { repo: opts?.repo, observational: obs[i] === true }))
+  return (Array.isArray(acceptanceCriteria) ? acceptanceCriteria : []).map((ac, i) => classifyAcActor(ac, { repo: opts?.repo, observational: obs[i] === true, ciVerify: opts?.ciVerify }))
+}
+
+function ciAcIndexes(actors) {
+  const out = []
+  const list = Array.isArray(actors) ? actors : []
+  for (let i = 0; i < list.length; i++) if (list[i] === 'ci') out.push(i)
+  return out
+}
+
+const CI_VERIFY_STATUSES = ['passed', 'failed', 'pending', 'error', 'not_run']
+
+function ciAcEvidence(ciVerify) {
+  const checks = Array.isArray(ciVerify?.checks) && ciVerify.checks.length ? ciVerify.checks.join(', ') : 'CI'
+  switch (ciVerify?.status) {
+    case 'passed': {
+      const urls = Array.isArray(ciVerify.urls) ? ciVerify.urls.filter((u) => typeof u === 'string' && u) : []
+      return `CI の ${checks} が success${urls.length ? `: ${urls.join(' ')}` : ''}`
+    }
+    case 'failed': return `CI の ${checks} が failure（pr-iterate の fix 後も green にならなかった）`
+    case 'pending': return `CI の ${checks} 実行中（${Number.isFinite(ciVerify.waited_seconds) ? ciVerify.waited_seconds : '?'}s 待って未完了）`
+    case 'error': return `CI の ${checks} の状態を取得できなかった`
+    case 'not_run': return `CI の ${checks} の完了待ちに入っていない（pr-iterate が LGTM 前に終端）`
+    default: return 'CI の check で判定する（pr-iterate の LGTM 後に完了を待つ）— 未判定'
+  }
+}
+
+function applyCiAcResults(acResults, actors, ciVerify) {
+  if (!Array.isArray(acResults)) return acResults
+  const ci = ciAcIndexes(actors)
+  if (!ci.length) return acResults
+  const evidence = ciAcEvidence(ciVerify)
+  const satisfied = ciVerify?.status === 'passed'
+  const kept = acResults.filter((r) => !(r && Number.isInteger(r.ac_index) && ci.includes(r.ac_index)))
+  const ciResults = ci.map((i) => ({ ac_index: i, satisfied, verified_by: 'ci', ci: true, evidence }))
+  return [...kept, ...ciResults].sort((a, b) => (Number.isInteger(a?.ac_index) ? a.ac_index : Infinity) - (Number.isInteger(b?.ac_index) ? b.ac_index : Infinity))
+}
+
+function unsatisfiedCiAcIndexes(actors, ciVerify) {
+  return ciVerify?.status === 'passed' ? [] : ciAcIndexes(actors)
+}
+
+function dropCiAcFeedback(feedback, actors) {
+  if (!Array.isArray(feedback)) return feedback
+  const ci = ciAcIndexes(actors)
+  if (!ci.length) return feedback
+  return feedback.filter((f) => !(f && Number.isInteger(f.ac_index) && ci.includes(f.ac_index)))
 }
 
 function deterministicAcIndexes(ledgerItems) {
@@ -1065,12 +1156,13 @@ function mixedScopeAcReasons(acceptanceCriteria, opts = {}) {
 }
 
 function unsatisfiedAcByActor(acResults, actors) {
-  const out = { agent: [], human: [] }
+  const out = { agent: [], human: [], ci: [] }
   const list = Array.isArray(actors) ? actors : []
   for (const r of (Array.isArray(acResults) ? acResults : [])) {
     if (!r || r.satisfied !== false || !Number.isInteger(r.ac_index)) continue
-    const actor = list[r.ac_index]
+    let actor = list[r.ac_index]
     if (!AC_ACTORS.includes(actor)) continue
+    if (actor === 'agent' && r.unreachable_env === true) actor = 'human'
     if (!out[actor].includes(r.ac_index)) out[actor].push(r.ac_index)
   }
   return out
@@ -2299,6 +2391,14 @@ const RESOLVED_ROWS_MAX = 30;
 const RESOLVED_CELL_MAX = 200;
 
 const OBSERVATIONAL_AC_ACTION = '実行して AC の主張を確認する（例: merge 後の実 run・計測）';
+const UNREACHABLE_ENV_AC_ACTION = '実行して確認する';
+
+function ciAcAction(ciVerify) {
+  const checks = Array.isArray(ciVerify?.checks) && ciVerify.checks.length ? ciVerify.checks.map((c) => `\`${c}\``).join(', ') : 'CI の check';
+  if (ciVerify?.status === 'pending') return `CI の ${checks} 実行中 — 結果を確認して merge`;
+  if (ciVerify?.status === 'failed') return `CI の ${checks} の失敗ログを確認する`;
+  return `CI の ${checks} の結果を確認して merge`;
+}
 
 function resolvedCell(v) {
   if (v == null) return '';
@@ -2347,6 +2447,7 @@ function buildDevflowSummaryBody({
   humanFollowups,
   outOfScope,
   unsatisfiedAcByActor,
+  ciVerify,
   prBodyClips,
 }) {
   const EVAL_STALENESS_VALUES = ['none', 'hash_mismatch', 'hash_reconverged', 'iterate_incomplete', 'iterate_fixed'];
@@ -2436,12 +2537,17 @@ function buildDevflowSummaryBody({
   const acGapsByActor = unsatisfiedAcByActor != null && typeof unsatisfiedAcByActor === 'object' ? unsatisfiedAcByActor : {};
   const acAgentGaps = Array.isArray(acGapsByActor.agent) ? acGapsByActor.agent : [];
   const acHumanGaps = Array.isArray(acGapsByActor.human) ? acGapsByActor.human : [];
+  const acCiGaps = Array.isArray(acGapsByActor.ci) ? acGapsByActor.ci : [];
   const observationalGaps = unsatisfiedAC.filter((a) => a.observational === true).map((a) => a.ac_index);
+  const unreachableGaps = unsatisfiedAC.filter((a) => a.unreachable_env === true && acHumanGaps.includes(a.ac_index) && a.observational !== true).map((a) => a.ac_index);
   const acUnsatisfiedCode = (k) => {
     if (acAgentGaps.includes(k)) return 'ac_agent_unsatisfied';
     if (acHumanGaps.includes(k)) return 'ac_human_pending';
+    if (acCiGaps.includes(k)) return 'ac_ci_pending';
     return null;
   };
+  const pendingAcIndexes = new Set([...acHumanGaps, ...acCiGaps]);
+  const fixableUnsatisfiedAC = unsatisfiedAC.filter((a) => !pendingAcIndexes.has(a.ac_index));
   const acGroupMap = new Map();
   const acGroupOf = (k) => {
     if (!acGroupMap.has(k)) acGroupMap.set(k, { acIndex: k, blocking: [], escalate: [], ac: null });
@@ -2472,7 +2578,8 @@ function buildDevflowSummaryBody({
       const label = `AC#${g.acIndex + 1}${g.ac != null ? ' 未達' : ''}${observational ? '（観測型）' : ''}`;
       const unresolvedEsc = g.escalate.filter((it) => !isResolved(it));
       const actions = [];
-      if (acCode === 'ac_human_pending') actions.push(observational ? OBSERVATIONAL_AC_ACTION : '人手で実施して AC を確認する');
+      if (acCode === 'ac_human_pending') actions.push(observational ? OBSERVATIONAL_AC_ACTION : unreachableGaps.includes(g.acIndex) ? UNREACHABLE_ENV_AC_ACTION : '人手で実施して AC を確認する');
+      else if (acCode === 'ac_ci_pending') actions.push(ciAcAction(ciVerify));
       else if (g.blocking.length > 0 || g.ac != null) actions.push('修正が必要');
       for (const it of unresolvedEsc) actions.push(`要判断${it.escalate_reason ? '（' + mdCell(it.escalate_reason) + '）' : ''}`);
       return { ...g, codes, label, actions };
@@ -2486,7 +2593,7 @@ function buildDevflowSummaryBody({
   const testsurfUncleared = testsurfClearance.some(tc => !tc.cleared);
   const fixRequiredHold = Array.isArray(holdReasons) && holdReasons.some(hr => FIX_REQUIRED_HOLD_CODES.includes(hr && hr.code));
   const fixRequired = uncheckedBlocking.length > 0
-    || unsatisfiedAC.length > 0
+    || fixableUnsatisfiedAC.length > 0
     || uncleared.length > 0
     || testsurfUncleared
     || finalTestGreen === false
@@ -2682,6 +2789,7 @@ function buildDevflowSummaryBody({
       escalate: escalateAll.map(itemAcIndex),
       ac_agent_unsatisfied: acAgentGaps,
       ac_human_pending: acHumanGaps,
+      ac_ci_pending: acCiGaps,
     };
     const absorbedCodes = new Set(Object.keys(codeAcIndexes).filter((code) => {
       const covered = new Set(holdAcGroups.filter((g) => g.holdCodes.includes(code)).map((g) => g.acIndex));
@@ -2692,6 +2800,7 @@ function buildDevflowSummaryBody({
       escalate: 'ESCALATE',
       ac_agent_unsatisfied: 'AC 未達（エージェント）',
       ac_human_pending: 'AC 未達（人手）',
+      ac_ci_pending: 'AC 未確定（CI）',
     };
     let acGroupRowsEmitted = false;
     for (const hr of holdReasons) {
@@ -2717,6 +2826,8 @@ function buildDevflowSummaryBody({
         pr,
         humanAcGaps: acHumanGaps,
         observationalAcGaps: observationalGaps,
+        unreachableAcGaps: unreachableGaps,
+        ciVerify,
       });
       lines.push(`| ${mdCell(hr && hr.reason)} | ${current} | ${action} |`);
     }
@@ -2855,7 +2966,7 @@ function buildDevflowSummaryBody({
       for (const ac of unsatisfiedACRows) {
         const verifiedBy = ac.verified_by != null ? ac.verified_by : 'inspection';
         const evidenceCell = ac.evidence ? mdCell(ac.evidence) : '—';
-        lines.push(`| ❌ 未達 | AC#${ac.ac_index + 1}${ac.observational === true ? '（観測型）' : ''} | ${verifiedBy} | ${evidenceCell} |`);
+        lines.push(`| ❌ 未達 | AC#${ac.ac_index + 1}${ac.observational === true ? '（観測型）' : ''}${ac.ci === true ? '（CI）' : ''} | ${verifiedBy} | ${evidenceCell} |`);
       }
     }
 
@@ -3095,12 +3206,30 @@ function holdReasonDisplay(code, kind, ctx) {
       return { current: 'エージェントで満たせる AC が差し戻し後も未達（ループの取りこぼし）', action: '修正が必要（下表 ❌ 未達 行）' };
     case 'ac_human_pending': {
       const obs = Array.isArray(ctx.observationalAcGaps) ? ctx.observationalAcGaps : [];
-      if (obs.length === 0) return { current: '人手作業を要する AC が未達（人手 AC 待ち）', action: '人手で実施して AC を確認する（下表 ❌ 未達 行）' };
-      const others = (Array.isArray(ctx.humanAcGaps) ? ctx.humanAcGaps : []).filter((k) => !obs.includes(k));
-      return {
-        current: `${others.length > 0 ? '人手作業を要する AC が未達（人手 AC 待ち）・' : ''}観測型 AC（${obs.map((k) => `AC#${k + 1}`).join(', ')}）は実行しないと確かめられず、test の red→green 実証が無い`,
-        action: `${others.length > 0 ? '人手で実施して AC を確認する・' : ''}${OBSERVATIONAL_AC_ACTION}（下表 ❌ 未達 行）`,
-      };
+      const unreachable = Array.isArray(ctx.unreachableAcGaps) ? ctx.unreachableAcGaps : [];
+      if (obs.length === 0 && unreachable.length === 0) return { current: '人手作業を要する AC が未達（人手 AC 待ち）', action: '人手で実施して AC を確認する（下表 ❌ 未達 行）' };
+      const others = (Array.isArray(ctx.humanAcGaps) ? ctx.humanAcGaps : []).filter((k) => !obs.includes(k) && !unreachable.includes(k));
+      const acList = (ks) => ks.map((k) => `AC#${k + 1}`).join(', ');
+      const current = [
+        ...(others.length > 0 ? ['人手作業を要する AC が未達（人手 AC 待ち）'] : []),
+        ...(unreachable.length > 0 ? [`AC（${acList(unreachable)}）は実行環境に届かず run 内で確かめられない`] : []),
+        ...(obs.length > 0 ? [`観測型 AC（${acList(obs)}）は実行しないと確かめられず、test の red→green 実証が無い`] : []),
+      ];
+      const actions = [
+        ...(others.length > 0 ? ['人手で実施して AC を確認する'] : []),
+        ...(unreachable.length > 0 ? [UNREACHABLE_ENV_AC_ACTION] : []),
+        ...(obs.length > 0 ? [OBSERVATIONAL_AC_ACTION] : []),
+      ];
+      return { current: current.join('・'), action: `${actions.join('・')}（下表 ❌ 未達 行）` };
+    }
+    case 'ac_ci_pending': {
+      const v = ctx.ciVerify;
+      const checks = Array.isArray(v?.checks) && v.checks.length ? v.checks.map((c) => `\`${c}\``).join(', ') : 'CI の check';
+      const current = v?.status === 'pending' ? `CI の ${checks} が待機上限${Number.isFinite(v.waited_seconds) ? `（${v.waited_seconds}s 待機）` : ''}までに完了しない`
+        : v?.status === 'failed' ? `CI の ${checks} が failure（pr-iterate の fix 後も green にならない）`
+          : v?.status === 'error' ? `CI の ${checks} の状態を取得できない`
+            : `CI の ${checks} の完了待ちに到達していない（pr-iterate が LGTM 前に終端）`;
+      return { current, action: ciAcAction(v) };
     }
     case 'danger_unresolved':
       return { current: `security clearance 未確認 ${ctx.unclearedCount} 件`, action: '人が該当 diff を確認する' };
@@ -3448,16 +3577,22 @@ const CI_STATUS = {
 const CI_COUNTS_NOTE = '`passed` / `failed` / `pending` / `skipped` の件数は stdout の値を一字一句そのまま写せ'
   + '（stdout に件数キーが無い場合 — status が error のとき — だけ各 0 を入れよ）。';
 
-function ciFetchSteps({ pr, repo, n }) {
-  return `${n}. \`gh pr checks ${pr}${repo ? ' --repo ' + repo : ''} --json name,state,bucket\` を gh を先頭トークンとする bare 単文で実行せよ`
+function checkNameArgs(flag, names) {
+  return (Array.isArray(names) ? names : []).map((name) => ` ${flag} '${String(name).split("'").join("'\\''")}'`).join('');
+}
+
+function ciFetchSteps({ pr, repo, n, exclude = [], only = [] }) {
+  const withLink = Array.isArray(only) && only.length > 0;
+  return `${n}. \`gh pr checks ${pr}${repo ? ' --repo ' + repo : ''} --json name,state,bucket${withLink ? ',link' : ''}\` を gh を先頭トークンとする bare 単文で実行せよ`
     + `（リダイレクト・パイプ・複合コマンドは使わない）。`
     + `このコマンドの exit code を判定に使ってはならない（pending で 8、失敗ありで 1 を返す仕様であり、fetch 自体の成否とは無関係）。\n`
     + `${n + 1}. \`check-ci --checks-data '<手順${n}の stdout を一字一句そのまま。要約・整形・省略禁止>' `
-    + `--fetch-error-data '<手順${n}の stderr を一字一句そのまま。stderr が空なら本オプション自体を省略>'\` `
+    + `--fetch-error-data '<手順${n}の stderr を一字一句そのまま。stderr が空なら本オプション自体を省略>'`
+    + `${checkNameArgs('--only', only)}${checkNameArgs('--exclude', exclude)}\` `
     + `を単文で実行し、stdout の JSON を読め。\n`;
 }
 
-function ciCheckPrompt({ pr, repo }) {
+function ciCheckPrompt({ pr, repo, exclude = [] }) {
   return `## Objective\nPR #${pr} の head commit sha と CI ステータスを取得し、JSON を返せ。\n\n`
     + `## Tools\n`
     + `- 使用可: Bash のみ\n`
@@ -3468,7 +3603,7 @@ function ciCheckPrompt({ pr, repo }) {
     + `## Steps\n`
     + `1. \`gh pr view ${pr}${repo ? ' --repo ' + repo : ''} --json headRefOid -q .headRefOid\` を gh を先頭トークンとする bare 単文で実行せよ`
     + `（リダイレクト・パイプ・複合コマンドは使わない）。stdout の 40 桁 hex を一字一句そのまま head_sha とする（失敗・空なら head_sha は省略）。\n`
-    + ciFetchSteps({ pr, repo, n: 2 })
+    + ciFetchSteps({ pr, repo, n: 2, exclude })
     + `4. 手順 3 の stdout JSON（{status, passed, failed, pending, skipped, failed_checks, waited_seconds, poll_attempts, ...}）に手順 1 の \`"head_sha"\` を加えて返せ。`
     + `それ以外のキーは要約・加工するな。${CI_COUNTS_NOTE}1 回の取得で判定を確定させ、待機や再取得は行うな。\n\n`
     + `## Output format\n`
@@ -3488,7 +3623,7 @@ const CI_WAIT_CHECK = {
   },
 };
 
-function ciWaitCheckPrompt({ pr, repo, seconds }) {
+function ciWaitCheckPrompt({ pr, repo, seconds, exclude = [] }) {
   return `## Objective\nCI 完了待ちのため ${seconds} 秒待機してから PR #${pr} の CI ステータスを 1 回取得し、JSON を返せ。\n\n`
     + `## Tools\n`
     + `- 使用可: Bash のみ\n`
@@ -3500,7 +3635,7 @@ function ciWaitCheckPrompt({ pr, repo, seconds }) {
     + `1. \`ci-wait ${seconds}\` を ci-wait を先頭トークンとする bare 単文で実行せよ（リダイレクト・パイプ・複合コマンドは使わない）。`
     + `stdout の JSON が \`"slept": true\` でなければ（stdout が空・exit 非0 を含む）手順 2〜4 を実行せず、`
     + `\`{ "slept": false, "status": "pending", "passed": 0, "failed": 0, "pending": 0, "skipped": 0 }\` を返して終了せよ。\n`
-    + ciFetchSteps({ pr, repo, n: 2 })
+    + ciFetchSteps({ pr, repo, n: 2, exclude })
     + `4. 手順 3 の stdout JSON（{status, passed, failed, pending, skipped, failed_checks, waited_seconds, poll_attempts, ...}）に \`"slept": true\` を加えて返せ。`
     + `それ以外のキーは要約・加工するな。${CI_COUNTS_NOTE}ci-wait と取得は各 1 回だけ実行し、再待機や再取得は行うな。\n\n`
     + `## Output format\n`
@@ -3509,6 +3644,52 @@ function ciWaitCheckPrompt({ pr, repo, seconds }) {
     + `prose 禁止。JSON のみ返せ。\n\n`
     + `## Token cap\n`
     + `JSON のみ。1 行以内。`;
+}
+
+const CI_VERIFY_POLL_SECONDS = 90;
+
+const CI_VERIFY_CHECK = {
+  type: 'object',
+  required: [...CI_STATUS.required],
+  properties: {
+    slept: { type: 'boolean' },
+    ...CI_STATUS.properties,
+    passed_checks: CI_STATUS.properties.failed_checks,
+  },
+};
+
+function ciVerifyPrompt({ pr, repo, checks, seconds }) {
+  const wait = Number(seconds) > 0;
+  const names = (Array.isArray(checks) ? checks : []).join(', ');
+  return `## Objective\n${wait ? `${seconds} 秒待機してから ` : ''}PR #${pr} の CI check（${names}）の状態を 1 回取得し、JSON を返せ。\n\n`
+    + `## Tools\n`
+    + `- 使用可: Bash のみ\n`
+    + `- 禁止: Write, Edit, git commit, git push\n\n`
+    + `## Boundary\n`
+    + `- 読み取り専用。git mutation（commit/push/reset 等）禁止\n`
+    + `- 実行するスクリプト以外のファイルを変更しない\n\n`
+    + `## Steps\n`
+    + (wait
+      ? `1. \`ci-wait ${seconds}\` を ci-wait を先頭トークンとする bare 単文で実行せよ（リダイレクト・パイプ・複合コマンドは使わない）。`
+        + `stdout の JSON が \`"slept": true\` でなければ（stdout が空・exit 非0 を含む）手順 2〜4 を実行せず、`
+        + `\`{ "slept": false, "status": "pending", "passed": 0, "failed": 0, "pending": 0, "skipped": 0 }\` を返して終了せよ。\n`
+      : `1. 待機はしない（ci-wait を実行しない）。\n`)
+    + ciFetchSteps({ pr, repo, n: 2, only: checks })
+    + `4. 手順 3 の stdout JSON（{status, passed, failed, pending, skipped, failed_checks, pending_checks, passed_checks, waited_seconds, poll_attempts, ...}）${wait ? 'に `"slept": true` を加えて' : 'を'}返せ。`
+    + `それ以外のキーは要約・加工するな。failed_checks / passed_checks の link は一字一句そのまま写せ。${CI_COUNTS_NOTE}`
+    + `${wait ? 'ci-wait と' : ''}取得は 1 回だけ実行し、再待機や再取得は行うな。\n\n`
+    + `## Output format\n`
+    + `{ ${wait ? '"slept": boolean, ' : ''}"status": "passed"|"failed"|"pending"|"no_checks"|"error", "passed": number, "failed": number, "pending": number, "skipped": number, `
+    + `"failed_checks": [{name, bucket, state, link}, ...], "passed_checks": [{name, bucket, state, link}, ...], "waited_seconds": number, "poll_attempts": number }\n`
+    + `prose 禁止。JSON のみ返せ。\n\n`
+    + `## Token cap\n`
+    + `JSON のみ。1 行以内。`;
+}
+
+function ciVerifyVerdict(eff) {
+  const s = eff?.status;
+  if (s === 'passed' || s === 'failed' || s === 'error') return s;
+  return 'pending';
 }
 
 function ciStatusFromCounts(ci) {
@@ -3788,6 +3969,9 @@ const EVAL = {
           verified_by: { type: 'string', enum: ['test', 'inspection'] },
           test_files: { type: 'array', items: { type: 'string' } },
           impl_files: { type: 'array', items: { type: 'string' } },
+          // 未達の理由が実行環境に届かないこと（sandbox 内で DB コンテナ等が動かない）なら true。agent の AC でも
+          // 差し戻さず人手 AC 待ち（ac_human_pending）に数える（_lib/ac-actor.mjs の unsatisfiedAcByActor）。
+          unreachable_env: { type: 'boolean' },
         },
       },
     },
@@ -3869,6 +4053,7 @@ const FINAL_AC = {
           satisfied: { type: 'boolean' },
           evidence: { type: 'string' },
           verified_by: { type: 'string', enum: ['test', 'inspection'] },
+          unreachable_env: { type: 'boolean' },
         },
       },
     },
@@ -4765,12 +4950,18 @@ function prPushLogPath(wt) {
   return `${wt}/.devflow-tmp/${PR_PUSH_LOG_NAME}`;
 }
 
-function prPhasePrompt({ wt, base, branch, repo, issue, commitMessage, prBody }) {
+function prLabelArg(label) {
+  const l = str(label).trim();
+  return l ? ` --label "${l.replace(/"/g, '\\"')}"` : '';
+}
+
+function prPhasePrompt({ wt, base, branch, repo, issue, commitMessage, prBody, label = null }) {
   const msgFile = `${wt}/.devflow-tmp/commit-msg.txt`;
   const bodyFile = `${wt}/.devflow-tmp/pr-body.md`;
   const pushLog = prPushLogPath(wt);
   const title = str(commitMessage).split('\n')[0].replace(/"/g, '\\"');
   const repoArg = repo ? ` --repo ${repo}` : '';
+  const labelArg = prLabelArg(label);
   const bare = '（cd 前置・`bash` 前置・環境変数代入前置・&& 連結・パイプ・リダイレクト禁止。cwd は worktree（EnterWorktree 済み）なので git には -C も cd も付けない）';
   return `## Objective\nissue #${issue} の変更を commit + push し draft PR を作成して、PR URL と番号を返す。\n\n`
     + `## 本文の保存\n`
@@ -4796,7 +4987,7 @@ function prPhasePrompt({ wt, base, branch, repo, issue, commitMessage, prBody })
     + `(a) 出力に \`${PR_PUSH_TAIL_BEGIN}\` と \`${PR_PUSH_TAIL_END}\` が両方見えるなら、その間の行を一字一句そのまま（改行も保持）入れる。`
     + `(b) 両マーカーが揃って見えない（出力が途中で切れた・コマンドが起動しなかった等）なら \`"${PR_PUSH_TAIL_UNAVAILABLE}"\` を一字一句そのまま入れる。`
     + `どちらの場合も、マーカーの外にある出力（hook の途中経過等）から理由を推測・要約して書かない）\n`
-    + `4. \`gh pr create${repoArg} --draft --base ${base} --head ${branch} --title "${title}" --body-file ${bodyFile}\`（失敗は failed_step:"pr-create" で中断）\n`
+    + `4. \`gh pr create${repoArg} --draft --base ${base} --head ${branch} --title "${title}" --body-file ${bodyFile}${labelArg}\`（失敗は failed_step:"pr-create" で中断）\n`
     + `5. 手順 4 の stdout の PR URL を pr_url、その末尾の数字を pr_number として返す。\n`
     + `6. \`git rev-parse HEAD\` の stdout（40 桁 hex）をそのまま head_sha として返す（失敗時は空文字）。\n\n`
     + `## Output format\n{ "pr_url": string, "pr_number": number, "committed": boolean, "head_sha": string, "failed_step": "" | "commit" | "push" | "pr-create", "failure_reason": string, "push_header": string, "epoch": number }\n`
@@ -4840,13 +5031,13 @@ function prPhaseFailure(pr, { pushLog } = {}) {
   return `dev-flow: PR phase 失敗（step: ${facts.failed_step}、reason: ${facts.failure_reason}${log}）— proxy 応答 ${raw}。closes-check / nested pr-iterate へは進まない`;
 }
 
-function prPhaseRecoveryCommands({ committed, failedStep, base, branch, repo, commitMessage }) {
+function prPhaseRecoveryCommands({ committed, failedStep, base, branch, repo, commitMessage, label = null }) {
   const repoArg = repo ? ` --repo ${repo}` : '';
   const title = str(commitMessage).split('\n')[0].replace(/"/g, '\\"');
   const cmds = [];
   if (committed !== true) cmds.push('git add -A', 'git commit -F .devflow-tmp/commit-msg.txt');
   if (committed !== true || failedStep !== 'pr-create') cmds.push('git push -u origin HEAD');
-  cmds.push(`gh pr create --draft --body-file .devflow-tmp/pr-body.md${repoArg} --base ${base} --head ${branch} --title "${title}"`);
+  cmds.push(`gh pr create --draft --body-file .devflow-tmp/pr-body.md${repoArg} --base ${base} --head ${branch} --title "${title}"${prLabelArg(label)}`);
   cmds.push('/pr-iterate <N>');
   return cmds;
 }
@@ -5491,7 +5682,13 @@ if (req.ac_observational.includes(true)) log(`analyze: 観測型 AC ${req.ac_obs
 // AC ごとの actor（'agent' | 'human'。_lib/ac-actor.mjs）。analyze ゲートで AC と一緒に freeze し、Evaluate の
 // 差し戻し（agent AC の未達だけ）と Merge tier の HOLD 理由（取りこぼし / 人手待ち）を分ける。
 // repo 外の作業だけを書いた AC と、上で確定した観測型 AC は human（repo 内外が混ざった AC は上の analyze ゲートで止めた）。
-req.ac_actors = acActorsOf(req.acceptance_criteria, { repo: REPO, observational: req.ac_observational })
+// ci の AC: repo が "dev-flow".ci_verify で宣言した commands / label に当たる AC は、sandbox 内で実行できない
+// 検証を CI の check で判定する。evaluator に判定させず、差し戻しにも回さない。PR に ci_verify.label を付け、pr-iterate が
+// LGTM 後に ci_verify.checks の完了を待った結果で satisfied を決める（未完了は Merge tier の ac_ci_pending）。
+const CI_VERIFY = PRERUN.ci_verify
+req.ac_actors = acActorsOf(req.acceptance_criteria, { repo: REPO, observational: req.ac_observational, ciVerify: CI_VERIFY })
+const CI_AC_INDEXES = ciAcIndexes(req.ac_actors)
+if (CI_VERIFY) log(`analyze: ci_verify（label=${CI_VERIFY.label} / checks=${CI_VERIFY.checks.join(', ')} / 上限 ${CI_VERIFY.wait_ceiling_seconds}s）— ci の AC ${CI_AC_INDEXES.length} 件${CI_AC_INDEXES.length ? `（AC-${CI_AC_INDEXES.map((n) => n + 1).join(', AC-')}）— evaluator に判定させず、PR に label を付けて CI の check で判定する` : ''}`)
 if (req.ac_actors.includes('human')) log(`analyze: 人手 AC ${req.ac_actors.filter((a) => a === 'human').length} 件（AC-${req.ac_actors.map((a, i) => a === 'human' ? i + 1 : null).filter((n) => n != null).join(', AC-')}）— 未達でも差し戻さず Merge tier の人手 AC 待ちへ回す`)
 
 // isolation probe: implementer と同じ Write tool 経路で書けるかを subagent で検証する（wrapper の Bash では
@@ -5531,7 +5728,7 @@ let state = {
   postEvalVal: null, postEvalRecheck: null,
   // Validate が green 要件から外した「base でも失敗する既存の失敗」（env）と、base 再実行済みで ENV でなかったファイル（ran）
   baseFailing: { env: [], ran: [] },
-  unsatisfiedAc: false, unsatisfiedAcByActor: { agent: [], human: [] },
+  unsatisfiedAc: false, unsatisfiedAcByActor: { agent: [], human: [], ci: [] },
   evalDiffHash: null, secDiffHash: null, validateDiffHash: null,
   prDiffHash: null, staleDiffFiles: null, prHeadTreeOid: null,
   uiVerifyConfig: null, uiTouched: false, uiVerifyStatus: 'skipped', uiVerifyMode: null,
@@ -6341,7 +6538,7 @@ async function execEvaluatePhase(state) {
   let designReplanCount = 0    // design 差し戻し(replan+reimpl)の実行回数（DESIGN_REPLAN_MAX cap 判定 + return object 用）
   let reimplCount = 0          // reimpl#i（fix_feedback 付き差し戻し）の実行回数。>0 なら PR 前にフルテストを再実行する
   let unsatisfiedAc = false
-  let unsatisfiedByActor = { agent: [], human: [] }
+  let unsatisfiedByActor = { agent: [], human: [], ci: [] }
   let agentAcReimplCount = 0  // agent AC の未達を理由に含む reimpl#i の回数（AGENT_AC_REIMPL_MAX で cap）
   // evaluate の上限。agent AC の未達が残る間は AGENT_AC_REIMPL_MAX まで延長する — standard（EVAL_PASSES=1）でも
   // 「worktree 内で満たせる AC が未達のまま PR → lgtm → HOLD」を差し戻しで拾うため。
@@ -6415,14 +6612,15 @@ async function execEvaluatePhase(state) {
     // 全件スイートの再実行をやめさせる。reimpl・green-fix の後など tree が変わっていれば渡さない。
     const sameTreeAsValidate = evalDiffHash != null && evalDiffHash === state.validateDiffHash && state.val != null
     if (sameTreeAsValidate) log(`eval#${i}: tree が Validate と同じ — validate_result を渡し全件スイートの再実行を省かせる`)
-    const ev = need(await trackedAgent(
+    const evRaw = need(await trackedAgent(
       `cd ${WT} で作業。実装品質を独立評価せよ（base は origin/${BASE}。`
       + `\`git diff $(git merge-base HEAD origin/${BASE})\` で実 diff を確認し（working tree 基準の二点 diff: merge-base から working tree への差分。implementer はコミットしないため HEAD 基準三点 diff では空になる）、`
       + `さらに \`git status --porcelain --untracked-files=all\` で untracked の新規ファイルを列挙して Read で内容を確認し（implementer は git add しないため新規作成ファイルは git diff に映らない）、テストを実際に走らせる）。\n`
       + `requirements: ${JSON.stringify(req)}\n`
       + `plan: ${JSON.stringify(planWithoutPrBodyMaterial(plan))}\n`
       + `収束判定は ledger（isConvergedUnderPolicy: critical/AC/SEC の解消状況）のみで行われ、verdict は収束判定に使われない（log/telemetry 表示用。issue #174）。fail を引き延ばすための新規 minor/major の捻出は不要。\n`
-      + `requirements.ac_actors は AC ごとの actor（agent: worktree 内で満たせる / human: 人手・staging・本番等の worktree 外作業）。agent の AC が satisfied:false なら verdict に依らず実装へ差し戻される。`
+      + `requirements.ac_actors は AC ごとの actor（agent: worktree 内で満たせる / human: 人手・staging・本番等の worktree 外作業 / ci: PR の CI の check が判定する — 判定せず、その AC に結び付く feedback も出すな）。agent の AC が satisfied:false なら verdict に依らず実装へ差し戻される。`
+      + `agent の AC の未達の理由が実装ではなく実行環境（DB コンテナ・ブラウザ等が sandbox 内で動かない）なら、その ac_results に unreachable_env:true を付けよ（差し戻さず人間が実行して確かめる。コード上に未達の根拠があるなら付けるな）。`
       + `requirements.ac_observational が true の AC（観測型: 実行して出力・記録を観測しないと確かめられない）は、test で red→green を実証した場合（verified_by:test + test_files / impl_files）だけ達成扱いになる。\n`
       // PR 作成前なので、PR phase と同じ材料（plan / ledger / risk hits）で組んだ本文プレビューを渡す（AC checkbox は未確定）。
       + prBodyEvidenceInstr(buildPrBody({ issue: ISSUE, req, plan, ledger, testsurfHits, dangerHits: secHitsOf(state.risk) }))
@@ -6456,6 +6654,8 @@ async function execEvaluatePhase(state) {
       + EPOCH_INSTRUCTION,
       { agentType: 'evaluator', schema: EVAL, label: `eval#${i}`, phase: 'Evaluate' },
     ), `Evaluate(eval#${i})`)
+    // ci の AC は CI の check が判定する: evaluator がその AC に結び付けた feedback は stuck 突合・ledger・差し戻しに入れない。
+    const ev = CI_AC_INDEXES.length ? { ...evRaw, feedback: dropCiAcFeedback(evRaw.feedback, req.ac_actors) } : evRaw
 
     // feedback を topic 単位で累積し出現回数を数える（stuck 検出 fingerprint）
     for (const f of (ev.feedback ?? [])) { if (f == null) continue; evalSeen.register(f) }
@@ -6530,6 +6730,7 @@ async function execEvaluatePhase(state) {
     const rgTargets = []
     for (const r of (ev.ac_results ?? [])) {
       if (!r || typeof r.ac_index !== 'number') continue
+      if (CI_AC_INDEXES.includes(r.ac_index)) continue   // ci の AC は evaluator の判定で checked にしない（CI の結果で決める）
       const acId = `AC-${r.ac_index + 1}`
       const acItem = ledger.items.find((it) => it.id === acId)
       if (!acItem) continue   // 知らない AC は無視
@@ -6584,7 +6785,9 @@ async function execEvaluatePhase(state) {
     }
     // 実証の無い観測型 AC の satisfied:true を未達（observational:true）に倒した結果を以降の判定・終端サマリーに使う。
     // 観測型 AC の actor は human なので、未達は差し戻し（agentAcFeedback）に入らず Merge tier の ac_human_pending へ回る。
-    const acResultsEff = demoteUnprovenObservationalAc(ev.ac_results, req.ac_observational, deterministicAcIndexes(ledger.items))
+    // ci の AC は evaluator の判定を使わず「CI で未判定」（satisfied:false・actor ci）に置き換える — unsatisfiedByActor.ci に
+    // 入り、agent の差し戻し（agentAcFeedback）にも人手 AC 待ちにも数えない。CI の結果は pr-iterate の後で反映する。
+    const acResultsEff = applyCiAcResults(demoteUnprovenObservationalAc(ev.ac_results, req.ac_observational, deterministicAcIndexes(ledger.items)), req.ac_actors, null)
     evalResult = Array.isArray(acResultsEff) ? { ...ev, ac_results: acResultsEff } : ev
     unsatisfiedAc = (acResultsEff ?? []).some((r) => r && r.satisfied === false)
     unsatisfiedByActor = unsatisfiedAcByActor(acResultsEff, req.ac_actors)
@@ -6891,8 +7094,11 @@ const prBodyClips = prBodyClipReport(state.plan)
 if (hasPrBodyClips(prBodyClips)) {
   log(`⚠️ PR 本文で要約行を切った: 検証 ${prBodyClips.note} / 設計判断 ${prBodyClips.decision} / 変更 ${prBodyClips.change_bullet} 件、pr_sections の上限 ${PR_SECTIONS_MAX_CHARS} 字超過 ${prBodyClips.sections_over_chars} 字（切らずに載せた）— journal と終端サマリーに記録する`)
 }
+// ci の AC がある run だけ PR に ci_verify.label を付ける（CI がこのラベルで ci_verify.checks の job を回す）。
+const PR_LABEL = CI_AC_INDEXES.length ? CI_VERIFY.label : null
+if (PR_LABEL) log(`PR: ci の AC ${CI_AC_INDEXES.length} 件 — PR に label "${PR_LABEL}" を付ける`)
 const pr = need(await trackedAgent(
-  prPhasePrompt({ wt: WT, base: BASE, branch: state.setup.branch, repo: REPO, issue: ISSUE, commitMessage: prCommitMessage, prBody })
+  prPhasePrompt({ wt: WT, base: BASE, branch: state.setup.branch, repo: REPO, issue: ISSUE, commitMessage: prCommitMessage, prBody, label: PR_LABEL })
   + '\n' + EPOCH_INSTRUCTION,
   { agentType: 'dev-runner-haiku', schema: PRURL, label: `pr#${ISSUE}`, phase: 'PR' },
 ), 'PR')
@@ -6947,7 +7153,7 @@ if (prFailure) {
   })
   const recoveryCommands = prPhaseRecoveryCommands({
     committed: prFacts.committed, failedStep: prFacts.failed_step,
-    base: BASE, branch: state.setup.branch, repo: REPO, commitMessage: prCommitMessage,
+    base: BASE, branch: state.setup.branch, repo: REPO, commitMessage: prCommitMessage, label: PR_LABEL,
   })
   return {
     status: PR_PHASE_FAILED_CATEGORY,
@@ -6983,9 +7189,11 @@ let prBodyLatest = prBody
 // epoch は pr（commit+PR dev-runner 応答）の epoch を渡す（dev-flow 自身の isolation-probe token
 // である args.setup.epoch とは別時刻のため、probe パス
 // `.devflow-tmp/.isolation-probe-<token>` が衝突しない）。
+// ci_verify: ci の AC がある run だけ渡す。pr-iterate は checks を各 round の CI 判定から外し、LGTM 後に別ループで完了を待つ。
 const prIterateArgs = () => ({
   pr: pr.pr_number, acceptance_criteria: req.acceptance_criteria,
   plugin_commit: PLUGIN_COMMIT,
+  ...(CI_AC_INDEXES.length ? { ci_verify: { label: CI_VERIFY.label, checks: CI_VERIFY.checks, wait_ceiling_seconds: CI_VERIFY.wait_ceiling_seconds } } : {}),
   nested: {
     caller: 'dev-flow', cwd: WT, head_ref: state.setup.branch,
     ...(REPO ? { repo: REPO } : {}),
@@ -7005,7 +7213,8 @@ const prIterateArgs = () => ({
 // 注: workflow('pr-iterate-run') は「親 workflow の中の workflow()」= ネスト1段で合法。
 //     pr-iterate.js 内に workflow() を足すと2段になり throw するので入れないこと。
 // ============================================================
-const LITE = state.EFFECTIVE_SHAPE === 'micro' && !state.runEval && state.dangerHits.length === 0
+// ci の AC がある run は lite に入れない（ci_verify.checks の完了待ちは pr-iterate だけが持つ）。
+const LITE = state.EFFECTIVE_SHAPE === 'micro' && !state.runEval && state.dangerHits.length === 0 && CI_AC_INDEXES.length === 0
 let iterate
 // route: PR phase の経路識別子（'lite'|'full'）。返り値と telemetry に載る。
 let route
@@ -7320,6 +7529,7 @@ if (_facDecision.run) {
     state.finalUnsatisfiedAc = finalResults.some((r) => r && r.satisfied === false)
     state.finalUnsatisfiedAcByActor = unsatisfiedAcByActor(finalResults, req.ac_actors)
     for (const r of v.results) {
+      if (CI_AC_INDEXES.includes(r.ac_index)) continue   // ci の AC は CI の結果で決める（下の ci-verify 反映）
       const acId = `AC-${r.ac_index + 1}`
       const acItem = state.ledger.items.find((it) => it.id === acId)
       if (r.satisfied === false) {
@@ -7344,6 +7554,27 @@ if (_facDecision.run) {
   else { state.finalAcResults = null; state.finalUnsatisfiedAc = state.unsatisfiedAc }
   state.finalUnsatisfiedAcByActor = state.unsatisfiedAcByActor
   log(`Final AC reconcile: skip（reason=${_facDecision.reason}）`)
+}
+// ci の AC: pr-iterate が LGTM 後に ci_verify.checks の完了を待った結果（iterate.ci_verify）で判定を確定する。
+// evaluator / final-ac-reconcile の判定は使わない。success なら ledger の AC item を check run の URL を根拠に checked にし、
+// それ以外（上限まで未完了・failure・取得不能・待ちに未到達）は Merge tier の ac_ci_pending で HOLD にする。
+if (CI_AC_INDEXES.length) {
+  const ciVerifyResult = iterate?.ci_verify ?? null
+  const ciStatus = CI_VERIFY_STATUSES.includes(ciVerifyResult?.status) ? ciVerifyResult.status : 'not_run'
+  const ciOutcome = { ...(ciVerifyResult ?? {}), status: ciStatus, checks: CI_VERIFY.checks }
+  if (state.evalResult && Array.isArray(state.evalResult.ac_results)) state.evalResult = { ...state.evalResult, ac_results: applyCiAcResults(state.evalResult.ac_results, req.ac_actors, ciOutcome) }
+  state.finalAcResults = applyCiAcResults(state.finalAcResults, req.ac_actors, ciOutcome)
+  const ciGaps = unsatisfiedCiAcIndexes(req.ac_actors, ciOutcome)
+  state.finalUnsatisfiedAcByActor = { ...(state.finalUnsatisfiedAcByActor ?? { agent: [], human: [] }), ci: ciGaps }
+  state.finalUnsatisfiedAc = ['agent', 'human', 'ci'].some((k) => (state.finalUnsatisfiedAcByActor[k] ?? []).length > 0)
+  if (ciStatus === 'passed') {
+    for (const k of CI_AC_INDEXES) {
+      const acId = `AC-${k + 1}`
+      if (state.ledger.items.some((it) => it.id === acId && !it.checked)) state.ledger = checkItem(state.ledger, acId, `CI の ${CI_VERIFY.checks.join(', ')} が success${(ciOutcome.urls ?? []).length ? ': ' + ciOutcome.urls.join(' ') : ''}`)
+    }
+  }
+  state.ciVerify = ciOutcome
+  log(`ci-verify: ci の AC ${CI_AC_INDEXES.length} 件（AC-${CI_AC_INDEXES.map((n) => n + 1).join(', AC-')}）— CI の ${CI_VERIFY.checks.join(', ')} = ${ciStatus}${ciGaps.length ? ' → Merge tier の ac_ci_pending' : ' → satisfied'}`)
 }
 // 解消済み item の再検証結果を台帳へ反映する。Final AC reconcile が reverified でなければ再検証されていないので、
 // 対象は全件解消根拠を取り下げる（後の fix で崩れたかもしれない根拠を終端サマリの「解消済み」に残さない）。
@@ -7552,6 +7783,7 @@ const mergeTier = classifyMergeTier({
   escalateCount,
   unsatisfiedAgentAc: acGapsFinal.agent.length > 0,
   unsatisfiedHumanAc: acGapsFinal.human.length > 0,
+  unsatisfiedCiAc: (acGapsFinal.ci ?? []).length > 0,
   evalSkipped: !state.runEval,
   dangerFailClosed: dangerFailClosedFinal,
   riskValueDropped: riskValueDroppedFinal,
@@ -7648,6 +7880,7 @@ const summaryBody = buildDevflowSummaryBody({
   humanFollowups: iterate?.human_followups ?? null,
   outOfScope: state.plan?.out_of_scope ?? null,
   unsatisfiedAcByActor: acGapsFinal,
+  ciVerify: state.ciVerify ?? null,
   prBodyClips: hasPrBodyClips(prBodyClips) ? prBodyClips : null,
 })
 // 終端サマリーコメント投稿: bodySaveInstr で body を worktree の .devflow-tmp/ 固定パスへ保存し
@@ -7766,6 +7999,7 @@ return {
   final_ac_reconcile: finalAcReconcile,
   final_unsatisfied_ac: state.finalUnsatisfiedAc,
   final_unsatisfied_ac_by_actor: acGapsFinal,
+  ci_verify: state.ciVerify ?? null,  // ci の AC がある run の CI 判定（pr-iterate の LGTM 後の待ち結果）。無い run は null
   pr_closes_status: prClosesStatus,
   pr_body_synced: prBodySynced,
   summary_posted: summaryPosted,
