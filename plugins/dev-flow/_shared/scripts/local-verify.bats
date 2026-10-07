@@ -65,7 +65,8 @@ wait_supervisor_done() {
     declare_local_verify 'echo "db=$E2E_EXTERNAL_DATABASE_URL"; echo "cwd=$PWD"'
     start_verify
     [ "$status" -eq 0 ]
-    echo "$output" | jq -e '.status == "running"'
+    # command がすぐ終わると start の poll より先に done になり、start が最終結果を返す（呼び出し側はどちらも扱う）
+    echo "$output" | jq -e '.status == "running" or .status == "passed"'
     grep -qx 'create --version 17' "$BROKER_CALLS"
 
     wait_verify
@@ -171,7 +172,7 @@ start_verify_pct() {
     declare_local_verify "  echo 'setup-command ran'  "
     start_verify_pct "$(setup_config_pct "echo 'setup-command ran'")"
     [ "$status" -eq 0 ]
-    echo "$output" | jq -e '.status == "running"'
+    echo "$output" | jq -e '.status == "running" or .status == "passed"'
     wait_verify
     echo "$output" | jq -e '.status == "passed" and (.log_tail | contains("setup-command ran"))'
 }
