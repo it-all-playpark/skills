@@ -95,7 +95,10 @@ base でも同じテストが落ちたものは ENV 項目（`ENV-BASE-FAILING`�
 既存の失敗のファイルには触らないよう prompt で伝える。diff が触ったテストファイル・base では通る・再実行できない・
 `failed_files` が無い・diff 一覧が取れない失敗は、すべてこれまでどおり green-fix の対象（ENV 判定の材料が欠けたら
 green 要件を緩めない）。外したファイルは終端サマリーの参考セクションに「base でも失敗する既存の失敗」として載る。
-`test#final`（Final reconcile）はこの分類をしない。
+`test#final`（Final reconcile）はこの分類をしない。代わりに red の `failed_files` が非空なら、そのファイルだけを
+`test#final-rerun` で 1 回流し直し、green なら flake として `final_test_green` を true にする（`final_test_flaky` に
+ファイルと 1 回目のログを記録し、終端サマリーのテスト欄は「flake（単体再実行で green）」。`_lib/final-test-rerun.mjs`）。
+再実行も red・`failed_files` が空・再実行の応答が無いときは `final_test_red` で HOLD。
 test#final green（head sha pin）または ci_verified が成立した run では、未 checked の `EVAL-*` blocking
 item（evaluator 由来。escalate は除く）をその決定論 evidence で checked にする（evaluator は fix 後に再実行
 されないため）。SEC seed / TESTSURF / AC-FINAL-* はこの経路で解消せず、LLM 判断（final_resolution）でも

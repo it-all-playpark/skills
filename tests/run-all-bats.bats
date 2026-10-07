@@ -15,7 +15,7 @@ setup() {
     cp "$BATS_TEST_DIRNAME/run-all-bats.sh" "$FIXTURE/tests/"
     # dev-flow の run-tests 経由で本ファイル自体が実行されると、実 worktree の変更一覧が
     # 継承されて fixture repo の selection が狂う。各テストは必要なときだけ明示的に渡す。
-    unset DEVFLOW_CHANGED_FILES DEVFLOW_BASE
+    unset DEVFLOW_CHANGED_FILES DEVFLOW_BASE DEVFLOW_TEST_FILES
 }
 
 # Fixture .bats content is written via printf (not a heredoc with a literal
@@ -283,4 +283,47 @@ assert_full_run() {
     [[ "$output" == *"=== Running: plugins/x/scripts/direct.bats ==="* ]]
     [[ "$output" != *"other.bats"* ]]
     [[ "$output" == *"Summary: 1 passed, 0 failed"* ]]
+}
+
+# --- DEVFLOW_TEST_FILES による落ちたファイルだけの再実行（issue #865）---
+
+@test "test files: 一覧の .bats だけを実行し、DEVFLOW_CHANGED_FILES より優先する" {
+    setup_selection_repo leak
+    write_changed "plugins/x/scripts/direct.bats" "plugins/x/scripts/a.test.mjs"
+    : > "$BATS_TEST_TMPDIR/all-changed.txt"
+
+    DEVFLOW_TEST_FILES="$CHANGED" DEVFLOW_CHANGED_FILES="$BATS_TEST_TMPDIR/all-changed.txt" run bash "$FIXTURE/tests/run-all-bats.sh"
+
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Selection: 1 .bats file(s) listed in DEVFLOW_TEST_FILES"* ]]
+    [[ "$output" == *"=== Running: plugins/x/scripts/direct.bats ==="* ]]
+    [[ "$output" != *"other.bats"* ]]
+    [[ "$output" == *"Summary: 1 passed, 0 failed"* ]]
+}
+
+@test "test files: 一覧の .bats が red なら exit 1" {
+    setup_selection_repo leak
+    write_changed "plugins/x/scripts/other.bats"
+
+    DEVFLOW_TEST_FILES="$CHANGED" run bash "$FIXTURE/tests/run-all-bats.sh"
+
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"Summary: 0 passed, 1 failed"* ]]
+}
+
+@test "test files: .bats が 1 件も無ければ bats を起動せず exit 0、読めない一覧は全件" {
+    setup_selection_repo leak
+    write_changed "plugins/x/scripts/a.test.mjs"
+
+    DEVFLOW_TEST_FILES="$CHANGED" run bash "$FIXTURE/tests/run-all-bats.sh"
+
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Selection: 0 .bats file(s) listed in DEVFLOW_TEST_FILES"* ]]
+    [[ "$output" != *"=== Running:"* ]]
+
+    DEVFLOW_TEST_FILES="$BATS_TEST_TMPDIR/missing.txt" run bash "$FIXTURE/tests/run-all-bats.sh"
+
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"Selection: all (DEVFLOW_TEST_FILES is not a readable file: "* ]]
+    [[ "$output" == *"Discovered 2 .bats file(s)"* ]]
 }

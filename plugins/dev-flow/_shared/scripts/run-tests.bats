@@ -417,3 +417,70 @@ git_commit() {
     echo "$with" | jq -e '.status == "failed" and .failed_files == ["plugins/b.bats"]'
     [ "$with" = "$without" ]
 }
+
+# --- 落ちたファイルだけの再実行（issue #865）---
+
+run_tests_files() {
+    run --separate-stderr bash "$SCRIPT" "$WT" --files "$@"
+    JSON="$output"
+}
+
+# 受け取った DEVFLOW_TEST_FILES / DEVFLOW_CHANGED_FILES / DEVFLOW_BASE を WT 外に書き出し、一覧の中身も写すランナー。
+# $1 = ランナーの exit code（既定 0）
+make_files_probe() {
+    make_script run-probe.sh "$(cat <<EOF
+printf '%s\n%s\n%s\n' "\${DEVFLOW_TEST_FILES-unset}" "\${DEVFLOW_CHANGED_FILES-unset}" "\${DEVFLOW_BASE-unset}" > "$TMP_DIR/env.out"
+if [ -n "\${DEVFLOW_TEST_FILES-}" ]; then cp "\$DEVFLOW_TEST_FILES" "$TMP_DIR/list.out"; fi
+exit ${1:-0}
+EOF
+)"
+}
+
+@test "--files: 一覧を DEVFLOW_TEST_FILES でランナーに渡し、DEVFLOW_CHANGED_FILES / DEVFLOW_BASE は渡さない" {
+    make_files_probe
+    mkdir -p "$WT/plugins/x"
+    : > "$WT/plugins/x/a.bats"
+    : > "$WT/plugins/x/b.test.mjs"
+    export DEVFLOW_CHANGED_FILES="$TMP_DIR/outer.txt" DEVFLOW_BASE=outer DEVFLOW_TEST_FILES="$TMP_DIR/outer-files.txt"
+    run_tests_files plugins/x/a.bats plugins/x/b.test.mjs
+    [ "$status" -eq 0 ]
+    [ "${#lines[@]}" -eq 1 ]
+    echo "$JSON" | jq -e '.status == "passed" and .tests == "passed" and .green == true'
+    list_path=$(sed -n 1p "$TMP_DIR/env.out")
+    [[ "$list_path" == /* && "$list_path" != "$TMP_DIR/outer-files.txt" ]]
+    [ "$(sed -n 2,3p "$TMP_DIR/env.out")" = "$(printf 'unset\nunset')" ]
+    [ "$(cat "$TMP_DIR/list.out")" = "$(printf 'plugins/x/a.bats\nplugins/x/b.test.mjs')" ]
+}
+
+@test "--files: 再実行でも red なら failed（判定は exit code）" {
+    make_files_probe 1
+    : > "$WT/a.bats"
+    run_tests_files a.bats
+    echo "$JSON" | jq -e '.status == "failed" and .tests == "failed" and .green == false'
+}
+
+@test "--files: WT 内の通常ファイルでないパス（不在・絶対パス・..）は exit 2 の error でランナーを起動しない" {
+    make_files_probe
+    : > "$WT/a.bats"
+    for bad in missing.bats "$WT/a.bats" ../wt/a.bats; do
+        run_tests_files a.bats "$bad"
+        [ "$status" -eq 2 ]
+        echo "$JSON" | jq -e '.status == "error" and .green == false and (.summary | contains("--files"))'
+    done
+    [ ! -f "$TMP_DIR/env.out" ]
+    run --separate-stderr bash "$SCRIPT" "$WT" --files
+    [ "$status" -eq 2 ]
+}
+
+@test "--files: tests/run-*.sh が無い repo はフォールバックを実行せず error" {
+    echo '{"name":"x","scripts":{"test":"node t.js"}}' > "$WT/package.json"
+    rmdir "$WT/tests"
+    : > "$WT/a.test.mjs"
+    printf '#!/usr/bin/env bash\ntouch "%s/npm.ran"\nexit 0\n' "$TMP_DIR" > "$STUB_DIR/npm"
+    chmod +x "$STUB_DIR/npm"
+    export PATH="$STUB_DIR:$PATH"
+    run_tests_files a.test.mjs
+    [ "$status" -eq 0 ]
+    echo "$JSON" | jq -e '.status == "error" and .tests == "error" and .green == false'
+    [ ! -f "$TMP_DIR/npm.ran" ]
+}

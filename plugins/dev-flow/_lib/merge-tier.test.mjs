@@ -1590,6 +1590,33 @@ test('classifyMergeTier: ciChecks の契約外形状は明示 error', () => {
   assert.throws(() => classifyMergeTier(baseCleanInput({ ciChecks: { ok: true } })), /invalid ciChecks/);
 });
 
+// ---- finalTestFlaky（test#final の単体再実行が green、issue #865）----
+
+const FLAKY = { files: ['plugins/x/a.bats'], logs: ['/tmp/run-tests-abc/0.log'] };
+
+test('classifyMergeTier: finalTestFlaky は HOLD にせず、落ちたファイルと 1 回目のログを開示行に出す', () => {
+  const r = classifyMergeTier(baseCleanInput({ finalReconcile: 'reverified', finalTestGreen: true, finalTestFlaky: FLAKY }));
+  assert.equal(r.tier, 'REVIEW');
+  assert.deepEqual(r.holdReasons, []);
+  assert.equal(r.disclosures.length, 1);
+  assert.ok(r.disclosures[0].startsWith('final test flake（単体再実行で green）'), r.disclosures[0]);
+  assert.ok(r.disclosures[0].includes('plugins/x/a.bats') && r.disclosures[0].includes('/tmp/run-tests-abc/0.log'), r.disclosures[0]);
+  assert.ok(r.reasons.includes(r.disclosures[0]));
+
+  // 他の理由で HOLD の run でも final_test_red は積まず、開示行は reasons に残る
+  const hold = classifyMergeTier(baseCleanInput({ finalReconcile: 'reverified', finalTestGreen: true, finalTestFlaky: FLAKY, iterateStatus: 'stuck' }));
+  assert.equal(hold.tier, 'HOLD');
+  assert.ok(!hold.holdReasons.some((x) => x.code === 'final_test_red'), JSON.stringify(hold.holdReasons));
+  assert.ok(hold.reasons.some((x) => x.startsWith('final test flake')));
+});
+
+test('classifyMergeTier: finalTestFlaky の契約外形状・red のままの flake は明示 error', () => {
+  const green = { finalReconcile: 'reverified', finalTestGreen: true };
+  assert.throws(() => classifyMergeTier(baseCleanInput({ ...green, finalTestFlaky: { files: [], logs: [] } })), /invalid finalTestFlaky/);
+  assert.throws(() => classifyMergeTier(baseCleanInput({ ...green, finalTestFlaky: { files: ['a.bats'] } })), /invalid finalTestFlaky/);
+  assert.throws(() => classifyMergeTier(baseCleanInput({ finalReconcile: 'reverified', finalTestGreen: false, finalTestFlaky: FLAKY })), /requires finalTestGreen===true/);
+});
+
 // ---- finalAcReconcile（Final AC reconcile phase, issue #331/F2）----
 // s.finalAcReconcile（optional 'skipped'|'reverified'|'unavailable'）の enum 検証と、'unavailable' 時の HOLD reason 追加。
 // 'reverified'/'skipped'/未指定は既存挙動（tier・reasons）を変えない。

@@ -32,6 +32,13 @@
 #     Matching is a plain basename string match (no import analysis). The
 #     decision is printed as one `[run-all-bats] Selection:` line on stdout.
 #     CI and manual runs don't set the variable, so they always run everything.
+#   - Explicit file list: dev-flow's run-tests --files passes
+#     `DEVFLOW_TEST_FILES` (absolute path of a file listing repo-relative test
+#     files, one per line) to rerun only the files that failed. When set, it
+#     takes precedence over DEVFLOW_CHANGED_FILES: exactly the listed `.bats`
+#     files are run (a missing one fails in bats), and none listed means bats
+#     is not started (exit 0) — other runners own the other files. An
+#     unreadable list falls back to the full suite.
 #
 # Designed to be called from CI (GitHub Actions) after `brew install bats-core`
 # (macOS) or `apt install bats` (ubuntu).
@@ -162,9 +169,27 @@ select_by_changed_files() {
     echo "[run-all-bats] Selection: ${#SELECTED_BATS[@]} of ${#BATS_FILES[@]} .bats file(s) reference a changed basename (DEVFLOW_CHANGED_FILES, ${#changed[@]} file(s))"
 }
 
+# Explicit file list (see header). Prints exactly one Selection line.
+select_by_test_files() {
+    local list="$DEVFLOW_TEST_FILES" line
+    if [[ ! -f "$list" || ! -r "$list" ]]; then
+        echo "[run-all-bats] Selection: all (DEVFLOW_TEST_FILES is not a readable file: $list)"
+        return
+    fi
+    NARROWED=true
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ "$line" == *.bats ]] && SELECTED_BATS+=("$REPO_ROOT/${line#./}")
+    done < "$list"
+    echo "[run-all-bats] Selection: ${#SELECTED_BATS[@]} .bats file(s) listed in DEVFLOW_TEST_FILES"
+}
+
 NARROWED=false
 SELECTED_BATS=()
-select_by_changed_files
+if [[ -n "${DEVFLOW_TEST_FILES:-}" ]]; then
+    select_by_test_files
+else
+    select_by_changed_files
+fi
 
 LIST_LABEL="Discovered"
 if [[ "$NARROWED" == true ]]; then

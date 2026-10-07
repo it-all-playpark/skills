@@ -12,7 +12,7 @@ dev-flow.js / pr-iterate.js は run の終端（成功・失敗・abort）で te
 
 telemetry の読み手は `dev-flow-health` だけ。`health-report.sh` がプログラムから読むのは `plugin_commit`、
 LLM ステップは原因推定のときに該当 run の telemetry を手で読む。読み手の無いキーは書かない — 書くキーは下の
-13 個に限り、`_lib/telemetry-keys.test.mjs` が workflow の telemetry object literal（成功・失敗・abort）と
+14 個に限り、`_lib/telemetry-keys.test.mjs` が workflow の telemetry object literal（成功・失敗・abort）と
 VM 実行の handoff の両方で pin する。キーを足すときは読み手を先に決め、この一覧と同テストを同時に更新する。
 いずれも記録専用で、gate・merge tier・ledger・shape 判定の入力にはしない（軸A 非抵触）。
 
@@ -33,6 +33,7 @@ VM 実行の handoff の両方で pin する。キーを足すときは読み手
 | `plugin_version` | dev-flow / pr-iterate | 成功・失敗・abort | `_lib/plugin-version.mjs` の `PLUGIN_VERSION` |
 | `plugin_commit` | dev-flow / pr-iterate | 成功・失敗・abort | 実行中の dev-flow plugin の skills repo commit SHA 先頭 12 桁、決められなければ `null` |
 | `pr_body_clips` | dev-flow | 成功（発火した run のみ） | PR 本文で末尾を切った要約行の件数と長文欄の上限超過字数 `{note, decision, change_bullet, sections_over_chars}` |
+| `final_test_flaky` | dev-flow | 成功（flake の run のみ） | test#final で落ち、落ちたファイルだけの単体再実行で green だったテストファイルと 1 回目のログのパス `{files, logs}` |
 
 nested pr-iterate を起動した dev-flow run は pr-iterate と dev-flow の entry が 1 件ずつ残る。集計は dev-flow entry
 を使う。
@@ -73,6 +74,10 @@ nested pr-iterate を起動した dev-flow run は pr-iterate と dev-flow の e
   変更 bullet の件数と、`pr_sections` の markdown 合計が `PR_SECTIONS_MAX_CHARS` を超えた字数（implementer への要約差し戻し後もなお超えた分。切らずに載せる）。
   どれかが非 0 の run だけ載り、同じ内容が終端サマリーの「PR 本文で切れた項目」節に出る。PR 本文の切れを
   reviewer が指摘して `fix_failed` / HOLD になった run の原因推定で、builder 側の切れかを見分けるために読む。
+- `final_test_flaky`: Final reconcile が `_lib/final-test-rerun.mjs` で flake と判定した記録（issue #865）。test#final が
+  red で `failed_files` が非空のとき、そのファイルだけを `run-tests <WT> --files …` で 1 回流し直し、green なら
+  `final_test_green` を true にして載せる。同じファイルが run をまたいで繰り返し載るなら、そのテストの負荷耐性を
+  直す issue の根拠になる（原因推定ではこのキーと `logs` の 1 回目の出力を読む）。再実行も red・再実行しなかった run には載らない。
 
 ## 失敗・abort entry
 

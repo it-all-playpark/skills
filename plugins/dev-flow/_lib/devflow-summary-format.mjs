@@ -99,6 +99,9 @@ function resolvedCell(v) {
  * @param {string|null|undefined} opts.uiVerifyMode - ui-verify モード（'scenario'|'smoke'。issue #285）
  * @param {string|null|undefined} opts.finalReconcile - Final reconcile 結果（'skipped'|'reverified'|'unavailable'|'ci_verified'。issue #320, #599）
  * @param {boolean|null|undefined} opts.finalTestGreen - Final reconcile 時の test green フラグ（issue #320）
+ * @param {{files:string[], logs:string[]}|null|undefined} [opts.finalTestFlaky] - test#final が red で、落ちたファイルだけの
+ *   単体再実行が green だった記録（issue #865）。finalReconcile==='reverified' かつ finalTestGreen===true のとき、
+ *   テスト欄と Final reconcile 行を flake 表記にする（表示専用。merge tier の開示行は disclosures 側で出る）
  * @param {string|null|undefined} opts.finalUiVerify - Final reconcile 時の ui-verify 結果（'passed'|'findings'|'failed_open'|'setup_failed'。issue #320）
  * @param {string|null|undefined} opts.finalAcReconcile - Final AC reconcile 結果（'skipped'|'reverified'|'unavailable'。issue #331）
  * @param {{decision:string|null, ci:string, summary:string|null}|null|undefined} [opts.liteReview] - dev-flow lite 経路の pr-review-lite 結果。非 null の場合のみ「lite レビュー」セクションを描画する（issue #392 AC-6）
@@ -160,6 +163,7 @@ export function buildDevflowSummaryBody({
   uiVerifyMode,
   finalReconcile,
   finalTestGreen,
+  finalTestFlaky,
   finalUiVerify,
   finalAcReconcile,
   liteReview,
@@ -411,10 +415,17 @@ export function buildDevflowSummaryBody({
   // Validate の tests:'error' はテストが 1 件も実行されていない起動失敗で red ではない（issue #707）。
   // PR head sha に pin した CI が green なら '✅ green (CI)'、そうでなければ未検証として結論行で CI 確認を促す。
   const baseFailing = Array.isArray(baseFailingTests) ? baseFailingTests.filter((f) => typeof f === 'string' && f.length > 0) : [];
+  // flake: 最終 tree の全件実行で落ち、落ちたファイルだけの単体再実行で green（issue #865）。green 扱いだが
+  // 「一度落ちた」事実をテスト欄と Final reconcile 行に残す（ファイルとログは merge tier の開示行に出る）。
+  const finalFlaky = finalReconcile === 'reverified' && finalTestGreen === true
+    && Array.isArray(finalTestFlaky?.files) && finalTestFlaky.files.length > 0;
+  const FLAKY_CELL = '⚠️ flake（単体再実行で green）';
   let testCell;
   let testUnverified = false;
   if (finalReconcile === 'ci_verified') {
     testCell = '✅ green (CI)';
+  } else if (finalFlaky) {
+    testCell = FLAKY_CELL;
   } else if (finalReconcile === 'reverified') {
     testCell = finalTestGreen === true ? '✅ green' : finalTestGreen === false ? '❌ red' : '不明';
   } else if (validateTests === 'error' && ciTestVerified === true) {
@@ -1012,7 +1023,7 @@ export function buildDevflowSummaryBody({
     referenceLines.push(`- UI 検証 (ui-verify): ${uiVerify}${modeSuffix}`);
   }
   if (finalReconcile != null && finalReconcile !== 'skipped') {
-    const t = finalReconcile === 'ci_verified' ? '✅ CI 委譲（PR head sha 一致・check 全 success）' : finalTestGreen === true ? '✅ green' : finalTestGreen === false ? '❌ red' : '不明';
+    const t = finalReconcile === 'ci_verified' ? '✅ CI 委譲（PR head sha 一致・check 全 success）' : finalFlaky ? FLAKY_CELL : finalTestGreen === true ? '✅ green' : finalTestGreen === false ? '❌ red' : '不明';
     referenceLines.push(`- Final reconcile (pr-iterate fix 後の最終 tree 再検証): ${finalReconcile} — final test: ${t}` + (finalUiVerify != null ? `, final ui-verify: ${finalUiVerify}` : '') + (finalAcReconcile != null ? `, final AC: ${finalAcReconcile}` : ''));
     if (finalAcReconcile === 'reverified') {
       referenceLines.push('- ✅ AC は最終 PR tree で再検証済み（Final AC reconcile — AC テーブルは final snapshot）');

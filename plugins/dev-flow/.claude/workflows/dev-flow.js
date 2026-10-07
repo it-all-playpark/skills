@@ -790,7 +790,15 @@ function classifyMergeTier(s) {
     || (s.ciChecks.ok === true && !Array.isArray(s.ciChecks.checks)))) {
     throw new Error('classifyMergeTier: invalid ciChecks');
   }
-  const ci = s.ciChecks != null ? classifyCiChecks(s.ciChecks) : null;
+  const isStringArray = (v) => Array.isArray(v) && v.every((x) => typeof x === 'string');
+  if (s.finalTestFlaky != null && (!isStringArray(s.finalTestFlaky.files) || s.finalTestFlaky.files.length === 0
+    || !isStringArray(s.finalTestFlaky.logs))) {
+    throw new Error('classifyMergeTier: invalid finalTestFlaky');
+  }
+  if (s.finalTestFlaky != null && s.finalTestGreen !== true) {
+    throw new Error('classifyMergeTier: finalTestFlaky requires finalTestGreen===true');
+  }
+  const ci =s.ciChecks != null ? classifyCiChecks(s.ciChecks) : null;
   const blockingReasons = [];
   const pushBlocking = (code, reason, kind) => blockingReasons.push({ code, reason, kind });
   if (!s.converged) pushBlocking('ledger_unconverged', 'ledger 未収束（未 checked blocking 残）', 'human_judgment');
@@ -865,13 +873,17 @@ function classifyMergeTier(s) {
     : ci?.state === 'unavailable'
       ? `CI 未完了（checks を取得できず: ${ci.error ?? 'unknown'}）— CI 結果は未確認（fail-open。HOLD 理由にしない）。merge 前に gh pr checks で結果を確認する`
       : null;
-  const disclosures = [keywordAloneDisclosure, evalFailDisclosure, ciVerifiedDisclosure, ciIncompleteDisclosure].filter(Boolean);
+  const finalTestFlakyDisclosure = s.finalTestFlaky != null
+    ? `final test flake（単体再実行で green）: ${s.finalTestFlaky.files.join(', ')} — 最終 tree の全件実行で落ち、落ちたファイルだけの 1 回の再実行で green（HOLD 理由にしない。1 回目のログ: ${s.finalTestFlaky.logs.length ? s.finalTestFlaky.logs.join(', ') : '不明'}）`
+    : null;
+  const disclosures = [keywordAloneDisclosure, evalFailDisclosure, ciVerifiedDisclosure, ciIncompleteDisclosure, finalTestFlakyDisclosure].filter(Boolean);
   if (blockingReasons.length) {
     const reasons = blockingReasons.map((r) => r.reason);
     if (keywordAloneDisclosure) reasons.push(keywordAloneDisclosure);
     if (evalFailDisclosure) reasons.push(evalFailDisclosure);
     if (ciVerifiedDisclosure) reasons.push(ciVerifiedDisclosure);
     if (ciIncompleteDisclosure) reasons.push(ciIncompleteDisclosure);
+    if (finalTestFlakyDisclosure) reasons.push(finalTestFlakyDisclosure);
     return { tier: 'HOLD', reasons, holdReasons: blockingReasons, holdKind: aggregateHoldKind(blockingReasons), disclosures };
   }
   if (s.shape === 'micro' && s.docsOrTestOnly) {
@@ -881,6 +893,7 @@ function classifyMergeTier(s) {
     if (evalFailDisclosure) autoReasons.push(evalFailDisclosure);
     if (ciVerifiedDisclosure) autoReasons.push(ciVerifiedDisclosure);
     if (ciIncompleteDisclosure) autoReasons.push(ciIncompleteDisclosure);
+    if (finalTestFlakyDisclosure) autoReasons.push(finalTestFlakyDisclosure);
     return { tier: 'AUTO', reasons: autoReasons, holdReasons: [], holdKind: null, disclosures };
   }
   const reviewReasons = ['標準 — 人間が LGTM して merge'];
@@ -888,6 +901,7 @@ function classifyMergeTier(s) {
   if (evalFailDisclosure) reviewReasons.push(evalFailDisclosure);
   if (ciVerifiedDisclosure) reviewReasons.push(ciVerifiedDisclosure);
   if (ciIncompleteDisclosure) reviewReasons.push(ciIncompleteDisclosure);
+  if (finalTestFlakyDisclosure) reviewReasons.push(finalTestFlakyDisclosure);
   return { tier: 'REVIEW', reasons: reviewReasons, holdReasons: [], holdKind: null, disclosures };
 }
 // ==== END inline: _lib/merge-tier.mjs ====
@@ -2433,6 +2447,7 @@ function buildDevflowSummaryBody({
   uiVerifyMode,
   finalReconcile,
   finalTestGreen,
+  finalTestFlaky,
   finalUiVerify,
   finalAcReconcile,
   liteReview,
@@ -2625,10 +2640,15 @@ function buildDevflowSummaryBody({
   else fixPhrase = '修正作業は不要です';
 
   const baseFailing = Array.isArray(baseFailingTests) ? baseFailingTests.filter((f) => typeof f === 'string' && f.length > 0) : [];
+  const finalFlaky = finalReconcile === 'reverified' && finalTestGreen === true
+    && Array.isArray(finalTestFlaky?.files) && finalTestFlaky.files.length > 0;
+  const FLAKY_CELL = '⚠️ flake（単体再実行で green）';
   let testCell;
   let testUnverified = false;
   if (finalReconcile === 'ci_verified') {
     testCell = '✅ green (CI)';
+  } else if (finalFlaky) {
+    testCell = FLAKY_CELL;
   } else if (finalReconcile === 'reverified') {
     testCell = finalTestGreen === true ? '✅ green' : finalTestGreen === false ? '❌ red' : '不明';
   } else if (validateTests === 'error' && ciTestVerified === true) {
@@ -3157,7 +3177,7 @@ function buildDevflowSummaryBody({
     referenceLines.push(`- UI 検証 (ui-verify): ${uiVerify}${modeSuffix}`);
   }
   if (finalReconcile != null && finalReconcile !== 'skipped') {
-    const t = finalReconcile === 'ci_verified' ? '✅ CI 委譲（PR head sha 一致・check 全 success）' : finalTestGreen === true ? '✅ green' : finalTestGreen === false ? '❌ red' : '不明';
+    const t = finalReconcile === 'ci_verified' ? '✅ CI 委譲（PR head sha 一致・check 全 success）' : finalFlaky ? FLAKY_CELL : finalTestGreen === true ? '✅ green' : finalTestGreen === false ? '❌ red' : '不明';
     referenceLines.push(`- Final reconcile (pr-iterate fix 後の最終 tree 再検証): ${finalReconcile} — final test: ${t}` + (finalUiVerify != null ? `, final ui-verify: ${finalUiVerify}` : '') + (finalAcReconcile != null ? `, final AC: ${finalAcReconcile}` : ''));
     if (finalAcReconcile === 'reverified') {
       referenceLines.push('- ✅ AC は最終 PR tree で再検証済み（Final AC reconcile — AC テーブルは final snapshot）');
@@ -5259,15 +5279,47 @@ function crossRepoReturnNote(artifacts) {
 // ==== BEGIN inline: _lib/run-tests-prompt.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 
 function runTestsPrompt(wt, base) {
+  return runTestsCommandPrompt(wt, `run-tests ${wt} --base ${base}`);
+}
+
+function runTestFilesPrompt(wt, files) {
+  return runTestsCommandPrompt(wt, `run-tests ${wt} --files ${files.join(' ')}`);
+}
+
+function runTestsCommandPrompt(wt, command) {
   return `cd ${wt} で作業。次のコマンドを **先頭トークンが run-tests の bare 単文** で 1 回だけ実行し、`
     + `**stdout の JSON 1 行だけ** を verbatim で返せ（判定や脚色をしない。キーの追加・削除・値の書き換えをしない）。`
     + `argv は一字一句そのまま実行する — which による絶対パス解決・絶対パスへの書き換え・cd 前置・\`bash\` 前置・環境変数代入前置・&& 連結は禁止。`
     + `Bash tool の \`timeout: 600000\` を指定して実行し、\`run_in_background\` は使わない（禁止）。再実行しない（timeout に達した場合も含む）。`
     + `timeout に達した・stdout に JSON 1 行が無い場合だけは、`
     + `{"tests":"error","green":false,"summary":"run-tests did not return JSON"} を一字一句そのまま返せ:\n`
-    + `run-tests ${wt} --base ${base}`;
+    + command;
 }
 // ==== END inline: _lib/run-tests-prompt.mjs ====
+// ==== BEGIN inline: _lib/final-test-rerun.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
+
+const FINAL_TEST_RERUN_PATH_RE = /^[A-Za-z0-9_.@+][A-Za-z0-9_.@+\/-]*$/;
+
+function finalTestRerunFiles(ft) {
+  if (!ft || ft.tests !== 'failed' || !Array.isArray(ft.failed_files)) return [];
+  const files = [];
+  for (const raw of ft.failed_files) {
+    const p = typeof raw === 'string' ? raw.trim().replace(/^\.\//, '') : '';
+    if (!FINAL_TEST_RERUN_PATH_RE.test(p) || p.split('/').some((s) => s === '' || s === '.' || s === '..')) return [];
+    if (!files.includes(p)) files.push(p);
+  }
+  return files;
+}
+
+function finalTestRerunVerdict(first, rerun, files) {
+  if (!rerun || rerun.tests !== 'passed' || rerun.green !== true) return null;
+  const logs = [];
+  for (const m of String(first?.summary ?? '').matchAll(/\(exit \d+, log: ([^)\s]+)\)/g)) {
+    if (!logs.includes(m[1])) logs.push(m[1]);
+  }
+  return { files: [...files], logs };
+}
+// ==== END inline: _lib/final-test-rerun.mjs ====
 // ==== BEGIN inline: _lib/redgreen-targets.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 
 function redgreenPairKey(testFiles, implFiles) {
@@ -7292,6 +7344,9 @@ if (state.runEval && evalStaleness === 'none') {
 phase('Final reconcile')
 let finalReconcile = 'skipped'   // 'skipped'|'reverified'|'unavailable'
 let finalTestGreen = null        // true|false|null（null = 未実行/no_tests/取得不能/tests:error の起動失敗）
+// test#final が red で、落ちたファイルだけの単体再実行（test#final-rerun）が green だった記録 {files, logs}。
+// このとき finalTestGreen は true（flake）。null = 再実行していない / 再実行も red
+let finalTestFlaky = null
 let finalUiVerifyStatus = null   // 'passed'|'findings'|'failed_open'|'setup_failed'|null
 let finalUiVerifyResult = null   // ui-verifier の raw checks（final-ac-reconcile prompt 用）
 // changed-files-final の raw files。Merge tier が同一 tree・同一コマンドの changed-files を
@@ -7328,12 +7383,12 @@ if ((iterate?.fixes_applied ?? 0) > 0) {
     finalSyncHead = typeof sync.head === 'string' ? sync.head : null
     // Step2 test 一発再実行（fail-safe。green-fix ループなし — red は修正せず HOLD）
     let ft = null
+    let ftRerun = null
     try {
       ft = await trackedAgent(TEST_RUN_PROMPT, { agentType: 'dev-runner-haiku', schema: GREEN, label: 'test#final', phase: 'Final reconcile' })
     } catch (e) {
       log(`⚠️ Final reconcile: test#final が throw（${e && e.message ? e.message : e}）— null 扱い（fail-safe → unavailable。issue #359）`)
     }
-    finalEpochRes = maxEpochRes([sync, ft])
     if (!ft) { finalReconcile = 'unavailable'; log('⚠️ Final reconcile: test#final が null — unavailable（fail-safe → merge tier HOLD）') }
     else if (ft.tests === 'error') {
       // テストが 1 件も実行されなかった起動失敗。本物の red（tests:'failed'）ではないので
@@ -7347,7 +7402,28 @@ if ((iterate?.fixes_applied ?? 0) > 0) {
       finalReconcile = 'reverified'
       finalTestGreen = ft.tests === 'no_tests' ? null : ft.green === true
       log(`Final reconcile: test#final tests=${ft.tests} green=${ft.green}`)
+      // Step2b 落ちたファイルだけを 1 回流し直し、flake と本物の red を分ける。全件は流し直さない
+      // （並列負荷の flake は全件で再発する）。failed_files が空・安全に渡せないパスを含む red は再実行せず HOLD。
+      // 判定は finalTestRerunVerdict（exit code 由来の tests / green）だけ。再実行の throw / null は red のまま。
+      const rerunFiles = finalTestGreen === false ? finalTestRerunFiles(ft) : []
+      if (rerunFiles.length) {
+        try {
+          ftRerun = await trackedAgent(runTestFilesPrompt(WT, rerunFiles), { agentType: 'dev-runner-haiku', schema: GREEN, label: 'test#final-rerun', phase: 'Final reconcile' })
+        } catch (e) {
+          log(`⚠️ Final reconcile: test#final-rerun が throw（${e && e.message ? e.message : e}）— red のまま（final_test_red）`)
+        }
+        finalTestFlaky = finalTestRerunVerdict(ft, ftRerun, rerunFiles)
+        if (finalTestFlaky) {
+          finalTestGreen = true
+          log(`Final reconcile: test#final-rerun green — flake（${rerunFiles.join(', ')}）。final_test_green=true（1 回目のログ: ${finalTestFlaky.logs.join(', ') || '不明'}）`)
+        } else {
+          log(`Final reconcile: test#final-rerun も red（tests=${ftRerun?.tests ?? 'null'}）— final_test_red`)
+        }
+      } else if (finalTestGreen === false) {
+        log('Final reconcile: failed_files が空（ビルド失敗・ファイルに結び付かない失敗）— 再実行せず final_test_red')
+      }
     }
+    finalEpochRes = maxEpochRes([sync, ft, ftRerun])
     // Step3〜5（changed-files-final / 宣言外パス再監査 / UI 再検証）は sync 成功のみに依存する
     // （test#final の成否に依存しない）。ci-final 委譲で finalReconcile が unavailable→ci_verified
     // へ昇格する run でも、その CI 委譲は test gate の代替であって宣言外監査・UI 再検証の代替ではない
@@ -7789,6 +7865,7 @@ const mergeTier = classifyMergeTier({
   riskValueDropped: riskValueDroppedFinal,
   finalReconcile,
   finalTestGreen,
+  finalTestFlaky,
   iterateStatus: iterate?.status ?? null,
   evalStaleness,
   evalDiffHash: state.evalDiffHash,
@@ -7869,6 +7946,7 @@ const summaryBody = buildDevflowSummaryBody({
   uiVerifyMode: state.uiVerifyMode,
   finalReconcile,
   finalTestGreen,
+  finalTestFlaky,
   finalUiVerify: finalUiVerifyStatus,
   finalAcReconcile,
   liteReview: state.liteReview ?? null,
@@ -7926,12 +8004,14 @@ const telemetryHandoff = buildJournalHandoffPayload({
   // plugin bin/ の bare 名。dotfiles Stop hook の [[ -x ]] は bare 名では真にならず FALLBACK_JOURNAL で解決される（fail-open、tilde 形と同挙動）
   journal_sh: 'journal',
   ...(state.guardBlockedResults.length ? { error_category: 'guard_blocked' } : {}),
-  // telemetry キーは dev-flow/references/telemetry.md の 13 キーに限る（_lib/telemetry-keys.test.mjs が pin）。
+  // telemetry キーは dev-flow/references/telemetry.md の 14 キーに限る（_lib/telemetry-keys.test.mjs が pin）。
   // 記録専用で gate / merge tier / ledger の判定入力にはしない。
   telemetry: {
     merge_tier: mergeTier.tier,
     // pr_body_clips: PR 本文で切った要約行の件数と pr_sections の上限超過字数。発火した run だけ載せる
     ...(hasPrBodyClips(prBodyClips) ? { pr_body_clips: prBodyClips } : {}),
+    // final_test_flaky: test#final で落ち、単体再実行で green だったファイルと 1 回目のログ。flake の run だけ載せる
+    ...(finalTestFlaky ? { final_test_flaky: finalTestFlaky } : {}),
     // shape: 実効 shape（realized diff の file 数・行数から classifyShape が決めた値）
     shape: state.EFFECTIVE_SHAPE,
     ...(state.evalResult?.verdict ? { eval_verdict: state.evalResult.verdict } : {}),
@@ -7995,6 +8075,7 @@ return {
   ui_verify_mode: state.uiVerifyMode,
   final_reconcile: finalReconcile,
   final_test_green: finalTestGreen,
+  final_test_flaky: finalTestFlaky,
   final_ui_verify: finalUiVerifyStatus,
   final_ac_reconcile: finalAcReconcile,
   final_unsatisfied_ac: state.finalUnsatisfiedAc,

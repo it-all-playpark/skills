@@ -37,6 +37,10 @@
 //       + 'final test red' を含まない + changed-files-final は呼ばれる（issue #619）
 //   (m) fixes=1 + test#final tests:'failed'（本物の red）→ final_reconcile==='reverified' + final_test_green===false
 //       + HOLD + reasons に 'final test red'（issue #619 回帰: 'error' 分離後も failed 経路は不変）
+//   (n) test#final red + failed_files の単体再実行（test#final-rerun）green → flake: final_test_green true・
+//       final_test_flaky 記録・final_test_red なし・サマリーのテスト欄が flake で「修正が必要」なし（issue #865）
+//   (o) 単体再実行も red / null / throw / error → final_test_red で HOLD（issue #865）
+//   (p) failed_files が空・欠落・安全に渡せないパスの red → 再実行せず final_test_red で HOLD（issue #865）
 
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
@@ -519,4 +523,106 @@ test("[final-reconcile] (m) fixes=1 + test#final tests:'failed'（本物の red�
     `(m) merge_tier_reasons に 'final test red' が含まれるはずだが ${JSON.stringify(result?.merge_tier_reasons)}`,
   );
   assert.ok(!calls.some((c) => c.label === 'ci-final'), "(m) 本物の red（reverified 経路）では CI 委譲 'ci-final' を起動してはならない（fail-closed 維持）");
+});
+
+// ============================================================
+// (n)〜(p) test#final の red を落ちたファイルだけの単体再実行で flake と本物の red に分ける（issue #865）
+// ============================================================
+
+const FLAKY_FIRST = {
+  tests: 'failed', green: false,
+  summary: 'failed: /tmp/wt/tests/run-all-bats.sh (exit 1, log: /tmp/run-tests-x/0.log)\n--- /tmp/wt/tests/run-all-bats.sh\nnot ok 7 TW-i jq-absent fallback',
+  failed_files: ['plugins/dev-flow/_shared/scripts/diff-risk-classify.bats'],
+};
+
+function summaryBodyOf(calls) {
+  const post = calls.find((c) => c.label === 'post-summary');
+  assert.ok(post, "'post-summary' が呼ばれるはず");
+  return post.prompt.slice(post.prompt.indexOf('<<<DEV_FLOW_BODY_BEGIN>>>'), post.prompt.indexOf('<<<DEV_FLOW_BODY_END>>>'));
+}
+
+test("[final-reconcile] (n) test#final red + failed_files の単体再実行 green → flake: final_test_red なし・final_test_flaky 記録・サマリーに「修正が必要」なし", async () => {
+  const { ctx, calls } = makeSandbox({
+    fixesApplied: 1,
+    overrides: {
+      'test#final': FLAKY_FIRST,
+      'test#final-rerun': { tests: 'passed', green: true, summary: 'passed' },
+    },
+  });
+  const { result, error } = await runDevFlowCapture(devFlowSrc, ctx);
+  assertNoCrash(error, 'n');
+  assert.equal(error, null, `(n) run は完走するはずだが ${error?.message}`);
+
+  // 再実行は落ちたファイルだけを渡す run-tests --files の 1 回（全件の再実行はしない）
+  const reruns = calls.filter((c) => c.label === 'test#final-rerun');
+  assert.equal(reruns.length, 1, `(n) test#final-rerun は 1 回だけ呼ばれるはずだが ${reruns.length} 回`);
+  assert.equal(reruns[0].agentType, 'dev-flow:dev-runner-haiku');
+  assert.equal(reruns[0].prompt.split('\n').at(-1), 'run-tests /tmp/wt --files plugins/dev-flow/_shared/scripts/diff-risk-classify.bats');
+  assert.equal(calls.filter((c) => c.label === 'test#final').length, 1, '(n) test#final 自体は 1 回のまま');
+
+  assert.equal(result?.final_reconcile, 'reverified');
+  assert.equal(result?.final_test_green, true, `(n) final_test_green は true のはずだが ${JSON.stringify(result?.final_test_green)}`);
+  assert.deepEqual(JSON.parse(JSON.stringify(result?.final_test_flaky)), {
+    files: ['plugins/dev-flow/_shared/scripts/diff-risk-classify.bats'],
+    logs: ['/tmp/run-tests-x/0.log'],
+  });
+  assert.equal(result?.merge_tier, 'REVIEW', `(n) merge_tier は REVIEW のはずだが ${JSON.stringify(result?.merge_tier_reasons)}`);
+  assert.ok(!(result?.merge_tier_hold_reasons ?? []).some((r) => r.code === 'final_test_red'), JSON.stringify(result?.merge_tier_hold_reasons));
+  assert.ok(!(result?.merge_tier_reasons ?? []).some((r) => r.includes('final test red')), JSON.stringify(result?.merge_tier_reasons));
+
+  // 終端サマリー: 結論行・HOLD 理由欄に「修正が必要」が出ず、テスト欄が flake を示す
+  const body = summaryBodyOf(calls);
+  const conclusion = body.split('\n').find((l) => l.startsWith('**結論: '));
+  assert.ok(conclusion && !conclusion.includes('修正作業が必要'), `(n) 結論行: ${conclusion}`);
+  assert.ok(!body.includes('修正が必要'), `(n) サマリーに「修正が必要」が出てはならない:\n${body}`);
+  const glance = body.split('\n').find((l) => l.startsWith('| ') && /\*\*(HOLD|REVIEW|AUTO)\*\*/.test(l));
+  assert.equal(glance.split('|').slice(1, -1).map((s) => s.trim())[2], '⚠️ flake（単体再実行で green）');
+  assert.ok(body.includes('final test flake（単体再実行で green）: plugins/dev-flow/_shared/scripts/diff-risk-classify.bats'), '(n) 参考に flake の開示行（ファイル）が出る');
+
+  // telemetry: flake の run だけ final_test_flaky を載せる
+  const handoff = calls.find((c) => c.label === 'journal-log');
+  const m = handoff?.prompt.match(/<<<JOURNAL_HANDOFF_BODY_BEGIN>>>\n([\s\S]*?)\n<<<JOURNAL_HANDOFF_BODY_END>>>/);
+  assert.ok(m, "(n) 'journal-log' の handoff body が見つからない");
+  assert.deepEqual(JSON.parse(m[1]).telemetry?.final_test_flaky, {
+    files: ['plugins/dev-flow/_shared/scripts/diff-risk-classify.bats'],
+    logs: ['/tmp/run-tests-x/0.log'],
+  });
+});
+
+test("[final-reconcile] (o) 単体再実行でも red / 応答なし / throw → 従来どおり final_test_red で HOLD", async () => {
+  const variants = {
+    red: { tests: 'failed', green: false, summary: 'still red', failed_files: FLAKY_FIRST.failed_files },
+    null: null,
+    throw: () => { throw new Error('EPERM'); },
+    error: { tests: 'error', green: false, summary: 'run-tests did not return JSON' },
+  };
+  for (const [name, rerun] of Object.entries(variants)) {
+    const { ctx, calls } = makeSandbox({
+      fixesApplied: 1,
+      overrides: { 'test#final': FLAKY_FIRST, 'test#final-rerun': rerun },
+    });
+    const { result, error } = await runDevFlowCapture(devFlowSrc, ctx);
+    assertNoCrash(error, `o-${name}`);
+    assert.equal(error, null, `(o-${name}) run は完走するはずだが ${error?.message}`);
+    assert.equal(calls.filter((c) => c.label === 'test#final-rerun').length, 1, `(o-${name}) 再実行は 1 回だけ`);
+    assert.equal(result?.final_test_green, false, `(o-${name}) final_test_green は false のはず`);
+    assert.equal(result?.final_test_flaky, null, `(o-${name}) final_test_flaky は null のはず`);
+    assert.equal(result?.merge_tier, 'HOLD', `(o-${name}) merge_tier は HOLD のはず`);
+    assert.ok((result?.merge_tier_hold_reasons ?? []).some((r) => r.code === 'final_test_red'), `(o-${name}) ${JSON.stringify(result?.merge_tier_hold_reasons)}`);
+    assert.ok(summaryBodyOf(calls).includes('修正が必要'), `(o-${name}) final_test_red の HOLD は「修正が必要」のまま`);
+  }
+});
+
+test("[final-reconcile] (p) failed_files が空（ビルド失敗・結び付かない失敗）/ 安全に渡せないパスの red は再実行せず final_test_red で HOLD", async () => {
+  for (const [name, failed_files] of Object.entries({ empty: [], missing: undefined, unsafe: ['a.bats', 'b c.bats'] })) {
+    const first = { tests: 'failed', green: false, summary: 'workspace build failed', ...(failed_files ? { failed_files } : {}) };
+    const { ctx, calls } = makeSandbox({ fixesApplied: 1, overrides: { 'test#final': first } });
+    const { result, error } = await runDevFlowCapture(devFlowSrc, ctx);
+    assertNoCrash(error, `p-${name}`);
+    assert.ok(!calls.some((c) => c.label === 'test#final-rerun'), `(p-${name}) test#final-rerun を呼んではならない`);
+    assert.equal(result?.final_test_green, false);
+    assert.equal(result?.final_test_flaky, null);
+    assert.equal(result?.merge_tier, 'HOLD');
+    assert.ok((result?.merge_tier_hold_reasons ?? []).some((r) => r.code === 'final_test_red'), `(p-${name}) ${JSON.stringify(result?.merge_tier_hold_reasons)}`);
+  }
 });
