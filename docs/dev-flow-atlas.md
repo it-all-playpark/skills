@@ -59,10 +59,11 @@ flowchart TD
 
 ### 1.2 Setup
 
-決定論処理（base 解決・worktree 作成/再利用と起点検証・`.devflow-tmp` clean・deps install・
+決定論処理（base 解決・worktree 作成/再利用と起点検証・`.devflow-tmp` clean・
 issue analyze・stack 検出）は run 前に wrapper skill が top-level の Bash 1 コマンド
-`dev-flow-prerun` で済ませ、その stdout JSON を `args.setup` として渡す。analyze 段
-（`prerun-analyze.sh`: `analyze-issue --contract` の決定論 parse + Jev 有界判定）は deps install と
+`dev-flow-prerun` で済ませ、deps install は別の Bash 呼び出し `ensure-worktree-deps --setup` で行って
+（postinstall を sandbox 外の prerun の子にしない）、その stdout JSON を `args.setup` として渡す。analyze 段
+（`prerun-analyze.sh`: `analyze-issue --contract` の決定論 parse + Jev 有界判定）は stack 検出と
 並列に走る。Setup phase の spawn は末尾の analyze ゲート判定後の 1 本だけ（通常経路は isolation probe、
 ゲートが引いたときは analyze-clarify）。
 

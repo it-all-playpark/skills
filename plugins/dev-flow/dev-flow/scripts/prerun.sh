@@ -1,13 +1,19 @@
 #!/usr/bin/env bash
 # prerun.sh - dev-flow Setup phase の決定論処理を 1 コマンドに集約する (issue #641)
 #
-# top-level Bash が bare 名 launcher (bin/dev-flow-prerun) 経由でこのスクリプトを実行し、
-# stdout の JSON 1行を `Workflow({ args: { issue, setup: <JSON> } })` の args.setup へそのまま渡す。
+# top-level Bash が bare 名 launcher (bin/dev-flow-prerun) 経由でこのスクリプトを実行する。ok:true なら
+# stdout と同じ JSON を <worktree>/.devflow-tmp/prerun-setup.json にも書き、wrapper は続けて別の Bash 呼び出しで
+# `ensure-worktree-deps --setup <そのファイル>` を実行して、その stdout（deps / epoch_end を足した setup）を
+# `Workflow({ args: { issue, setup: <JSON> } })` の args.setup へそのまま渡す。
 #
 # 行う処理: base 解決 (origin/dev → origin/HEAD フォールバック) → worktree 作成/再利用 +
-# 起点(base)一致検証 + 独自コミット無しの再利用 worktree を base へ fast-forward + 書き込み probe →.devflow-tmp の git clean -fdx → deps install ‖ analyze
-# （issue 取得 + contract parse + Jev 有界判定。prerun-analyze.sh。deps install と並列）→
+# 起点(base)一致検証 + 独自コミット無しの再利用 worktree を base へ fast-forward + 書き込み probe →.devflow-tmp の git clean -fdx → analyze
+# （issue 取得 + contract parse + Jev 有界判定。prerun-analyze.sh。detect-stack と並列）‖
 # detect-stack。各段は独立に ok/error を報告し、後続段を巻き込まない。
+#
+# deps install はここで行わない（issue #868）。install は対象 repo の依存の postinstall（任意コード）を走らせる。
+# このスクリプトは git の書き込み（worktree 作成・fast-forward）のため sandbox 外で起動されるので、子として
+# install を呼ぶと postinstall まで sandbox 外で走る。
 #
 # GitHub I/O は analyze 段の `analyze-issue`（GitHub CLI の issue 取得を内蔵）と blocker 判定
 # （prerun-analyze.sh の dependencies API / Blocked by 先の issue 状態）の読み取りのみ。
@@ -103,7 +109,7 @@ RECOVERY_STEPS_FOR() {
 # ============================================================================
 
 # epoch は run の clock mark `start`（duration_seconds の起点）と isolation-probe token の給電元。
-# 旧 Setup と同じく deps install より前（Setup 開始時点）で採る — 末尾で採ると npm ci 等の
+# Setup 開始時点（fetch・worktree 作成・後続の deps install より前）で採る — 後で採ると npm ci 等の
 # 数分が duration_seconds から抜け、着手前後の journal 比較が同条件でなくなる
 epoch="$(date +%s)"
 
@@ -349,47 +355,11 @@ else
 fi
 
 # ============================================================================
-# Segment 4: deps install (段2成功時のみ)
+# Segment 6: analyze (Segment 5 と並列に走らせる。段2 の成否に依存しない)
 # ============================================================================
 
-summarize_deps() {
-    local raw="$1"
-    if [[ -z "$raw" ]] || ! printf '%s' "$raw" | jq -e . >/dev/null 2>&1; then
-        jq -n '{ok:false, note:"依存インストール結果を確認できなかった（ensure-worktree-deps 応答不正）"}'
-        return
-    fi
-    printf '%s' "$raw" | jq -c '
-        def failing: [ (.results // [])[] | select(.status == "failed" or .status == "pm_not_found") ];
-        def describe: .ecosystem + "/" + .pm + " (" + .command + "): " + .status
-            + (if (.missing_node_modules // []) | length > 0 then " — node_modules 欠落: " + (.missing_node_modules | join(", ")) else "" end);
-        if .status == "no_dependencies" then
-            {ok: true, note: ""}
-        elif .status == "success" then
-            (failing) as $f
-            | if ($f | length) == 0 then
-                {ok: true, note: ([ (.results // [])[] | (.pm + ":" + .status) ] | join(", "))}
-              else
-                {ok: false, note: ("依存インストールに失敗した項目あり — " + ([ $f[] | describe ] | join(", ")))}
-              end
-        elif (.status == "partial" or .status == "failed") then
-            (failing) as $f
-            | if ($f | length) > 0 then
-                {ok: false, note: ("依存インストールが " + .status + " で終了 — " + ([ $f[] | describe ] | join(", ")))}
-              else
-                {ok: false, note: ("依存インストールが " + .status + " で終了 — " + (.error // "詳細不明"))}
-              end
-        else
-            {ok: false, note: "依存インストール結果を確認できなかった（ensure-worktree-deps 応答不正）"}
-        end
-    '
-}
-
-# ============================================================================
-# Segment 6: analyze (Segment 4 と並列に走らせる。段2 の成否に依存しない)
-# ============================================================================
-
-# analyze-issue --contract + Jev 有界判定（prerun-analyze.sh）を deps install と同時に始める。
-# 数分かかりうる deps install の裏で issue 取得と Jev 判定を終えるため、Workflow 側（Setup 末尾の
+# analyze-issue --contract + Jev 有界判定（prerun-analyze.sh）を detect-stack 等と同時に始める。
+# issue 取得と Jev 判定を prerun の中で終えるため、Workflow 側（Setup 末尾の
 # analyze ゲート）は args.setup.analyze の whitelist 検証とゲート判定だけになる（通常経路の analyze spawn 0）。
 # 失敗（GitHub 到達不能 / JSON 不正）は analyze.ok:false + reason で報告し、Workflow が
 # needs_clarification（source=analyze_prerun）に倒す。所要は duration_seconds に載せ、Workflow の
@@ -408,20 +378,6 @@ ANALYZE_ARGS=(--issue "$ISSUE")
     fi
 ) >"$ANALYZE_OUT" 2>/dev/null &
 ANALYZE_PID=$!
-
-if [[ "$SEG2_OK" == true ]]; then
-    DEPS_OUT="$(mktemp "${TMPDIR:-/tmp}/dev-flow-prerun-deps-out.XXXXXX")"
-    "$PLUGIN_ROOT/_shared/scripts/ensure-worktree-deps.sh" --path "$WT" --lockfile-only --skip-custom >"$DEPS_OUT" 2>/dev/null &
-    DEPS_PID=$!
-    wait "$DEPS_PID" || true
-    DEPS_RAW="$(cat "$DEPS_OUT" 2>/dev/null || true)"
-    rm -f "$DEPS_OUT"
-    # jq フィルタ自体が応答不正で落ちても段4 だけ ok:false に留める（set -e で script 全体を巻き込まない）
-    deps_json="$(summarize_deps "$DEPS_RAW")" \
-        || deps_json='{"ok":false,"note":"依存インストール結果を確認できなかった（ensure-worktree-deps 応答不正）"}'
-else
-    deps_json='{"ok":false,"note":"skipped: worktree unavailable"}'
-fi
 
 # ============================================================================
 # Segment 5: detect-stack (段2成功時のみ)
@@ -482,17 +438,6 @@ if [[ -z "$analyze_json" ]] || ! printf '%s' "$analyze_json" | jq -e 'type == "o
 fi
 
 # ============================================================================
-# epoch_end: deps install / detect-stack / analyze 完了後の時刻 (setup_end マーク = implement 区間の起点の給電元)
-# ============================================================================
-
-# setup_end は Workflow の Setup 末尾（analyze ゲート判定）直前の時刻であるべきで、epoch
-# （deps install 前）を使うと deps install + analyze 段 + wrapper turn が丸ごと implement の
-# phase_durations に付け替わる。epoch_end はここ（deps/stack/analyze の両段完了後）で採り、
-# Setup の決定論処理時間はどの phase にも属さない残差（duration_seconds − Σphase_durations）に
-# 留める（analyze 段の所要だけは analyze.duration_seconds → prerun_durations.analyze で別途持つ）。
-epoch_end="$(date +%s)"
-
-# ============================================================================
 # Output
 # ============================================================================
 
@@ -511,7 +456,7 @@ HAVE_HEAD=false
 HAVE_WT_ERROR=false
 [[ -n "$worktree_error" ]] && HAVE_WT_ERROR=true
 
-jq -n \
+OUT_JSON="$(jq -n \
     --argjson ok "$OK_JSON" \
     --argjson issue "$ISSUE" \
     --arg repo "$repo" \
@@ -529,13 +474,11 @@ jq -n \
     --argjson have_worktree_error "$HAVE_WT_ERROR" \
     --argjson worktree_removed "$worktree_removed" \
     --argjson clean "$clean_json" \
-    --argjson deps "$deps_json" \
     --argjson stack "$stack_json" \
     --argjson analyze "$analyze_json" \
     --argjson ci_verify "$ci_verify_json" \
     --argjson local_verify "$local_verify_json" \
     --argjson epoch "$epoch" \
-    --argjson epoch_end "$epoch_end" \
     --arg plugin_commit "$plugin_commit" \
     '
     {ok: $ok, issue: $issue}
@@ -545,8 +488,20 @@ jq -n \
     + (if $have_head then {head: $head} else {} end)
     + (if $have_worktree_error then {worktree_error: $worktree_error} else {} end)
     + {worktree_status: $worktree_status, worktree_removed: $worktree_removed}
-    + {clean: $clean, deps: $deps, stack: $stack, analyze: $analyze, ci_verify: $ci_verify, local_verify: $local_verify, epoch: $epoch, epoch_end: $epoch_end}
+    + {clean: $clean, stack: $stack, analyze: $analyze, ci_verify: $ci_verify, local_verify: $local_verify, epoch: $epoch}
     + {plugin_commit: (if ($plugin_commit | test("^[0-9a-f]{12}$")) then $plugin_commit else null end)}
-    '
+    ')"
+
+# deps install（ensure-worktree-deps --setup）の入力。ok:false のときは前 run の値を消す（古い epoch の setup で
+# run を起動させない）。書けなければ deps 段が「読めない」で止まり、wrapper がその stderr を人間へ返す
+SETUP_FILE="$WT/.devflow-tmp/prerun-setup.json"
+if [[ "$OK_JSON" == true ]]; then
+    # Segment 3 の clean は .devflow-tmp ごと消すので作り直す
+    { mkdir -p "$WT/.devflow-tmp" && printf '%s\n' "$OUT_JSON" >"$SETUP_FILE"; } || echo "prerun: failed to write $SETUP_FILE" >&2
+elif [[ -f "$SETUP_FILE" ]]; then
+    # 書けない worktree（unwritable）では消せない。ok:false なので wrapper はどのみち deps 段へ進まない
+    rm -f "$SETUP_FILE" 2>/dev/null || true
+fi
+printf '%s\n' "$OUT_JSON"
 
 exit 0

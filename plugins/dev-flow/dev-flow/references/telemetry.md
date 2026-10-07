@@ -48,8 +48,8 @@ nested pr-iterate を起動した dev-flow run は pr-iterate と dev-flow の e
   含む）。evaluate 区間は Security floor を含む。micro path（Evaluate skip）では evaluate キー自体が欠落し pr は直近
   mark（validate_end）起点で計算される。時刻は専用 clock probe を起動せず、start は wrapper（dev-flow-prerun、
   top-level Bash）が渡す `args.setup.epoch`、end は Merge tier 末尾の post-summary 応答の optional epoch から給電し、
-  implement 区間の起点 `setup_end` は prerun 応答の `args.setup.epoch_end`（deps install / detect-stack / analyze 段
-  完了後）から、残りの mark は phase 境界に隣接する既存 exec-proxy / agent 応答の optional epoch から給電する
+  implement 区間の起点 `setup_end` は `args.setup.epoch_end`（prerun の後に wrapper が回す
+  `ensure-worktree-deps --setup` の deps install 完了時）から、残りの mark は phase 境界に隣接する既存 exec-proxy / agent 応答の optional epoch から給電する
   （fail-open）。**給電元応答の完了タイミング依存の skew を含むため、絶対値ではなく相対比較・分布用途で解釈すること。
   start〜setup_end（deps install 等の prerun 決定論処理 + wrapper turn）はどの phase にも属さない残差
   （duration_seconds − Σphase_durations）。Final reconcile skip 時（fixes_applied=0）は final キー自体が欠落する**。

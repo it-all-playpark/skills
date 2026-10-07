@@ -4,8 +4,9 @@ bats_require_minimum_version 1.5.0
 # Tests for dev-flow/scripts/prerun.sh (issue #641)
 #
 # prerun.sh は dev-flow Setup phase の決定論処理 (base 解決 / worktree 作成・再利用+起点検証+
-# 書き込み probe / .devflow-tmp の git clean / deps install / detect-stack) を 1 コマンドに
-# 集約する。fixture は bare origin + clone した ROOT リポジトリ (main/dev の2ブランチ)。
+# 書き込み probe / .devflow-tmp の git clean / analyze / detect-stack) を 1 コマンドに
+# 集約する。deps install は持たない (issue #868。ensure-worktree-deps --setup の bats 参照)。
+# fixture は bare origin + clone した ROOT リポジトリ (main/dev の2ブランチ)。
 
 SCRIPT="$(cd "$(dirname "$BATS_TEST_FILENAME")" && pwd)/prerun.sh"
 
@@ -82,7 +83,6 @@ make_issue_fixture() {
     echo "$output" | jq -e --arg h "$expected_head" '.head == $h'
     echo "$output" | jq -e '(.epoch | type) == "number" and (.epoch == (.epoch | floor))'
     echo "$output" | jq -e '.clean.ok == true'
-    echo "$output" | jq -e '.deps.ok == true'
     echo "$output" | jq -e '.stack.frameworks == []'
 }
 
@@ -124,7 +124,6 @@ make_issue_fixture() {
     echo "$output" | jq -e '.base_error | test("origin/release")'
     echo "$output" | jq -e '.worktree_status == "skipped"'
     echo "$output" | jq -e --arg wt "$WT" '.worktree == $wt'
-    echo "$output" | jq -e '.deps.note | test("skipped")'
     echo "$output" | jq -e '.stack.frameworks == []'
 }
 
@@ -188,7 +187,7 @@ make_issue_fixture() {
     echo "$output" | jq -e '.worktree_error | test("other-branch")'
 }
 
-# ---- (6c) epoch は script 開始時点（deps install より前）で採る ----
+# ---- (6c) epoch は script 開始時点（fetch・worktree 作成より前）で採る ----
 
 @test "(6c) epoch は script 開始時の時刻（出力直前ではない）" {
     cd "$ROOT"
@@ -197,27 +196,50 @@ make_issue_fixture() {
     after="$(date +%s)"
     [ "$status" -eq 0 ]
     echo "$output" | jq -e --argjson b "$before" --argjson a "$after" '.epoch >= $b and .epoch <= $a'
-    # 静的 pin: epoch の採取行が deps install（ensure-worktree-deps）より前にある
+    # 静的 pin: epoch の採取行が git fetch より前にある
     epoch_line="$(grep -n '^epoch="\$(date +%s)"' "$SCRIPT" | head -1 | cut -d: -f1)"
-    deps_line="$(grep -n 'ensure-worktree-deps.sh' "$SCRIPT" | head -1 | cut -d: -f1)"
-    [ -n "$epoch_line" ] && [ -n "$deps_line" ] && [ "$epoch_line" -lt "$deps_line" ]
+    fetch_line="$(grep -n 'fetch origin --quiet' "$SCRIPT" | head -1 | cut -d: -f1)"
+    [ -n "$epoch_line" ] && [ -n "$fetch_line" ] && [ "$epoch_line" -lt "$fetch_line" ]
 }
 
-# ---- (6d) epoch_end は deps install / detect-stack 完了後（epoch 以降）で採る ----
+# ---- (6d) deps install を呼ばない（issue #868）----
+# prerun は git の書き込みのため sandbox 外で起動される。install（依存の postinstall = repo の任意コード）を
+# その子として走らせないことを、lockfile のある repo で install コマンドが 1 度も起動されないことで pin する。
+# install は wrapper が別の Bash 呼び出しで ensure-worktree-deps --setup を実行して行う（そちらの bats 参照）。
 
-@test "(6d) epoch_end は epoch 以上かつ deps/stack 完了後の時刻" {
+@test "(6d) lockfile があっても install を呼ばず、出力に deps / epoch_end を持たず、同じ JSON を .devflow-tmp/prerun-setup.json に書く" {
+    git -C "$SEED" checkout -q dev
+    echo '{"name":"t","version":"1.0.0"}' > "$SEED/package.json"
+    echo '{"lockfileVersion":3}' > "$SEED/package-lock.json"
+    git -C "$SEED" add package.json package-lock.json
+    git -C "$SEED" commit -q -m "add npm lockfile"
+    git -C "$SEED" push -q origin dev
+    for pm in npm pnpm yarn bun; do
+        printf '#!/usr/bin/env bash\necho "%s $*" >> "%s/install-calls.log"\n' "$pm" "$BATS_TEST_TMPDIR" >"$STUB_DIR/$pm"
+        chmod +x "$STUB_DIR/$pm"
+    done
+    export DEVFLOW_DEPS_CACHE_DIR="$BATS_TEST_TMPDIR/deps-cache"
+
     cd "$ROOT"
     run --separate-stderr "$SCRIPT" --issue 1 --worktree "$WT"
     [ "$status" -eq 0 ]
-    echo "$output" | jq -e '(.epoch_end | type) == "number" and (.epoch_end == (.epoch_end | floor))'
-    echo "$output" | jq -e '.epoch_end >= .epoch'
-    # 静的 pin: epoch_end の採取行が deps install / detect-stack より後にある
-    epoch_end_line="$(grep -n '^epoch_end="\$(date +%s)"' "$SCRIPT" | head -1 | cut -d: -f1)"
-    deps_line="$(grep -n 'ensure-worktree-deps.sh' "$SCRIPT" | head -1 | cut -d: -f1)"
-    stack_line="$(grep -n 'detect-stack.sh' "$SCRIPT" | head -1 | cut -d: -f1)"
-    [ -n "$epoch_end_line" ] && [ -n "$deps_line" ] && [ -n "$stack_line" ]
-    [ "$epoch_end_line" -gt "$deps_line" ]
-    [ "$epoch_end_line" -gt "$stack_line" ]
+    echo "$output" | jq -e '.ok == true'
+    echo "$output" | jq -e 'has("deps") | not'
+    echo "$output" | jq -e 'has("epoch_end") | not'
+    [ ! -f "$BATS_TEST_TMPDIR/install-calls.log" ]
+    [ ! -d "$WT/node_modules" ]
+    jq -e --argjson out "$output" '. == $out' "$WT/.devflow-tmp/prerun-setup.json"
+}
+
+@test "(6e) ok:false のときは .devflow-tmp/prerun-setup.json を書かない" {
+    cd "$ROOT"
+    run --separate-stderr "$SCRIPT" --issue 1 --worktree "$WT"
+    [ "$status" -eq 0 ]
+    [ -f "$WT/.devflow-tmp/prerun-setup.json" ]
+    run --separate-stderr "$SCRIPT" --issue 1 --worktree "$WT" --base main
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.ok == false'
+    [ ! -f "$WT/.devflow-tmp/prerun-setup.json" ]
 }
 
 # ---- (7) push -u 後は origin/feature/issue-N も一致扱い ----
@@ -332,9 +354,9 @@ advance_origin_dev() {
     [ -f "$WT/wip.txt" ]
 }
 
-# ---- (10) package.json (next, lockfile無し) -> stack検出 + deps no_dependencies ----
+# ---- (10) package.json (next, lockfile無し) -> stack検出 ----
 
-@test "(10) next依存のpackage.json(lockfile無し) -> stack.frameworksにnext、deps.ok=true" {
+@test "(10) next依存のpackage.json(lockfile無し) -> stack.frameworksにnext" {
     git -C "$SEED" checkout -q dev
     cat > "$SEED/package.json" <<'JSON'
 {
@@ -351,34 +373,6 @@ JSON
     run --separate-stderr "$SCRIPT" --issue 1 --worktree "$WT"
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.stack.frameworks | index("next") != null'
-    echo "$output" | jq -e '.deps.ok == true'
-}
-
-# ---- (10b) pnpm workspace で package の node_modules が欠ける -> deps.ok=false (issue #748) ----
-
-@test "(10b) pnpm workspace で依存を宣言した package に node_modules が無い -> deps.ok=false、note に欠けた package" {
-    git -C "$SEED" checkout -q dev
-    mkdir -p "$SEED/packages/backend"
-    echo '{"name":"root","private":true}' > "$SEED/package.json"
-    printf 'lockfileVersion: 9.0\n' > "$SEED/pnpm-lock.yaml"
-    printf "packages:\n  - 'packages/*'\n" > "$SEED/pnpm-workspace.yaml"
-    echo '{"name":"backend","devDependencies":{"vitest":"^3.0.0"}}' > "$SEED/packages/backend/package.json"
-    git -C "$SEED" add package.json pnpm-lock.yaml pnpm-workspace.yaml packages/backend/package.json
-    git -C "$SEED" commit -q -m "add pnpm workspace"
-    git -C "$SEED" push -q origin dev
-    # root の node_modules だけを作る pnpm（workspace package の node_modules を作らない）
-    cat >"$STUB_DIR/pnpm" <<'STUB'
-#!/usr/bin/env bash
-mkdir -p "$PWD/node_modules/.pnpm"
-STUB
-    chmod +x "$STUB_DIR/pnpm"
-    export DEVFLOW_DEPS_CACHE_DIR="$BATS_TEST_TMPDIR/deps-cache"
-
-    cd "$ROOT"
-    run --separate-stderr "$SCRIPT" --issue 1 --worktree "$WT"
-    [ "$status" -eq 0 ]
-    echo "$output" | jq -e '.deps.ok == false'
-    echo "$output" | jq -e '.deps.note | test("packages/backend")'
 }
 
 # ---- (10c) ci_verify / local_verify: worktree の skill-config の "dev-flow".<key> を verbatim で渡す (issue #861 / #863) ----
@@ -458,13 +452,14 @@ STUB
     run --separate-stderr "$SCRIPT" --issue 1 --worktree "$WT"
     [ "$status" -eq 0 ]
 
-    chmod a-w "$WT"
+    # 1 回目の ok:true は .devflow-tmp/prerun-setup.json を残すので、.devflow-tmp ごと書けなくする
+    chmod a-w "$WT" "$WT/.devflow-tmp"
 
     run --separate-stderr "$SCRIPT" --issue 1 --worktree "$WT"
     status_after_chmod="$status"
     output_after_chmod="$output"
 
-    chmod u+w "$WT"
+    chmod u+w "$WT" "$WT/.devflow-tmp"
 
     [ "$status_after_chmod" -eq 0 ]
     echo "$output_after_chmod" | jq -e '.ok == false'
@@ -525,7 +520,7 @@ STUB
     cd "$ROOT"
     run --separate-stderr "$SCRIPT" --issue 1 --worktree "$WT"
     [ "$status" -eq 0 ]
-    echo "$output" | jq -e '.ok == true and .worktree_status == "created" and .deps.ok == true'
+    echo "$output" | jq -e '.ok == true and .worktree_status == "created" and .clean.ok == true'
     echo "$output" | jq -e '.analyze.ok == false and (.analyze.reason | test("gh stub: no fixture")) and .analyze.analyze_path == "contract"'
     echo "$output" | jq -e '(.analyze.duration_seconds | type) == "number"'
 }
@@ -538,25 +533,17 @@ STUB
     echo "$output" | jq -e '.ok == false and .analyze.ok == true'
 }
 
-@test "(16d) epoch_end は deps / analyze 両段の完了後に採る（静的 pin: 起動 & → wait → epoch_end の順）" {
-    make_issue_fixture
-    cd "$ROOT"
-    run --separate-stderr "$SCRIPT" --issue 1 --worktree "$WT"
-    [ "$status" -eq 0 ]
-    echo "$output" | jq -e '.epoch_end >= .epoch and .epoch_end >= (.epoch + .analyze.duration_seconds)'
+@test "(16d) analyze は detect-stack と並列に走り、出力前に join する（静的 pin: 起動 & → detect-stack → wait の順）" {
     analyze_launch_line="$(grep -n 'prerun-analyze.sh' "$SCRIPT" | head -1 | cut -d: -f1)"
     analyze_bg_line="$(grep -n '^) >"\$ANALYZE_OUT" 2>/dev/null &$' "$SCRIPT" | head -1 | cut -d: -f1)"
-    deps_line="$(grep -n 'ensure-worktree-deps.sh' "$SCRIPT" | head -1 | cut -d: -f1)"
-    deps_wait_line="$(grep -n '^    wait "\$DEPS_PID"' "$SCRIPT" | head -1 | cut -d: -f1)"
+    stack_line="$(grep -n 'detect-stack.sh' "$SCRIPT" | head -1 | cut -d: -f1)"
     analyze_wait_line="$(grep -n '^wait "\$ANALYZE_PID"' "$SCRIPT" | head -1 | cut -d: -f1)"
-    epoch_end_line="$(grep -n '^epoch_end="\$(date +%s)"' "$SCRIPT" | head -1 | cut -d: -f1)"
-    [ -n "$analyze_launch_line" ] && [ -n "$analyze_bg_line" ] && [ -n "$deps_line" ] && [ -n "$deps_wait_line" ] && [ -n "$analyze_wait_line" ] && [ -n "$epoch_end_line" ]
-    # analyze はバックグラウンド起動（&）され、deps install の起動より前に始まる
+    output_line="$(grep -n '^OUT_JSON="\$(jq -n' "$SCRIPT" | head -1 | cut -d: -f1)"
+    [ -n "$analyze_launch_line" ] && [ -n "$analyze_bg_line" ] && [ -n "$stack_line" ] && [ -n "$analyze_wait_line" ] && [ -n "$output_line" ]
     [ "$analyze_launch_line" -lt "$analyze_bg_line" ]
-    [ "$analyze_bg_line" -lt "$deps_line" ]
-    # deps の wait の後で analyze を join し、その後に epoch_end を採る
-    [ "$deps_wait_line" -lt "$analyze_wait_line" ]
-    [ "$analyze_wait_line" -lt "$epoch_end_line" ]
+    [ "$analyze_bg_line" -lt "$stack_line" ]
+    [ "$stack_line" -lt "$analyze_wait_line" ]
+    [ "$analyze_wait_line" -lt "$output_line" ]
 }
 
 # ---- (17) plugin_commit（issue #785）----

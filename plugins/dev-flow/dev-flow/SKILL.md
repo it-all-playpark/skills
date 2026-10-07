@@ -2,9 +2,9 @@
 name: dev-flow
 description: |
   Runs the issue-to-LGTM dev-flow pipeline for a GitHub issue: performs isolation
-  preflight (dev-flow-prerun: base resolution, worktree creation, deps install in
-  parallel with the deterministic issue analyze (analyze-issue --contract + bounded Jev
-  judgement); then EnterWorktree) then launches the dev-flow-run dynamic workflow
+  preflight (dev-flow-prerun: base resolution, worktree creation, the deterministic issue
+  analyze (analyze-issue --contract + bounded Jev judgement); then deps install via
+  ensure-worktree-deps --setup as a separate Bash call; then EnterWorktree) then launches the dev-flow-run dynamic workflow
   (analyze gate (no LLM spawn on the normal path) → implement → validate → security
   floor (effective shape from the realized diff) → evaluate → PR → pr-iterate → merge
   tier). Merge is always human.
@@ -36,11 +36,12 @@ worktree を作り `EnterWorktree` しておくことで probe が成立する�
 2. **prerun 実行**: リポジトリルート（launch dir）で Bash 1 コマンドとして
    `dev-flow-prerun --issue <N> --worktree <手順1で決めた絶対パス>` を実行する（`args.base` を
    明示する場合のみ `--base <ref>` を付ける）。前置形（`cd X && ...` / `VAR=x ...` /
-   `bash <path>` 等）は使わず、bare 名を先頭トークンにする。stdout の JSON 1 行をそのまま
-   保持する（`{ok, issue, base, worktree, worktree_status, deps, stack, analyze, epoch, ...}`）。
+   `bash <path>` 等）は使わず、bare 名を先頭トークンにする。stdout の JSON 1 行で分岐する
+   （`{ok, issue, base, worktree, worktree_status, stack, analyze, epoch, ...}`）。
    `dev-flow-prerun` は base 解決・worktree 作成/再利用・起点一致検証（独自コミット・未コミット変更の無い再利用 worktree は base へ fast-forward）・worktree 直下への
-   書き込み probe・`.devflow-tmp` の clean・deps install・issue analyze（`analyze-issue --contract` の
-   決定論 parse + Jev 有界判定。deps install と並列）・framework 検出を 1 コマンドで行う。
+   書き込み probe・`.devflow-tmp` の clean・issue analyze（`analyze-issue --contract` の
+   決定論 parse + Jev 有界判定）・framework 検出を 1 コマンドで行い、`ok:true` なら同じ JSON を
+   `<worktree>/.devflow-tmp/prerun-setup.json` にも書く。deps install はしない（手順2b）。
    `analyze` 段が失敗（GitHub 到達不能 / JSON 不正）しても prerun は `ok:true` のまま
    `analyze.ok:false` + `reason` を返し、`dev-flow-run` が needs_clarification（source=analyze_prerun）で
    人間へ返す。private repo 等で issue 本文を Jev（外部 API）に送りたくない場合は
@@ -56,7 +57,7 @@ worktree を作り `EnterWorktree` しておくことで probe が成立する�
 
    結果に応じて分岐する:
 
-   (a) `ok:true` → 手順3 へ進む。
+   (a) `ok:true` → 手順2b へ進む。
 
    (b) `worktree_status:"unwritable"`（`worktree_error` に `Permission denied` /
    `Operation not permitted` 等の permission 文言が載る）: 対象 repo の checkout 先が
@@ -69,14 +70,24 @@ worktree を作り `EnterWorktree` しておくことで probe が成立する�
    (c) それ以外の `ok:false`: `base_error` / `worktree_error` を verbatim で人間に報告して
    停止する（fallback で worktree を自前作成しない）。
 
-   `deps.ok:false` / `clean.ok:false` / `stack.error` / `analyze.ok:false` は advisory なので停止しない
+   `clean.ok:false` / `stack.error` / `analyze.ok:false` は advisory なので停止しない
    （Workflow 起動後、run 内で implementer への警告 / needs_clarification として扱われる）。
+
+2b. **deps install**: 手順2 とは**別の** Bash 呼び出しで、bare 名を先頭トークンにして
+   `ensure-worktree-deps --setup <prerun 出力の worktree>/.devflow-tmp/prerun-setup.json` を 1 回実行する
+   （前置形は使わない。手順2 のコマンドに `&&` / `;` / パイプで繋がない）。stdout の JSON 1 行が prerun の出力に
+   `deps`（`{ok, note}`）と `epoch_end`（install 完了後の時刻）を足した **setup** で、手順4 にこれを渡す。
+   install は依存の postinstall（対象 repo の任意コード）を走らせるので、sandbox 外で起動される
+   `dev-flow-prerun` の子にせず、この呼び出しで回す。`deps.ok:false` は advisory なので停止しない
+   （run 内で implementer への警告になる）。exit 2（stdout 空）は setup ファイルが読めない場合で、
+   stderr を verbatim で人間に報告して停止する。
 
 3. **EnterWorktree**: `EnterWorktree({ path: '<prerun 出力の worktree>' })` を実行する。
    bg 起動セッションからも成立する。
 
-4. **Workflow 起動**: `Workflow({ name: 'dev-flow:dev-flow-run', args: { issue: <N>, setup: <手順2の
-   stdout JSON を parse した object> } })`。`setup` は加工・要約・キー削除をせずそのまま渡す。
+4. **Workflow 起動**: `Workflow({ name: 'dev-flow:dev-flow-run', args: { issue: <N>, setup: <手順2bの
+   stdout JSON を parse した object> } })`。`setup` は加工・要約・キー削除をせずそのまま渡す（手順2 の
+   prerun 出力は `deps` / `epoch_end` を持たないので、渡すと `dev-flow-run` が即 throw する）。
    `args.base` は渡さない（base は `dev-flow-prerun` が解決済みで、渡すと `dev-flow-run` が
    即 throw する）。
 
@@ -193,7 +204,8 @@ worktree → in_flight / それ以外 → ready。ready は番号の昇順に貪
 
 それ以外の `needs_clarification` は、AskUserQuestion で人間に確認したうえで、
 **同じ worktree を保持したまま手順2 から**やり直す（`dev-flow-prerun` を同じ `--worktree` で
-再実行 → 新しい stdout JSON を `setup` として手順4 を起動。手順3 は既に入っているので不要）。
+再実行 → 手順2b の `ensure-worktree-deps --setup` を再実行 → その新しい stdout JSON を `setup` として
+手順4 を起動。手順3 は既に入っているので不要）。
 前回の `setup` object を使い回してはならない: isolation probe の token は `setup.epoch` 固定で、
 run 内に前回 probe ファイルの cleanup が無いため、同じ epoch で再起動すると Write-only agent が
 既存の `.devflow-tmp/.isolation-probe-<epoch>` へ上書きを試みて `written:false` → fail-closed

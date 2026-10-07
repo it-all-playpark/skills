@@ -460,6 +460,35 @@ EOF
   [ "$output" = "0" ]
 }
 
+# issue #868: テストは sandbox 内で走り、sandbox は repo によって .git/worktrees/*/index.lock を書かせない。
+# 既存の index.lock で「index.lock を作れない」状態を再現し、tracked impl の base 化が index に触れずに
+# 成立すること(HEAD の実行ビットへ戻すことも含む)と、index が書き換わらないことを pin する。
+@test "G7: index.lock を作れない状態でも tracked-modified impl(内容 + 実行ビット)の red→green が成立し index は不変" {
+  echo "export const ok = false;" > "$REPO/impl.mjs"
+  git -C "$REPO" add impl.mjs && git -C "$REPO" commit -q -m "add impl base"
+  echo "export const ok = true;" > "$REPO/impl.mjs"
+  chmod +x "$REPO/impl.mjs"
+  cat > "$REPO/feature.test.mjs" <<'EOF'
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { statSync } from 'node:fs';
+import { ok } from './impl.mjs';
+test('ok is true', () => { assert.equal(ok, true); });
+test('impl is executable', () => { assert.ok(statSync(new URL('./impl.mjs', import.meta.url)).mode & 0o100); });
+EOF
+  before_index="$(shasum "$REPO/.git/index")"
+  : > "$REPO/.git/index.lock"
+
+  run bash "$SCRIPT" "$REPO" "feature.test.mjs" "impl.mjs"
+  rm -f "$REPO/.git/index.lock"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"red":true'* ]]
+  [[ "$output" == *'"green":true'* ]]
+  [ "$(shasum "$REPO/.git/index")" = "$before_index" ]
+  grep -q "true" "$REPO/impl.mjs"
+  [ -x "$REPO/impl.mjs" ]
+}
+
 # -----------------------------------------------------------------------
 # H: vitest 系 runner(issue #656)
 # *.test.ts / *.test.tsx を層2で受理し、test_cmd 未設定時は npx vitest run、
