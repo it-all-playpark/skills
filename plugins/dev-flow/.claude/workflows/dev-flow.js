@@ -212,6 +212,13 @@ function validatePrerunSetup(raw, issue) {
   if (typeof raw.deps.note !== 'string') fail('deps.note', raw.deps.note);
   if (!isPlainObject(raw.stack)) fail('stack', raw.stack);
   if (!Array.isArray(raw.stack.frameworks)) fail('stack.frameworks', raw.stack.frameworks);
+  if (!Array.isArray(raw.stack.test_runners)) fail('stack.test_runners', raw.stack.test_runners);
+  const isStringList = (v) => Array.isArray(v) && v.every(isNonEmptyString);
+  raw.stack.test_runners.forEach((r, i) => {
+    if (!isPlainObject(r) || !isNonEmptyString(r.runner) || !isStringList(r.accept) || !isStringList(r.exclude) || typeof r.command !== 'string') {
+      fail(`stack.test_runners[${i}]`, r);
+    }
+  });
   if (!isPlainObject(raw.analyze)) fail('analyze', raw.analyze);
   if (typeof raw.analyze.ok !== 'boolean') fail('analyze.ok', raw.analyze.ok);
   if (raw.analyze.ok === false && !isNonEmptyString(raw.analyze.reason)) fail('analyze.reason', raw.analyze.reason);
@@ -221,6 +228,7 @@ function validatePrerunSetup(raw, issue) {
   const repo = isNonEmptyString(raw.repo) ? raw.repo : null;
   const branch = isNonEmptyString(raw.branch) ? raw.branch : `feature/issue-${issue}`;
   const frameworks = raw.stack.frameworks.filter((f) => typeof f === 'string');
+  const testRunners = raw.stack.test_runners.map((r) => ({ runner: r.runner, accept: [...r.accept], exclude: [...r.exclude], command: r.command }));
   const ciVerify = normalizeCiVerify(raw.ci_verify);
   const localVerify = normalizeLocalVerify(raw.local_verify);
 
@@ -232,6 +240,7 @@ function validatePrerunSetup(raw, issue) {
     repo,
     deps: { ok: raw.deps.ok, note: raw.deps.note },
     frameworks,
+    testRunners,
     analyze: raw.analyze,
     epoch: raw.epoch,
     epoch_end: raw.epoch_end,
@@ -298,6 +307,16 @@ function summarizePrerunDeps(deps) {
 
 function hasNextJs(frameworks) {
   return Array.isArray(frameworks) && frameworks.includes('next');
+}
+
+function testDiscoveryNote(testRunners) {
+  const head = 'test_discovery（repo の既存設定から決定論で判定したテストランナー。redgreen-verify は同じ判定で各ファイルのランナーを選んで red→green を実行し、'
+    + 'どの runner にも当たらないファイルはランナー未検出として拒否する）: ';
+  if (!Array.isArray(testRunners) || testRunners.length === 0) {
+    return head + 'ランナー検出なし — test_files を挙げず verified_by は "inspection" にせよ。\n';
+  }
+  return head + 'test_files は次のいずれかの runner の accept に一致し exclude に一致しないファイルに限れ（テストと実装の混在ファイルも挙げない）:\n'
+    + JSON.stringify(testRunners) + '\n';
 }
 // ==== END inline: _lib/prerun-setup.mjs ====
 
@@ -5522,6 +5541,7 @@ async function failOpenAgent(prompt, opts) {
 let WT // Setup で確定
 let DEPS_NOTE = '' // Setup(deps) で確定。install 失敗/未確認時のみ非空（fail-open）
 let TURBOPACK_NOTE = '' // Setup(stack) で確定。対象 repo が Next.js のときのみ Turbopack fallback 規約の本文、それ以外は空文字
+let TEST_DISCOVERY_NOTE = '' // Setup(stack) で確定。evaluator の test_files 受理条件（args.setup.stack.test_runners = detect-test-runner の判定）
 let DELETION_HINT_NOTE = '' // Implement で確定。ファイル削除を理由に guard_blocked で止まった run のみ GIT_RM_DELETION_HINT、それ以外は空文字
 
 // clock 給電: 専用 clock probe を start/end の 2 回のみに削減し、残り 9 mark は
@@ -5702,6 +5722,10 @@ TURBOPACK_NOTE = hasNextJs(PRERUN.frameworks) ? TURBOPACK_FALLBACK_CONVENTION : 
 log(hasNextJs(PRERUN.frameworks)
   ? 'Setup(stack): Next.js 検出 — Turbopack fallback 規約を implementer / evaluator prompt へ注入'
   : `Setup(stack): Next.js 非検出（frameworks=${JSON.stringify(PRERUN.frameworks)}）— Turbopack fallback 規約は注入しない`)
+// redgreen-verify と同じ判定元（detect-test-runner）の受理パターンを evaluator に渡す — 固定 glob を prompt に書くと
+// 判定と食い違い、受理されない test_files を申告して red→green 未成立（inspection 据え置き）になる
+TEST_DISCOVERY_NOTE = testDiscoveryNote(PRERUN.testRunners)
+log(`Setup(stack): test runners=${JSON.stringify(PRERUN.testRunners.map((r) => r.runner))}`)
 const branch = PRERUN.branch
 const setup = PRERUN
 // isolation probe は Setup 末尾の analyze ゲート判定の後（Implement 直前）で spawn する — needs_clarification は
@@ -6908,6 +6932,7 @@ async function execEvaluatePhase(state) {
       + `requirements.ac_actors は AC ごとの actor（agent: worktree 内で満たせる / human: 人手・staging・本番等の worktree 外作業 / ci: PR の CI の check が判定する — 判定せず、その AC に結び付く feedback も出すな）。agent の AC が satisfied:false なら verdict に依らず実装へ差し戻される。`
       + `agent の AC の未達の理由が実装ではなく実行環境（DB コンテナ・ブラウザ等が sandbox 内で動かない）なら、その ac_results に unreachable_env:true を付けよ（差し戻さず人間が実行して確かめる。コード上に未達の根拠があるなら付けるな）。`
       + `requirements.ac_observational が true の AC（観測型: 実行して出力・記録を観測しないと確かめられない）は、test で red→green を実証した場合（verified_by:test + test_files / impl_files）だけ達成扱いになる。\n`
+      + TEST_DISCOVERY_NOTE
       // PR 作成前なので、PR phase と同じ材料（plan / ledger / risk hits）で組んだ本文プレビューを渡す（AC checkbox は未確定）。
       + prBodyEvidenceInstr(buildPrBody({ issue: ISSUE, req, plan, ledger, testsurfHits, dangerHits: secHitsOf(state.risk) }))
       + (sameTreeAsValidate ? validateResultPromptBlock(state.val) : '')
