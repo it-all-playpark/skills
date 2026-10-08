@@ -3,7 +3,7 @@
 # dev-flow (26本) に分割される。plugin install 環境では skills が
 # plugin root 配下に入るため、絶対パス runtime 依存を断つ。
 #
-# 分割後もラッパーは plugin 境界を跨がない: 3 行目の target は
+# 分割後もラッパーは plugin 境界を跨がない: exec 行（dev-flow は 4 行目、他は 3 行目）の target は
 # `$(dirname "$0")/../<target>` の 1 段の `../` のみで、target 文字列自体に
 # `../` を含まない（含めば隣接 plugin へ越境することになる）。
 #
@@ -196,7 +196,10 @@ skills_target_for() {
     done <<< "$(core_expected_names)"
 }
 
-@test "dev-flow: 全wrapperの本文が3行exec形式に一致し対象ファイルが存在する" {
+# dev-flow の wrapper は exec の前に GIT_OPTIONAL_LOCKS=0 を export する（issue #868）。dev-flow の読み取り系 git
+# （status / diff 等）が index の opportunistic な書き戻しで index.lock を取りに行かないようにする — sandbox 内では
+# repo によって .git/worktrees/*/index.lock が書けない。必須ロック（commit / worktree add 等）には効かない。
+@test "dev-flow: 全wrapperの本文が4行exec形式（GIT_OPTIONAL_LOCKS=0 を export）に一致し対象ファイルが存在する" {
     plugin_root="$REPO_ROOT/plugins/dev-flow"
     while IFS= read -r name; do
         target="$(target_for "$name")"
@@ -208,11 +211,26 @@ skills_target_for() {
         [ "$line1" = "#!/usr/bin/env bash" ]
 
         line3=$(sed -n '3p' "$file")
-        expected_line3="exec $(devflow_interp_for "$name") \"\$(dirname \"\$0\")/../$target\" \"\$@\""
-        [ "$line3" = "$expected_line3" ]
+        [ "$line3" = "export GIT_OPTIONAL_LOCKS=0" ]
+
+        line4=$(sed -n '4p' "$file")
+        expected_line4="exec $(devflow_interp_for "$name") \"\$(dirname \"\$0\")/../$target\" \"\$@\""
+        [ "$line4" = "$expected_line4" ]
+        [ "$(wc -l < "$file" | tr -d ' ')" = "4" ]
 
         [ -f "$plugin_root/$target" ]
     done <<< "$(devflow_expected_names)"
+}
+
+@test "dev-flow: wrapper 経由で起動したスクリプトに GIT_OPTIONAL_LOCKS=0 が渡る" {
+    d="$(mktemp -d)"
+    TEST_TMP_DIRS+=("$d")
+    mkdir -p "$d/bin" "$d/_shared/scripts"
+    cp "$REPO_ROOT/plugins/dev-flow/bin/run-tests" "$d/bin/run-tests"
+    printf '%s\n' 'printf "%s" "${GIT_OPTIONAL_LOCKS:-unset}"' > "$d/_shared/scripts/run-tests.sh"
+    run env -u GIT_OPTIONAL_LOCKS bash "$d/bin/run-tests"
+    [ "$status" -eq 0 ]
+    [ "$output" = "0" ]
 }
 
 @test "全wrapperが plugin 境界を跨がない（target 文字列自体に ../ を含まない）" {

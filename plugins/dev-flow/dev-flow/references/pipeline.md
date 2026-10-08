@@ -9,10 +9,12 @@ plugin 相対パス。`tools/sync-inlines.mjs` のみ repo root。
 
 `/dev-flow <issue>` は skill wrapper (`dev-flow/SKILL.md`) が `dev-flow-prerun --issue <N>
 --worktree <path>`（top-level Bash、bare 形）で base 解決・worktree 作成/再利用・起点検証（独自コミット・未コミット変更の無い再利用 worktree は base へ fast-forward）・
-書き込み probe・`.devflow-tmp` clean・deps install・issue analyze（`prerun-analyze.sh`:
-`analyze-issue --contract` の決定論 parse + Jev 有界判定。deps install と並列）・framework 検出を
-1 コマンドで行い、
-`EnterWorktree({ path })` で worktree に入ってから stdout JSON を `Workflow({ args: { issue, setup } })`
+書き込み probe・`.devflow-tmp` clean・issue analyze（`prerun-analyze.sh`:
+`analyze-issue --contract` の決定論 parse + Jev 有界判定）・framework 検出を
+1 コマンドで行い、続けて別の Bash 呼び出し `ensure-worktree-deps --setup <worktree>/.devflow-tmp/prerun-setup.json`
+で deps install して prerun の出力に `deps` / `epoch_end` を足す（install は依存の postinstall = repo の任意コードを
+走らせるので、sandbox 外で起動される prerun の子にしない）。
+`EnterWorktree({ path })` で worktree に入ってから後者の stdout JSON を `Workflow({ args: { issue, setup } })`
 の `args.setup` に渡す（順序は EnterWorktree → Workflow。逆だと isolation probe が fail-closed abort する）。
 dev-flow-run の Setup phase は `args.setup` を fail-closed に検証し、その末尾の analyze ゲート（固有の
 phase は持たない — 純関数の検証とゲート判定だけで所要 ≒0 のため phase_durations に区間を持たない）は

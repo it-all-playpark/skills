@@ -5,6 +5,8 @@
 #   (test_files, impl_files) ペアを複数受け、引数順に 1 ペアずつ退避→red→復元→green を実行する。
 #   ペアごとの red 意味論は 1 ペア呼び出しと同一(当該ペアの impl だけを外す)。worktree を書き換えるため
 #   ペア間の並列化は不可で、Evaluate の全 AC を 1 呼び出しにまとめるのは spawn 数削減のため(issue #683)。
+# テストは repo の任意コードなので sandbox 内で走らせる(bin/redgreen-verify を excludedCommands に登録しない。
+# references/exec-proxy.md)。そのため index を書く git は使わない(write_head_blob)。
 # 受理する test_files glob: *.test.mjs / *.bats / *.test.ts / *.test.tsx
 # 出力(stdout, JSON 1行。results は引数順の配列。root を object にするのは workflow の agent() schema が
 # root object を要求するため — haiku proxy に配列を包み直させず verbatim 転写で済ませる):
@@ -54,7 +56,7 @@ VDELTA_TESTCMD_RAN=false
 # 全セッションで共有)には一切読み書きしない — 位置指定 pop は「自分が積んだ entry」を
 # 保証せず、他セッションの WIP を worktree に適用する(issue #630)。
 #   UNTRACKED_IMPLS: HEAD に無い(未追跡 / git add のみの新規) → cp -p 退避 + rm
-#   TRACKED_IMPLS  : HEAD にあり worktree と差分あり → cp -p 退避 + git checkout HEAD -- で base 化
+#   TRACKED_IMPLS  : HEAD にあり worktree と差分あり → cp -p 退避 + write_head_blob で base 化(index は書かない)
 #   UNCHANGED_IMPLS: HEAD と同一 → 退避対象外(base 化しても red 判定に寄与しない)
 TMPDIR_IMPL=""
 UNTRACKED_IMPLS=()
@@ -110,6 +112,20 @@ restore_saved() {
       if [ -f "$TMPDIR_IMPL/$f" ]; then mkdir -p "$(dirname "$f")"; cp -p "$TMPDIR_IMPL/$f" "$f"; fi
     done
   fi
+}
+
+# tracked impl 1 件を HEAD の内容と実行ビットに戻す。git checkout HEAD -- は index も書き換える(index.lock を
+# 取る)ので使わない — テストを sandbox 内で回すこのスクリプトからは、.git を書かせない repo(skills の live checkout。
+# 通常 dev-flow は skills-dev で動くので踏まない)で .git/worktrees/*/index.lock が書けない。blob の読み出し(filter 適用済み)と ls-tree は index に触れない。通常ファイル以外(symlink 等)は失敗扱い。
+write_head_blob() {
+  local f="$1" mode
+  mode="$(git ls-tree HEAD -- "$f" 2>/dev/null | awk '{print $1}')"
+  case "$mode" in
+    100644|100755) : ;;
+    *) return 1 ;;
+  esac
+  git cat-file --filters "HEAD:$f" > "$f" 2>/dev/null || return 1
+  if [ "$mode" = 100755 ]; then chmod +x "$f"; else chmod -x "$f"; fi
 }
 
 # --- cleanup / restore(二段構え: 各ペアの終端で本文から呼び、途中終了時は EXIT trap が現ペア分を戻す) ---
@@ -191,7 +207,7 @@ verify_pair() {
     UNTRACKED_SAVED=true
   fi
 
-  # 2. 変更あり tracked impl: 全件 cp -p 退避 → TRACKED_SAVED=true(以降の失敗は restore_impl が戻す) → git checkout HEAD -- で base 化
+  # 2. 変更あり tracked impl: 全件 cp -p 退避 → TRACKED_SAVED=true(以降の失敗は restore_impl が戻す) → HEAD の内容で base 化
   if [ "${#TRACKED_IMPLS[@]}" -gt 0 ]; then
     for f in "${TRACKED_IMPLS[@]}"; do
       mkdir -p "$TMPDIR_IMPL/$(dirname "$f")"
@@ -199,7 +215,7 @@ verify_pair() {
     done
     TRACKED_SAVED=true
     for f in "${TRACKED_IMPLS[@]}"; do
-      if ! git checkout HEAD -- "$f" >/dev/null 2>&1; then
+      if ! write_head_blob "$f"; then
         PAIR_JSON="\"red\":false,\"green\":false,\"reason\":\"base checkout failed: $f\""; return 2
       fi
     done

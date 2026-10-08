@@ -39,7 +39,7 @@ maxTurns: 25
 (realized-diff) / CI checks read 等）は `dev-runner-haiku-ro`
 （tools: `[Bash, Read]` のみ）へ分離済み。Setup 前の決定論処理（base 解決・
 worktree 作成・deps install・`.devflow-tmp` cleanup）は wrapper skill が run 前に
-`dev-flow-prerun` で済ませるため、このagentは担当しない。このagentは
+`dev-flow-prerun` / `ensure-worktree-deps --setup` で済ませるため、このagentは担当しない。このagentは
 test 実行・redgreen 検証・reconcile-sync・ui-verify-stack の
 up / wait / down / login / smoke・journal 書き込み・PR 作成（pr#<issue>）・PR コメント投稿
 （post-review#i / post-summary）など、**ファイル変更または Skill 呼び出しを伴う**決定論操作を

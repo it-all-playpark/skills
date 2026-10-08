@@ -122,6 +122,20 @@ test('[devflow-skill-wrapper] needs_clarification 再起動で setup を再利�
   );
 });
 
+// (m) issue #868: deps install は prerun（sandbox 外で起動される）の子ではなく、wrapper が別の Bash 呼び出しで
+//     `ensure-worktree-deps --setup <worktree>/.devflow-tmp/prerun-setup.json` として回し、その stdout を setup に渡す。
+//     needs_clarification の再起動でも同じ段を通す（prerun 出力は deps / epoch_end を持たない）。
+test('[devflow-skill-wrapper] deps install は手順2b の別 Bash 呼び出し（ensure-worktree-deps --setup）で回し、その stdout を setup に渡す', () => {
+  const cmd = 'ensure-worktree-deps --setup <prerun 出力の worktree>/.devflow-tmp/prerun-setup.json';
+  const step2b = src.slice(src.indexOf('2b. **deps install**'), src.indexOf('3. **EnterWorktree**'));
+  assert.ok(step2b.includes(cmd), `dev-flow/SKILL.md 手順2b に \`${cmd}\` が無い`);
+  assert.ok(step2b.includes('別の'), 'dev-flow/SKILL.md 手順2b に「手順2 とは別の Bash 呼び出し」の指示が無い');
+  const step4 = src.slice(src.indexOf('4. **Workflow 起動**'));
+  assert.ok(step4.includes('setup: <手順2bの'), 'dev-flow/SKILL.md 手順4 の setup が手順2b の stdout になっていない');
+  const section = src.slice(src.indexOf('## needs_clarification'));
+  assert.ok(section.includes('ensure-worktree-deps --setup'), 'needs_clarification 節の再起動手順に deps 段（手順2b）が無い');
+});
+
 // (j) args.base を渡す旧形式が残存していない（base は dev-flow-prerun が解決する）
 test('[devflow-skill-wrapper] Workflow args に旧形式 base を渡さない', () => {
   assert.ok(
