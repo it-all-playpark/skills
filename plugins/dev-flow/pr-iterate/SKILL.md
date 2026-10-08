@@ -30,7 +30,7 @@ haiku に `gh pr view` を転写させる pr-meta と isolation-cleanup を起�
 1. **prerun 実行**: launch dir（リポジトリルートか、その worktree）で Bash 1 コマンドとして
    `pr-iterate-prerun <PR>` を実行する（PR が cwd の repo と別なら `--repo owner/name` を付ける）。前置形
    （`cd X && ...` / `VAR=x ...` / `bash <path>` 等）は使わず、bare 名を先頭トークンにする。stdout の
-   JSON 1 行（`{ok, pr, worktree, head_ref, base_ref, head_sha, repo, epoch, worktree_status, worktree_removed, error?}`）
+   JSON 1 行（`{ok, pr, worktree, head_ref, base_ref, head_sha, repo, epoch, worktree_status, worktree_removed, skip_worktree, error?}`）
    をそのまま保持する。
 
    `pr-iterate-prerun` は PR の url / head / base / head の commit を `gh pr view` で取り、`git fetch origin` 後の
@@ -41,6 +41,9 @@ haiku に `gh pr view` を転写させる pr-meta と isolation-cleanup を起�
      どちらも無ければ既定候補）
    - 作った worktree に書き込めなければ remove して repo 外候補で 1 回だけ作り直す（`worktree_removed:true`）。
      wrapper 側で再実行する必要は無い
+   - 書けないパス（`.githooks` 等）を追跡する repo で full checkout が失敗したら、取り出せるパスだけを取り出し、
+     取り出せないパスに skip-worktree を付ける（`skip_worktree` に列挙）。再利用する worktree に未ステージの削除
+     （部分 checkout）が残っていれば `ok:false`
    - 再利用した worktree の HEAD が PR head より遅れていて未コミット変更が無ければ fast-forward する。
      PR head に無いコミットを持つ（未 push・分岐）か、遅れていて未コミット変更があれば `ok:false`
    - 前 run の `.devflow-tmp/.isolation-probe*` を除去する（`.devflow-tmp` の他のファイルは残す）

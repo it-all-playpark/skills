@@ -10,7 +10,9 @@
 
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { makePrIterateSandbox, runWorkflowCapture } from './test-helpers/vm-sandbox.mjs';
@@ -99,10 +101,13 @@ test('[D1][AC-3] fix applied:true + commit-ensure dirty:false -> commit-ensure#1
   // sandbox 内から書けない）ので、push は remote と HEAD を明示し、push 済みの判定は origin/<head_ref> と比べる
   const gitCmds = commitEnsurePrompt.match(/`git [^`]*`/g) ?? [];
   assert.ok(
-    gitCmds.includes('`git add -A`') && commitEnsurePrompt.includes('`git commit -m "fix(pr-5)')
+    gitCmds.includes('`git add --ignore-removal .`') && commitEnsurePrompt.includes('`git commit -m "fix(pr-5)')
       && gitCmds.includes('`git push origin HEAD`'),
-    `commit-ensure#1 の prompt は bare \`git add -A\` / \`git commit\` / \`git push origin HEAD\` を含むべき: ${gitCmds.join(' | ')}`,
+    `commit-ensure#1 の prompt は bare \`git add --ignore-removal .\` / \`git commit\` / \`git push origin HEAD\` を含むべき: ${gitCmds.join(' | ')}`,
   );
+  // 未ステージの削除を stage する add（-A / --all / -u 等）を使わない（issue #875）
+  assert.deepEqual(gitCmds.filter((c) => c.startsWith('`git add')), ['`git add --ignore-removal .`'],
+    `commit-ensure#1 の add は \`git add --ignore-removal .\` だけ: ${gitCmds.join(' | ')}`);
   assert.deepEqual([...new Set(gitCmds.filter((c) => c.includes(' push')))], ['`git push origin HEAD`'],
     `commit-ensure#1 の push は \`git push origin HEAD\` だけ（-u を付けない）: ${gitCmds.join(' | ')}`);
   assert.ok(
@@ -286,7 +291,7 @@ test('[D8][#742 AC-3] commit-ensure prompt: 手順 1 / 3 の dirty 判定が por
     `手順 1 は porcelain 行 0 行で dirty:false とすべき: ${s1}`,
   );
   assert.ok(
-    /porcelain 行が 1 行以上/.test(s2) && s2.includes('dirty:true') && s2.includes('`git add -A`'),
+    /porcelain 行が 1 行以上/.test(s2) && s2.includes('dirty:true') && s2.includes('`git add --ignore-removal .`'),
     `手順 2 は porcelain 行 1 行以上で dirty:true とし commit/push で回収すべき: ${s2}`,
   );
   assert.ok(
@@ -352,4 +357,41 @@ test('[D11][#742 AC-3] 終端の worktree-dirty-check prompt も porcelain 行�
   const prompt = agentCalls.find((c) => c.label === 'worktree-dirty-check')?.prompt ?? '';
   assertPorcelainRule(prompt, 'worktree-dirty-check');
   assert.ok(prompt.includes('<porcelain 行の行数>'), `files は porcelain 行の行数を返すべき: ${prompt.slice(0, 600)}`);
+});
+
+// ---- D12 (issue #875): 未ステージの削除がある worktree で commit-ensure が全削除を commit しない ----
+// 部分 checkout の worktree（取り出していないパスが ` D` で残る）で `git add -A` を走らせると、PR branch に
+// 全削除の commit が push される。手順 2 の add / commit を実 git で走らせ、削除が stage されず手順 3 の status に
+// porcelain 行が残る（committed:false → D10 の fix_failed）ことを確かめる。
+test('[D12][#875 AC-3] 未ステージの削除がある worktree: 手順 2 の add / commit は削除を commit せず、status に porcelain 行が残る', async () => {
+  const agentCalls = [];
+  const majorIssue = { severity: 'major', topic: 't1', file: 'a.ts', description: 'd1', suggestion: 's1' };
+  const reviewerStub = (label) => (label === 'review#1'
+    ? { decision: 'request-changes', issues: [majorIssue], summary: 'ng' }
+    : { decision: 'approve', issues: [], summary: 'ok' });
+  const { error } = await runPrIterate(makeSandbox(buildAgentStub({ reviewerStub, agentCalls })));
+  assertNoSandboxCrash(error);
+  if (error) assert.fail(`予期しない error: ${error.name}: ${error.message}`);
+  const s2 = stepLine(agentCalls.find((c) => c.label === 'commit-ensure#1')?.prompt ?? '', 2);
+  const cmds = [...s2.matchAll(/`(git (?:add|commit)[^`]*)`/g)].map((m) => m[1]);
+  assert.equal(cmds.length, 2, `手順 2 は add と commit を 1 つずつ持つべき: ${s2}`);
+
+  const dir = mkdtempSync(join(tmpdir(), 'commit-ensure-'));
+  const env = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
+  const sh = (cmd) => execFileSync('sh', ['-c', cmd], { cwd: dir, env, encoding: 'utf8' });
+  try {
+    sh('git init -q && git config user.name t && git config user.email t@example.com');
+    writeFileSync(join(dir, 'kept.txt'), 'kept\n');
+    writeFileSync(join(dir, 'fixed.txt'), 'before\n');
+    sh('git add -A && git commit -q -m init');
+    unlinkSync(join(dir, 'kept.txt'));               // 取り出していないパス（未ステージの削除）
+    writeFileSync(join(dir, 'fixed.txt'), 'after\n'); // fix の未コミット変更
+    for (const cmd of cmds) sh(cmd);
+
+    assert.ok(sh('git ls-tree -r --name-only HEAD').split('\n').includes('kept.txt'), '未ステージの削除が commit された');
+    assert.equal(sh('git show HEAD:fixed.txt'), 'after\n', 'fix の変更は commit で回収されるべき');
+    assert.equal(sh('git status --porcelain'), ' D kept.txt\n', '削除は未ステージのまま status に残るべき（手順 3 で dirty → committed:false）');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

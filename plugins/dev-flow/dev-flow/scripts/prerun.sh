@@ -10,6 +10,8 @@
 # 起点(base)一致検証 + 独自コミット無しの再利用 worktree を base へ fast-forward + 書き込み probe →.devflow-tmp の git clean -fdx → analyze
 # （issue 取得 + contract parse + Jev 有界判定。prerun-analyze.sh。detect-stack と並列）‖
 # detect-stack。各段は独立に ok/error を報告し、後続段を巻き込まない。
+# worktree 作成で取り出せないパスには skip-worktree を付け（出力の skip_worktree）、未ステージの削除が残る再利用 worktree は
+# ok:false で止める（_shared/scripts/worktree-checkout.sh）。
 #
 # deps install はここで行わない（issue #868）。install は対象 repo の依存の postinstall（任意コード）を走らせる。
 # このスクリプトは repo の任意コードを実行しない — install は wrapper が別の Bash 呼び出しで回す。
@@ -31,6 +33,8 @@ source "$(dirname "$_CORE_BIN")/../_lib/common.sh"
 has_jq || { echo "jq is required" >&2; exit 127; }
 
 PLUGIN_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=../../_shared/scripts/worktree-checkout.sh
+source "$PLUGIN_ROOT/_shared/scripts/worktree-checkout.sh"
 
 usage() {
     echo "Usage: dev-flow-prerun --issue <N> --worktree <abs-path> [--base <ref>]" >&2
@@ -281,7 +285,9 @@ if [[ "$BASE_OK" == true ]]; then
             # 別 branch を checkout した worktree を ok:true で返すと存在しない branch を指すので fail-closed
             worktree_error="既存 worktree の checkout branch が ${BRANCH} でない（実際: ${BRANCH_FOUND}）。$(RECOVERY_STEPS_FOR "$WT" "$base")"
         else
-            if validate_start_point "$BRANCH_FOUND" && fast_forward_reused; then
+            if validate_start_point "$BRANCH_FOUND" \
+                && worktree_error="$(partial_checkout_error "$WT")" \
+                && fast_forward_reused; then
                 SEG2_CORE_OK=true
             fi
         fi
@@ -294,7 +300,7 @@ if [[ "$BASE_OK" == true ]]; then
             worktree_status="error"
             worktree_error="path exists but is not a registered git worktree: ${WT}"
         elif git -C "$ROOT" show-ref --verify --quiet "refs/heads/${BRANCH}"; then
-            if ADD_ERR="$(git -C "$ROOT" worktree add "$WT" "$BRANCH" 2>&1)"; then
+            if worktree_add "$ROOT" "$WT" "$BRANCH" ""; then
                 worktree_status="created"
                 CREATED_THIS_CALL=true
                 if validate_start_point "$BRANCH"; then
@@ -302,16 +308,16 @@ if [[ "$BASE_OK" == true ]]; then
                 fi
             else
                 worktree_status="error"
-                worktree_error="$ADD_ERR"
+                worktree_error="$WT_ADD_ERR"
             fi
         else
-            if ADD_ERR="$(git -C "$ROOT" worktree add --no-track -b "$BRANCH" "$WT" "origin/${base}" 2>&1)"; then
+            if worktree_add "$ROOT" "$WT" "$BRANCH" "origin/${base}"; then
                 worktree_status="created"
                 CREATED_THIS_CALL=true
                 SEG2_CORE_OK=true
             else
                 worktree_status="error"
-                worktree_error="$ADD_ERR"
+                worktree_error="$WT_ADD_ERR"
             fi
         fi
     fi
@@ -478,6 +484,7 @@ OUT_JSON="$(jq -n \
     --argjson analyze "$analyze_json" \
     --argjson ci_verify "$ci_verify_json" \
     --argjson local_verify "$local_verify_json" \
+    --argjson skip_worktree "$(skip_worktree_json)" \
     --argjson epoch "$epoch" \
     --arg plugin_commit "$plugin_commit" \
     '
@@ -487,7 +494,7 @@ OUT_JSON="$(jq -n \
     + {worktree: $worktree, branch: $branch}
     + (if $have_head then {head: $head} else {} end)
     + (if $have_worktree_error then {worktree_error: $worktree_error} else {} end)
-    + {worktree_status: $worktree_status, worktree_removed: $worktree_removed}
+    + {worktree_status: $worktree_status, worktree_removed: $worktree_removed, skip_worktree: $skip_worktree}
     + {clean: $clean, stack: $stack, analyze: $analyze, ci_verify: $ci_verify, local_verify: $local_verify, epoch: $epoch}
     + {plugin_commit: (if ($plugin_commit | test("^[0-9a-f]{12}$")) then $plugin_commit else null end)}
     ')"

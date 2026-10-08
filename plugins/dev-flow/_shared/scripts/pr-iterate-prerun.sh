@@ -10,7 +10,8 @@
 #
 # 行う処理: gh pr view で url / headRefName / baseRefName / headRefOid を取得 → git fetch origin →
 # origin/<head> が PR の headRefOid と一致することを検証 → PR head の worktree を用意（既存なら再利用、
-# 無ければ origin/<head> から作成）→ worktree の HEAD を PR head に合わせる（遅れていて未コミット変更が
+# 無ければ origin/<head> から作成。作成時は取り出せないパスに skip-worktree を付け、再利用時は未ステージの
+# 削除が残っていれば fail-closed — worktree-checkout.sh）→ worktree の HEAD を PR head に合わせる（遅れていて未コミット変更が
 # 無ければ fast-forward、独自コミット・分岐があれば fail-closed）→ 書き込み probe →
 # `.devflow-tmp/.isolation-probe*` の git clean（前 run の probe 残置物。workflow の isolation-cleanup の代替）。
 #
@@ -23,8 +24,9 @@
 # 再利用した worktree が書けない場合は退避しない（branch がそこで checkout 済み）— ok:false で人間に返す。
 #
 # Output (stdout, JSON 1 行):
-#   {ok, pr, worktree, head_ref, base_ref, head_sha, repo, epoch, worktree_status, worktree_removed, error?}
+#   {ok, pr, worktree, head_ref, base_ref, head_sha, repo, epoch, worktree_status, worktree_removed, skip_worktree, error?}
 #   worktree_status: created / reused / unwritable / error / skipped
+#   skip_worktree: 作成時に取り出せず skip-worktree を付けたパス（worktree-checkout.sh。full checkout できれば []）
 #   不明な値は null。ok:false でも exit 0（引数不正のみ exit 2、stdout 空）。
 #
 # GitHub I/O は `gh pr view`（読み取り）のみ。push / comment / worktree の削除（この呼び出しで作った
@@ -36,6 +38,9 @@
 set -euo pipefail
 
 command -v jq >/dev/null 2>&1 || { echo "jq is required" >&2; exit 127; }
+
+# shellcheck source=worktree-checkout.sh
+source "$(dirname "${BASH_SOURCE[0]}")/worktree-checkout.sh"
 
 usage() {
     echo "Usage: pr-iterate-prerun <PR> [--repo owner/name]" >&2
@@ -99,12 +104,13 @@ emit() {
         --argjson epoch "$epoch" \
         --arg worktree_status "$worktree_status" \
         --argjson worktree_removed "$worktree_removed" \
+        --argjson skip_worktree "$(skip_worktree_json)" \
         --arg error "$error" \
         '
         def nz: if . == "" then null else . end;
         {ok: $ok, pr: $pr, worktree: ($worktree | nz), head_ref: ($head_ref | nz), base_ref: ($base_ref | nz),
          head_sha: ($head_sha | nz), repo: ($repo | nz), epoch: $epoch,
-         worktree_status: $worktree_status, worktree_removed: $worktree_removed}
+         worktree_status: $worktree_status, worktree_removed: $worktree_removed, skip_worktree: $skip_worktree}
         + (if $error == "" then {} else {error: $error} end)
         '
     exit 0
@@ -251,16 +257,12 @@ align_head() {
 
 # 未登録パスに worktree を作る。成功で 0（WT は呼び出し側が設定済み）
 create_at() {
-    local wt="$1" add_err
+    local wt="$1"
     if [[ -e "$wt" ]]; then
         error="path exists but is not a registered git worktree: ${wt}"
         return 1
     fi
-    if git -C "$ROOT" show-ref --verify --quiet "refs/heads/${head_ref}"; then
-        add_err="$(git -C "$ROOT" worktree add "$wt" "$head_ref" 2>&1)" || { error="$add_err"; return 1; }
-    else
-        add_err="$(git -C "$ROOT" worktree add --no-track -b "$head_ref" "$wt" "origin/${head_ref}" 2>&1)" || { error="$add_err"; return 1; }
-    fi
+    worktree_add "$ROOT" "$wt" "$head_ref" "origin/${head_ref}" || { error="$WT_ADD_ERR"; return 1; }
     return 0
 }
 
@@ -271,6 +273,7 @@ if [[ -n "$REUSE_PATH" ]]; then
         worktree_status="unwritable"
         fail "${PROBE_ERR}（再利用した worktree は ${head_ref} を checkout 済みのため退避しない。git worktree remove ${WT} で削除してから再実行する）"
     fi
+    PARTIAL_ERR="$(partial_checkout_error "$WT")" || fail "$PARTIAL_ERR"
     align_head "$WT" || fail "$error"
 else
     if [[ -e "$DEFAULT_WT" ]]; then

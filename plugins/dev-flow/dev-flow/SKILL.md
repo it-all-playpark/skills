@@ -42,6 +42,9 @@ worktree を作り `EnterWorktree` しておくことで probe が成立する�
    書き込み probe・`.devflow-tmp` の clean・issue analyze（`analyze-issue --contract` の
    決定論 parse + Jev 有界判定）・framework 検出を 1 コマンドで行い、`ok:true` なら同じ JSON を
    `<worktree>/.devflow-tmp/prerun-setup.json` にも書く。deps install はしない（手順2b）。
+   書けないパス（`.githooks` 等）を追跡する repo で full checkout が失敗したら、取り出せるパスだけを取り出して
+   取り出せないパスに skip-worktree を付ける（`skip_worktree` に列挙）。再利用する worktree に未ステージの削除
+   （部分 checkout）が残っていれば `ok:false`（手順 (c)）。
    `analyze` 段が失敗（GitHub 到達不能 / JSON 不正）しても prerun は `ok:true` のまま
    `analyze.ok:false` + `reason` を返し、`dev-flow-run` が needs_clarification（source=analyze_prerun）で
    人間へ返す。private repo 等で issue 本文を Jev（外部 API）に送りたくない場合は
