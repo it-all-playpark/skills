@@ -84,6 +84,9 @@ make_issue_fixture() {
     echo "$output" | jq -e '(.epoch | type) == "number" and (.epoch == (.epoch | floor))'
     echo "$output" | jq -e '.clean.ok == true'
     echo "$output" | jq -e '.stack.frameworks == []'
+    # 書けないパスが無ければ full checkout で、skip-worktree を付けない
+    echo "$output" | jq -e '.skip_worktree == []'
+    [ -z "$(git -C "$WT" ls-files -v | grep '^S' || true)" ]
 }
 
 # ---- (1c) 起動元 repo の .git/config に書かない ----
@@ -370,6 +373,62 @@ advance_origin_dev() {
     [ "$(git -C "$WT" rev-parse HEAD)" = "$old_head" ]
     echo "$output" | jq -e --arg h "$old_head" '.head == $h'
     [ -f "$WT/wip.txt" ]
+}
+
+# ---- (9e-f) 書けないパスを追跡する repo（issue #875）----
+# sandbox は `.githooks` の作成を EPERM で拒み、git は full checkout を fatal で中断して作りかけの worktree を片付ける。
+# テストでは同じ「git が .githooks 配下を取り出せない」状態を、失敗する required smudge filter で作る
+# （attributes は .git/info に置くので全 worktree に効き、main checkout の main には .githooks が無い）。
+track_unwritable_githooks() {
+    git -C "$SEED" checkout -q dev
+    mkdir -p "$SEED/.githooks"
+    echo "#!/bin/sh" > "$SEED/.githooks/pre-commit"
+    echo "#!/bin/sh" > "$SEED/.githooks/pre-push"
+    git -C "$SEED" add .githooks
+    git -C "$SEED" commit -q -m "track githooks"
+    git -C "$SEED" push -q origin dev
+    echo '.githooks/** filter=deny' >"$ROOT/.git/info/attributes"
+    git -C "$ROOT" config filter.deny.smudge false
+    git -C "$ROOT" config filter.deny.clean cat
+    git -C "$ROOT" config filter.deny.required true
+}
+
+@test "(9e) .githooks を取り出せない repo -> ok:true で作成し、取り出せないパスに skip-worktree を付けて status が空" {
+    track_unwritable_githooks
+    cd "$ROOT"
+    git fetch -q origin
+    run git worktree add -q --detach "$BATS_TEST_TMPDIR/full" origin/dev
+    [ "$status" -ne 0 ]
+
+    run --separate-stderr "$SCRIPT" --issue 1 --worktree "$WT"
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.ok == true and .worktree_status == "created"'
+    echo "$output" | jq -e '.skip_worktree == [".githooks/pre-commit", ".githooks/pre-push"]'
+    echo "$output" | jq -e --arg h "$(git -C "$ROOT" rev-parse origin/dev)" '.head == $h'
+    [ "$(git -C "$WT" rev-parse --abbrev-ref HEAD)" = "feature/issue-1" ]
+    [ -f "$WT/README.md" ]
+    # .devflow-tmp（prerun-setup.json）は fixture では ignore されていないので除いて見る
+    [ -z "$(git -C "$WT" status --porcelain -- . ':(exclude).devflow-tmp')" ]
+    [ -z "$(git -C "$WT" add -A --dry-run -- . ':(exclude).devflow-tmp')" ]
+
+    # 作り直した worktree の再利用は ok:true（skip-worktree のパスは未ステージの削除に数えない）
+    run --separate-stderr "$SCRIPT" --issue 1 --worktree "$WT"
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.ok == true and .worktree_status == "reused" and .skip_worktree == []'
+}
+
+@test "(9f) 部分 checkout の worktree を再利用 -> ok:false、worktree を書き換えない" {
+    cd "$ROOT"
+    git fetch -q origin
+    git worktree add -q --no-checkout --no-track -b feature/issue-1 "$WT" origin/dev
+    git -C "$WT" read-tree HEAD
+
+    run --separate-stderr "$SCRIPT" --issue 1 --worktree "$WT"
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.ok == false and .worktree_status == "reused"'
+    echo "$output" | jq -e '.worktree_error | test("未ステージの削除が 1 件") and test("README.md") and test("git worktree remove")'
+    [ "$(git -C "$WT" status --porcelain --untracked-files=no)" = " D README.md" ]
+    [ -z "$(git -C "$WT" ls-files -v | grep '^S' || true)" ]
 }
 
 # ---- (10) package.json (next, lockfile無し) -> stack検出 ----
