@@ -7,7 +7,9 @@
 #   ペア間の並列化は不可で、Evaluate の全 AC を 1 呼び出しにまとめるのは spawn 数削減のため(issue #683)。
 # テストは repo の任意コードなので sandbox 内で走らせる(bin/redgreen-verify を excludedCommands に登録しない。
 # references/exec-proxy.md)。そのため index を書く git は使わない(write_head_blob)。
-# 受理する test_files glob: *.test.mjs / *.bats / *.test.ts / *.test.tsx
+# test_files の受理判定と実行コマンドは detect-test-runner.sh(repo に既にある設定ファイルからランナーを判定)が決める。
+# ランナーが判定できないファイルを含むペアは reason "non-test file declared (ランナー未検出): <file>" の入力エラー(昇格しない)。
+# .claude/redgreen.conf の test_cmd は JS のテストファイル(vitest / jest / node と判定したもの)にだけ掛ける。
 # 出力(stdout, JSON 1行。results は引数順の配列。root を object にするのは workflow の agent() schema が
 # root object を要求するため — haiku proxy に配列を包み直させず verbatim 転写で済ませる):
 #   {"results":[{"index":N,"red":bool,"green":bool,"reason":"...","testcmd_ran":bool[,"headdiff":{new,modified,unchanged,total}][,"verdict":{...}]}, ...]}
@@ -30,7 +32,9 @@ if [ "$#" -lt 2 ] || [ $(( $# % 2 )) -ne 0 ]; then
   echo '{"results":[]}'; exit 2
 fi
 
-PREBUILD="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/workspace-prebuild.sh"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PREBUILD="$SCRIPT_DIR/workspace-prebuild.sh"
+DETECT="$SCRIPT_DIR/detect-test-runner.sh"
 
 cd "$WT" 2>/dev/null || { echo "cd failed: $WT" >&2; echo '{"results":[]}'; exit 2; }
 
@@ -47,6 +51,10 @@ fi
 # --- ペア単位の状態(verify_pair の冒頭で毎回リセットする) ---
 TESTS=()
 IMPLS=()
+# detect-test-runner.sh が当該ペアの test_files について返した JS ファイル(test_cmd の対象)と実行コマンド
+# (1 要素 = argv を 1 行 1 要素で連結した文字列。先頭行は runner 名)
+JS_TESTS=()
+RUN_CMDS=()
 # verdict_cmd は当該ペアで test_cmd(vdelta run) 経路が実際に実行された
 # 場合のみ起動する。bats-only 等 test_cmd 未実行のペアでは RunStore に
 # 当該 red/green の run pair が存在せず、無条件実行すると spurious な
@@ -69,32 +77,31 @@ PAIR_JSON=""
 BUILD_FAILURE=""
 
 run_tests() {
-  local rc=0 node_tests=() vitest_tests=() bats_tests=() cmd_tests=() pb_out
+  local rc=0 pb_out c runner argv a skip_js=false
   BUILD_FAILURE=""
   if ! pb_out="$(bash "$PREBUILD" "$PWD" 2>/dev/null)"; then
     BUILD_FAILURE="$(jq -r '.reason // empty' <<< "$pb_out" 2>/dev/null)"
     [ -n "$BUILD_FAILURE" ] || BUILD_FAILURE="workspace build failed"
     return 1
   fi
-  for t in "${TESTS[@]}"; do
-    case "$t" in
-      *.test.mjs) node_tests+=("$t"); cmd_tests+=("$t") ;;
-      *.test.ts|*.test.tsx) vitest_tests+=("$t"); cmd_tests+=("$t") ;;
-      *.bats) bats_tests+=("$t") ;;
-    esac
-  done
-  if [ -n "$RG_TEST_CMD" ] && [ "${#cmd_tests[@]}" -gt 0 ]; then
+  if [ -n "$RG_TEST_CMD" ] && [ "${#JS_TESTS[@]}" -gt 0 ]; then
     local _tc=()
     read -r -a _tc <<< "$RG_TEST_CMD"
-    "${_tc[@]}" "${cmd_tests[@]}" >/dev/null 2>&1 || rc=1
+    "${_tc[@]}" "${JS_TESTS[@]}" >/dev/null 2>&1 || rc=1
     # test_cmd(vdelta run) 経路を実行した事実を記録する(rc とは独立。
     # red phase の失敗は期待値であり test_cmd 未実行を意味しない)。
     VDELTA_TESTCMD_RAN=true
-  else
-    if [ "${#node_tests[@]}" -gt 0 ]; then node --test "${node_tests[@]}" >/dev/null 2>&1 || rc=1; fi
-    if [ "${#vitest_tests[@]}" -gt 0 ]; then npx vitest run "${vitest_tests[@]}" >/dev/null 2>&1 || rc=1; fi
+    skip_js=true
   fi
-  if [ "${#bats_tests[@]}" -gt 0 ]; then bats "${bats_tests[@]}" >/dev/null 2>&1 || rc=1; fi
+  if [ "${#RUN_CMDS[@]}" -gt 0 ]; then
+    for c in "${RUN_CMDS[@]}"; do
+      runner="${c%%$'\n'*}"
+      case "$runner" in vitest|jest|node) [ "$skip_js" = true ] && continue ;; esac
+      argv=()
+      while IFS= read -r a; do argv+=("$a"); done <<< "${c#*$'\n'}"
+      "${argv[@]}" >/dev/null 2>&1 || rc=1
+    done
+  fi
   return $rc
 }
 
@@ -141,7 +148,7 @@ trap restore_impl EXIT
 # 退避した impl の復元は呼び出し側の restore_impl が担う(return 経路を問わず必ず呼ぶ)。
 verify_pair() {
   local test_csv="$1" impl_csv="$2" t i f
-  TESTS=(); IMPLS=()
+  TESTS=(); IMPLS=(); JS_TESTS=(); RUN_CMDS=()
   UNTRACKED_IMPLS=(); TRACKED_IMPLS=(); UNCHANGED_IMPLS=()
   UNTRACKED_SAVED=false; TRACKED_SAVED=false
   VDELTA_TESTCMD_RAN=false
@@ -150,14 +157,23 @@ verify_pair() {
   IFS=',' read -r -a TESTS <<< "$test_csv"
   IFS=',' read -r -a IMPLS <<< "$impl_csv"
 
-  # 層2: runner glob で test_files を検証(*.test.mjs / *.bats / *.test.ts / *.test.tsx 以外は拒否。
-  # playwright の *.spec.ts は scope 外で拒否)
-  for t in "${TESTS[@]}"; do
-    case "$t" in
-      *.test.mjs|*.bats|*.test.ts|*.test.tsx) : ;;
-      *) PAIR_JSON="\"red\":false,\"green\":false,\"reason\":\"non-test file declared: $t\""; return 2 ;;
-    esac
-  done
+  # 層2: test_files ごとのランナーを repo の既存設定から判定する(detect-test-runner.sh)。ランナー未検出の
+  # ファイル(playwright repo の *.spec.* を含む)が 1 件でもあれば拒否する
+  local det unknown c
+  if ! det="$(bash "$DETECT" "$PWD" "${TESTS[@]}" 2>/dev/null)" || ! jq -e '.files and .commands' >/dev/null 2>&1 <<< "$det"; then
+    PAIR_JSON="\"red\":false,\"green\":false,\"reason\":\"test runner detection failed\""; return 2
+  fi
+  if jq -e 'any(.files[]; .runner == null)' >/dev/null <<< "$det"; then
+    unknown="$(jq -r 'first(.files[] | select(.runner == null) | .file)' <<< "$det")"
+    PAIR_JSON="\"red\":false,\"green\":false,\"reason\":\"non-test file declared (ランナー未検出): $unknown\""; return 2
+  fi
+  # 1 行 1 要素の出力を here-string で読む(process substitution は sandbox で /dev/fd が塞がれる)
+  while IFS= read -r t; do
+    [ -n "$t" ] && JS_TESTS+=("$t")
+  done <<< "$(jq -r '.files[] | select(.runner == "vitest" or .runner == "jest" or .runner == "node") | .file' <<< "$det")"
+  while IFS= read -r c; do
+    [ -n "$c" ] && RUN_CMDS+=("$(jq -r '.runner, .argv[]' <<< "$c")")
+  done <<< "$(jq -c '.commands[]' <<< "$det")"
   # 層4: test と impl の混在(同一ファイル)は曖昧 → 昇格しない
   for t in "${TESTS[@]}"; do
     for i in "${IMPLS[@]}"; do

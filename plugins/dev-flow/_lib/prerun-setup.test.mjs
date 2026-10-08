@@ -11,7 +11,12 @@ import {
   hasNextJs,
   normalizeCiVerify,
   normalizeLocalVerify,
+  testDiscoveryNote,
 } from './prerun-setup.mjs';
+
+// detect-test-runner.sh の runners 要素と同形
+const PYTEST_RUNNER = { runner: 'pytest', accept: ['test_*.py', '*_test.py'], exclude: [], command: 'uv run pytest <files>' };
+const BATS_RUNNER = { runner: 'bats', accept: ['*.bats'], exclude: [], command: 'bats <files>' };
 
 function validRaw(overrides = {}) {
   return {
@@ -26,7 +31,7 @@ function validRaw(overrides = {}) {
     worktree_status: 'ok',
     clean: { ok: true },
     deps: { ok: true, note: 'npm:installed' },
-    stack: { frameworks: ['next', 'react'] },
+    stack: { frameworks: ['next', 'react'], test_runners: [PYTEST_RUNNER, BATS_RUNNER] },
     analyze: validAnalyze(),
     epoch: 1787000000,
     epoch_end: 1787000060,
@@ -51,7 +56,7 @@ function validAnalyze(overrides = {}) {
 // ── validatePrerunSetup: 正常系 ──────────────────────────────────────────────
 
 test('validatePrerunSetup: 正常な setup は各値をそのまま返し frameworks は string のみに絞る', () => {
-  const raw = validRaw({ stack: { frameworks: ['next', 42, 'react', null] } });
+  const raw = validRaw({ stack: { frameworks: ['next', 42, 'react', null], test_runners: [PYTEST_RUNNER, BATS_RUNNER] } });
   const result = validatePrerunSetup(raw, 641);
   assert.equal(result.base, 'main');
   assert.equal(result.worktree, '/repo/.claude/worktrees/df-641');
@@ -60,6 +65,7 @@ test('validatePrerunSetup: 正常な setup は各値をそのまま返し framew
   assert.equal(result.repo, 'it-all-playpark/skills');
   assert.deepEqual(result.deps, { ok: true, note: 'npm:installed' });
   assert.deepEqual(result.frameworks, ['next', 'react']);
+  assert.deepEqual(result.testRunners, [PYTEST_RUNNER, BATS_RUNNER]);
   assert.equal(result.epoch, 1787000000);
   assert.equal(result.epoch_end, 1787000060);
   assert.deepEqual(result.analyze, validAnalyze());
@@ -138,6 +144,9 @@ const REQUIRED_KEY_CASES = [
   ['deps.ok が非 boolean', { deps: { ok: 'true', note: 'x' } }, 'deps.ok'],
   ['deps.note が非 string', { deps: { ok: true, note: 123 } }, 'deps.note'],
   ['stack.frameworks が非配列', { stack: { frameworks: 'next' } }, 'stack.frameworks'],
+  ['stack.test_runners 欠落', { stack: { frameworks: [] } }, 'stack.test_runners'],
+  ['stack.test_runners の要素に accept が無い', { stack: { frameworks: [], test_runners: [{ runner: 'pytest', exclude: [], command: 'pytest <files>' }] } }, 'stack.test_runners[0]'],
+  ['stack.test_runners の要素の runner が空', { stack: { frameworks: [], test_runners: [BATS_RUNNER, { ...PYTEST_RUNNER, runner: '' }] } }, 'stack.test_runners[1]'],
   ['epoch が 0', { epoch: 0 }, 'epoch'],
   ['epoch が非整数(12.5)', { epoch: 12.5 }, 'epoch'],
   ['epoch が文字列("1000")', { epoch: '1000' }, 'epoch'],
@@ -152,7 +161,7 @@ test.each(REQUIRED_KEY_CASES)('validatePrerunSetup: %s は「必須キーが欠�
     if (v === DELETE) delete raw[k];
     else raw[k] = v;
   }
-  const escaped = key.replace(/\./g, '\\.');
+  const escaped = key.replace(/[.[\]]/g, '\\$&');
   assert.throws(() => validatePrerunSetup(raw, 641), new RegExp(`必須キーが欠落/型不正: ${escaped}`));
 });
 
@@ -300,6 +309,23 @@ test.each([
   ['undefined は false', undefined, false],
 ])('hasNextJs: %s', (_name, frameworks, want) => {
   assert.equal(hasNextJs(frameworks), want);
+});
+
+// ── testDiscoveryNote ────────────────────────────────────────────────────────
+
+test('testDiscoveryNote: 判定した runners を verbatim で載せ、accept / exclude に限る受理条件の文にする', () => {
+  const note = testDiscoveryNote([PYTEST_RUNNER, BATS_RUNNER]);
+  assert.ok(note.startsWith('test_discovery（'));
+  assert.ok(note.includes('accept に一致し exclude に一致しないファイルに限れ'));
+  assert.ok(note.includes(JSON.stringify([PYTEST_RUNNER, BATS_RUNNER])));
+  assert.ok(note.endsWith('\n'));
+});
+
+test('testDiscoveryNote: runners が空なら test_files を挙げず inspection にさせる', () => {
+  const note = testDiscoveryNote([]);
+  assert.ok(note.includes('ランナー検出なし'));
+  assert.ok(note.includes('"inspection"'));
+  assert.ok(!note.includes('accept'));
 });
 
 // ── 静的検査: inline 制約（ESM import / require / Date.now / Math.random を含まない） ──
