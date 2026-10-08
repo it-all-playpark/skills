@@ -79,7 +79,7 @@ async function assertAbort(args, msgSubstrs) {
 }
 
 test('[prerun-setup-routing] (b) args.setup 欠落 → fail-closed throw（args.setup が無い）', async () => {
-  await assertAbort({ issue: '1' }, ["args.setup が無い"]);
+  await assertAbort({ issue: '1' }, ["args.setup が無い", "ensure-worktree-deps --setup"]);
 });
 
 test('[prerun-setup-routing] (c) args.setup.ok:false → fail-closed throw', async () => {

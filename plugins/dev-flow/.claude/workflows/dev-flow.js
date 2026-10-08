@@ -157,7 +157,7 @@ function resolvePositiveIntArg(args, name) {
 
 const PRERUN_SETUP_REQUIRED = ['ok', 'issue', 'base', 'worktree', 'head', 'deps', 'stack', 'analyze', 'epoch', 'epoch_end'];
 
-const PRERUN_MISSING_MSG = 'dev-flow: args.setup が無い — /dev-flow wrapper（dev-flow/SKILL.md の preflight）で `dev-flow-prerun --issue <N> --worktree <path>` を実行し、その stdout JSON を Workflow の args.setup に渡せ（workflow 内 fallback は無い）';
+const PRERUN_MISSING_MSG = 'dev-flow: args.setup が無い — /dev-flow wrapper（dev-flow/SKILL.md の preflight）で `dev-flow-prerun --issue <N> --worktree <path>` を実行し、続けて別の Bash 呼び出しで `ensure-worktree-deps --setup <worktree>/.devflow-tmp/prerun-setup.json` を実行して、その stdout JSON を Workflow の args.setup に渡せ（workflow 内 fallback は無い）';
 
 function isNonEmptyString(value) {
   return typeof value === 'string' && value.trim().length > 0;

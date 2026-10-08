@@ -26,8 +26,10 @@ excluded の実行物は子プロセスごと sandbox 外で走るので、posti
 excluded な実行物（`dev-flow-prerun` 等）の子からも呼ばない: deps install は wrapper が prerun と別の Bash 呼び出し
 （`ensure-worktree-deps --setup <worktree>/.devflow-tmp/prerun-setup.json`）で回す。これらが sandbox 内で動くよう、
 index を書く git（`checkout` 等）を使わない。dev-flow の `bin/` wrapper は exec の前に `GIT_OPTIONAL_LOCKS=0` を
-export する（読み取り系 git の index 書き戻しが、repo によって sandbox が書かせない `.git/worktrees/*/index.lock` を
-取りに行かない。必須ロックの commit / worktree add 等には効かない）。
+export する（読み取り系 git の index 書き戻しが `.git/worktrees/*/index.lock` を取りに行かない。必須ロックの
+commit / worktree add 等には効かない）。sandbox が `.git` を書かせないのは skills の live checkout
+（`~/ghq/github.com/it-all-playpark/skills`）だけで、skills 向けの dev-flow は skills-dev（書ける）で動くので通常は踏まない。
+live checkout で起動された場合の保険として残す。
 
 plugin version を上げた直後の解決確認は、**update 後に起動し直した Claude Code セッション内**で
 `command -v <bare 名>` を実行する。PATH には

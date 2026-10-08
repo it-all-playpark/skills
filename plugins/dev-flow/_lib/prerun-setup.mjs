@@ -2,8 +2,9 @@
 // fail-closed に検証・要約するための純関数群。
 //
 // dev-flow-prerun（wrapper preflight の bare 名 launcher）が base 解決・worktree 作成/再利用・
-// .devflow-tmp の clean・deps install・framework 検出・issue analyze（analyze-issue --contract +
-// Jev 有界判定。deps install と並列）を行い、その結果を stdout JSON 1 行として返す。wrapper がそれを Workflow({ args: { issue, setup } }) の args.setup として渡すため、
+// .devflow-tmp の clean・framework 検出・issue analyze（analyze-issue --contract + Jev 有界判定）を行い、
+// wrapper が別の Bash 呼び出しで回す ensure-worktree-deps --setup がその出力に deps と epoch_end を足して
+// stdout JSON 1 行として返す（issue #868）。wrapper がそれを Workflow({ args: { issue, setup } }) の args.setup として渡すため、
 // dev-flow.js 側はこれを唯一の入力源として検証する（workflow 内 fallback は持たない）。
 // validatePrerunSetup: args.setup を検証し、Setup phase が使う正規化済み値を返す純関数。
 //   raw が欠落/非 object/配列、raw.ok !== true、必須キー欠落/型不正のいずれも即 throw する
@@ -25,7 +26,7 @@
 
 export const PRERUN_SETUP_REQUIRED = ['ok', 'issue', 'base', 'worktree', 'head', 'deps', 'stack', 'analyze', 'epoch', 'epoch_end'];
 
-export const PRERUN_MISSING_MSG = 'dev-flow: args.setup が無い — /dev-flow wrapper（dev-flow/SKILL.md の preflight）で `dev-flow-prerun --issue <N> --worktree <path>` を実行し、その stdout JSON を Workflow の args.setup に渡せ（workflow 内 fallback は無い）';
+export const PRERUN_MISSING_MSG = 'dev-flow: args.setup が無い — /dev-flow wrapper（dev-flow/SKILL.md の preflight）で `dev-flow-prerun --issue <N> --worktree <path>` を実行し、続けて別の Bash 呼び出しで `ensure-worktree-deps --setup <worktree>/.devflow-tmp/prerun-setup.json` を実行して、その stdout JSON を Workflow の args.setup に渡せ（workflow 内 fallback は無い）';
 
 function isNonEmptyString(value) {
   return typeof value === 'string' && value.trim().length > 0;
@@ -88,7 +89,7 @@ export function validatePrerunSetup(raw, issue) {
   if (typeof raw.analyze.ok !== 'boolean') fail('analyze.ok', raw.analyze.ok);
   if (raw.analyze.ok === false && !isNonEmptyString(raw.analyze.reason)) fail('analyze.reason', raw.analyze.reason);
   if (!(Number.isInteger(raw.epoch) && raw.epoch > 0)) fail('epoch', raw.epoch);
-  // epoch_end は deps install / detect-stack / analyze 段 完了後（prerun.sh 末尾）で採る第2の時刻。
+  // epoch_end は deps install 完了後（ensure-worktree-deps --setup。prerun の後に走る）で採る第2の時刻。
   // setup_end mark（implement 区間の起点）はここから給電する（epoch から給電すると deps install 等の
   // Setup 決定論処理時間が丸ごと implement の phase_durations に付け替わるため）。
   if (!(Number.isInteger(raw.epoch_end) && raw.epoch_end > 0)) fail('epoch_end', raw.epoch_end);
