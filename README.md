@@ -517,7 +517,9 @@ PATH="<repo>/plugins/playpark-core/bin:<repo>/plugins/dev-flow/bin:$PATH" bats <
 ## veridelta dogfooding
 
 本 repo は [veridelta](https://github.com/it-all-playpark/veridelta)（`vdelta` CLI）を
-dev-flow の redgreen 判定フックにdogfooding導入している（`.claude/redgreen.conf`）。
+dev-flow の redgreen 判定フックにdogfooding導入している。`package.json` の devDependencies に `vdelta` があり
+テストランナーが vitest のとき、redgreen-verify が vitest の実行を `vdelta run` で包み `vdelta compare` の verdict を
+結果に載せる（専用の設定ファイルは無い）。
 
 - **運用ルール**: vdelta の摩擦・バグ・欲しい機能に気づいたら
   [veridelta repo](https://github.com/it-all-playpark/veridelta) に issue を起票し、

@@ -150,150 +150,110 @@ EOF
 }
 
 # -----------------------------------------------------------------------
-# F1: opt-in test_cmd / verdict_cmd mechanism (.claude/redgreen.conf)
+# F: vdelta 経路(issue #881)。package.json の dependencies / devDependencies に vdelta があり、ランナーが
+# vitest のときだけ vitest コマンドを `<PM の exec> vdelta run --report json --` で包み、green 後の
+# `<PM の exec> vdelta compare --report json` を verdict に載せる。.claude/redgreen.conf は読まない。
 # -----------------------------------------------------------------------
 
-make_mock_runner() {
-  cat > "$REPO/mock-runner.sh" <<EOF
+# make_mock_pm <name> <compare 応答> [<impl>]: PM の exec(npx / pnpm)の stub。argv を "<name> <argv>" で
+# calls.log に記録し、`vdelta compare` には <compare 応答> を返し(空なら exit 1)、それ以外は <impl>
+# (既定 impl.ts)があるときだけ pass する
+make_mock_pm() {
+  mkdir -p "$REPO/mockbin"
+  cat > "$REPO/mockbin/$1" <<EOF
 #!/usr/bin/env bash
-echo "\$@" >> "$REPO/calls.log"
-[ -f "$REPO/impl.mjs" ]
+echo "$1 \$*" >> "$REPO/calls.log"
+case "\$*" in
+  *"vdelta compare"*) [ -n '$2' ] || exit 1; echo '$2' ;;
+  *) [ -f "$REPO/${3:-impl.ts}" ] ;;
+esac
 EOF
-  chmod +x "$REPO/mock-runner.sh"
+  chmod +x "$REPO/mockbin/$1"
 }
 
-@test "F1-a: opt-in test_cmd runs mock runner twice (red + green) with declared test file" {
-  echo "export const ok = true;" > "$REPO/impl.mjs"
-  make_test
-  make_mock_runner
-  mkdir -p "$REPO/.claude"
-  echo "test_cmd=bash ./mock-runner.sh" > "$REPO/.claude/redgreen.conf"
+# vdelta と vitest を devDependencies に持つ repo + impl.ts / feature.test.ts
+use_vdelta_vitest() {
+  use_package_json '{"devDependencies":{"vitest":"^3.0.0","vdelta":"^0.10.0"}}'
+  echo "export const ok = true;" > "$REPO/impl.ts"
+  echo "// feature test" > "$REPO/feature.test.ts"
+}
 
-  run bash "$SCRIPT" "$REPO" "feature.test.mjs" "impl.mjs"
+@test "F1: devDependencies に vdelta がある vitest の repo は vdelta run 経由で実行し verdict を載せる(PM の exec で起動)" {
+  use_vdelta_vitest
+  make_mock_pm npx '{"comparability":"exact","verdict":"improved"}'
+
+  run env PATH="$REPO/mockbin:$PATH" bash "$SCRIPT" "$REPO" "feature.test.ts" "impl.ts"
   [ "$status" -eq 0 ]
-  [[ "$output" == *'"red":true'* ]]
-  [[ "$output" == *'"green":true'* ]]
+  [ "$(printf '%s' "$output" | jq -r '.results[0].red and .results[0].green')" = "true" ]
+  [ "$(printf '%s' "$output" | jq -c '.results[0].verdict')" = '{"comparability":"exact","verdict":"improved"}' ]
+  [ "$(printf '%s' "$output" | jq -r '.results[0].testcmd_ran')" = "true" ]
+  # vdelta run 経路が走ったペアは headdiff を出力しない
+  [ "$(printf '%s' "$output" | jq -r '.results[0] | has("headdiff")')" = "false" ]
+  [ "$(cat "$REPO/calls.log")" = "$(printf '%s\n' \
+    'npx vdelta run --report json -- npx vitest run feature.test.ts' \
+    'npx vdelta run --report json -- npx vitest run feature.test.ts' \
+    'npx vdelta compare --report json')" ]
 
-  [ -f "$REPO/calls.log" ]
-  call_count="$(grep -c 'feature.test.mjs' "$REPO/calls.log")"
-  [ "$call_count" -eq 2 ]
-}
-
-@test "F1-b: conf without test_cmd line falls back to node --test unchanged" {
-  echo "export const ok = true;" > "$REPO/impl.mjs"
-  make_test
-  mkdir -p "$REPO/.claude"
-  echo "# no test_cmd here" > "$REPO/.claude/redgreen.conf"
-
-  run bash "$SCRIPT" "$REPO" "feature.test.mjs" "impl.mjs"
+  # pnpm-lock.yaml のある repo(vdelta は dependencies)では pnpm exec で包み、compare も pnpm exec で起動する
+  rm "$REPO/calls.log"
+  use_package_json '{"dependencies":{"vdelta":"^0.10.0"},"devDependencies":{"vitest":"^3.0.0"}}'
+  : > "$REPO/pnpm-lock.yaml"
+  make_mock_pm pnpm '{"comparability":"exact"}'
+  run env PATH="$REPO/mockbin:$PATH" bash "$SCRIPT" "$REPO" "feature.test.ts" "impl.ts"
   [ "$status" -eq 0 ]
-  [[ "$output" == *'"red":true'* ]]
-  [[ "$output" == *'"green":true'* ]]
-  [ ! -f "$REPO/calls.log" ]
+  [ "$(printf '%s' "$output" | jq -c '.results[0].verdict')" = '{"comparability":"exact"}' ]
+  [ "$(cat "$REPO/calls.log")" = "$(printf '%s\n' \
+    'pnpm exec vdelta run --report json -- pnpm exec vitest run feature.test.ts' \
+    'pnpm exec vdelta run --report json -- pnpm exec vitest run feature.test.ts' \
+    'pnpm exec vdelta compare --report json')" ]
 }
 
-@test "F1-c: verdict_cmd success adds verdict field to output JSON" {
-  echo "export const ok = true;" > "$REPO/impl.mjs"
-  make_test
-  make_mock_runner
-  mkdir -p "$REPO/.claude"
-  cat > "$REPO/mock-verdict.sh" <<'EOF'
-#!/usr/bin/env bash
-echo '{"comparability":"exact","verdict":"improved"}'
-EOF
-  chmod +x "$REPO/mock-verdict.sh"
-  {
-    echo "test_cmd=bash ./mock-runner.sh"
-    echo "verdict_cmd=bash ./mock-verdict.sh"
-  } > "$REPO/.claude/redgreen.conf"
-
-  run bash "$SCRIPT" "$REPO" "feature.test.mjs" "impl.mjs"
+@test "F2: vdelta compare の非ゼロ exit / 不正 JSON は fail-open で verdict を載せず red→green は変わらない" {
+  use_vdelta_vitest
+  make_mock_pm npx ''
+  run env PATH="$REPO/mockbin:$PATH" bash "$SCRIPT" "$REPO" "feature.test.ts" "impl.ts"
   [ "$status" -eq 0 ]
-  [[ "$output" == *'"red":true'* ]]
-  [[ "$output" == *'"green":true'* ]]
-  [[ "$output" == *'"reason":"ok"'* ]]
-  [[ "$output" == *'"verdict"'* ]]
-  [[ "$output" == *'"comparability":"exact"'* ]]
-}
+  [ "$(printf '%s' "$output" | jq -r '.results[0].red and .results[0].green')" = "true" ]
+  [ "$(printf '%s' "$output" | jq -r '.results[0] | has("verdict")')" = "false" ]
 
-@test "F1-d: verdict_cmd exit 1 fails open, output keeps only the original 3 keys" {
-  echo "export const ok = true;" > "$REPO/impl.mjs"
-  make_test
-  make_mock_runner
-  mkdir -p "$REPO/.claude"
-  cat > "$REPO/mock-verdict.sh" <<'EOF'
-#!/usr/bin/env bash
-exit 1
-EOF
-  chmod +x "$REPO/mock-verdict.sh"
-  {
-    echo "test_cmd=bash ./mock-runner.sh"
-    echo "verdict_cmd=bash ./mock-verdict.sh"
-  } > "$REPO/.claude/redgreen.conf"
-
-  run bash "$SCRIPT" "$REPO" "feature.test.mjs" "impl.mjs"
+  make_mock_pm npx 'not-json'
+  run env PATH="$REPO/mockbin:$PATH" bash "$SCRIPT" "$REPO" "feature.test.ts" "impl.ts"
   [ "$status" -eq 0 ]
-  [[ "$output" == *'"red":true'* ]]
-  [[ "$output" == *'"green":true'* ]]
-  [[ "$output" != *'"verdict"'* ]]
+  [ "$(printf '%s' "$output" | jq -r '.results[0].red and .results[0].green')" = "true" ]
+  [ "$(printf '%s' "$output" | jq -r '.results[0] | has("verdict")')" = "false" ]
+  grep -q 'vdelta compare' "$REPO/calls.log"
 }
 
-@test "F1-e: verdict_cmd invalid JSON fails open, output keeps only the original 3 keys" {
-  echo "export const ok = true;" > "$REPO/impl.mjs"
-  make_test
-  make_mock_runner
-  mkdir -p "$REPO/.claude"
-  cat > "$REPO/mock-verdict.sh" <<'EOF'
-#!/usr/bin/env bash
-echo "not-json"
-EOF
-  chmod +x "$REPO/mock-verdict.sh"
-  {
-    echo "test_cmd=bash ./mock-runner.sh"
-    echo "verdict_cmd=bash ./mock-verdict.sh"
-  } > "$REPO/.claude/redgreen.conf"
+@test "F3: vdelta が依存に無い vitest の repo は素の vitest で実行し vdelta を呼ばず verdict を載せない" {
+  use_package_json '{"devDependencies":{"vitest":"^3.0.0"}}'
+  echo "export const ok = true;" > "$REPO/impl.ts"
+  echo "// feature test" > "$REPO/feature.test.ts"
+  make_mock_pm npx '{"comparability":"exact"}'
 
-  run bash "$SCRIPT" "$REPO" "feature.test.mjs" "impl.mjs"
+  run env PATH="$REPO/mockbin:$PATH" bash "$SCRIPT" "$REPO" "feature.test.ts" "impl.ts"
   [ "$status" -eq 0 ]
-  [[ "$output" == *'"red":true'* ]]
-  [[ "$output" == *'"green":true'* ]]
-  [[ "$output" != *'"verdict"'* ]]
+  [ "$(printf '%s' "$output" | jq -r '.results[0].red and .results[0].green')" = "true" ]
+  [ "$(printf '%s' "$output" | jq -r '.results[0] | has("verdict")')" = "false" ]
+  [ "$(printf '%s' "$output" | jq -r '.results[0].testcmd_ran')" = "false" ]
+  [ "$(cat "$REPO/calls.log")" = "$(printf '%s\n' 'npx vitest run feature.test.ts' 'npx vitest run feature.test.ts')" ]
 }
 
-# -----------------------------------------------------------------------
-# F1-f: AC-3 対応。test_cmd + verdict_cmd の両方が設定され、verdict_cmd が
-# veridelta 実形の digest JSON を返す正常応答経路。
-# -----------------------------------------------------------------------
-@test "F1-f: test_cmd と verdict_cmd の両方設定時、正常応答 verdict が出力に含まれる" {
-  echo "export const ok = true;" > "$REPO/impl.mjs"
-  make_test
-  make_mock_runner
-  mkdir -p "$REPO/.claude"
-  cat > "$REPO/mock-verdict.sh" <<'EOF'
-#!/usr/bin/env bash
-echo '{"comparability":"exact","transitions":{"repaired_with_test_change":[]},"verification_surface":{"status":"intact"}}'
-EOF
-  chmod +x "$REPO/mock-verdict.sh"
-  {
-    echo "test_cmd=bash ./mock-runner.sh"
-    echo "verdict_cmd=bash ./mock-verdict.sh"
-  } > "$REPO/.claude/redgreen.conf"
+@test "F4: vdelta が依存にあっても vitest 以外のランナー(jest)は素のランナーで実行し vdelta を呼ばず verdict を載せない" {
+  use_package_json '{"devDependencies":{"jest":"^29.0.0","vdelta":"^0.10.0"}}'
+  echo "export const ok = true;" > "$REPO/impl.ts"
+  echo "// feature test" > "$REPO/feature.test.ts"
+  make_mock_pm npx '{"comparability":"exact"}'
 
-  run bash "$SCRIPT" "$REPO" "feature.test.mjs" "impl.mjs"
+  run env PATH="$REPO/mockbin:$PATH" bash "$SCRIPT" "$REPO" "feature.test.ts" "impl.ts"
   [ "$status" -eq 0 ]
-  [[ "$output" == *'"red":true'* ]]
-  [[ "$output" == *'"green":true'* ]]
-  [[ "$output" == *'"verdict"'* ]]
-  [[ "$output" == *'"comparability":"exact"'* ]]
-  [[ "$output" == *'"intact"'* ]]
+  [ "$(printf '%s' "$output" | jq -r '.results[0].red and .results[0].green')" = "true" ]
+  [ "$(printf '%s' "$output" | jq -r '.results[0] | has("verdict")')" = "false" ]
+  [ "$(printf '%s' "$output" | jq -r '.results[0].testcmd_ran')" = "false" ]
+  [ "$(cat "$REPO/calls.log")" = "$(printf '%s\n' 'npx jest feature.test.ts' 'npx jest feature.test.ts')" ]
 }
 
-# -----------------------------------------------------------------------
-# F1-g: bats-only AC では test_cmd(vdelta run) 経路が実行されないため
-# verdict_cmd も起動されない(guard による抑止)。
-# -----------------------------------------------------------------------
-@test "F1-g: bats-only AC では verdict_cmd が起動されない" {
-  echo "export const ok = true;" > "$REPO/impl.mjs"
+@test "F5: vdelta + vitest の repo でも bats だけのペアは vdelta を呼ばず verdict を載せない" {
+  use_vdelta_vitest
   # NOTE: heredoc でこの .bats ファイルのソース行頭に "@test" を直書きすると、
   # このファイル(redgreen-verify.bats)自身を静的スキャンする bats のテスト発見
   # ロジックが nested な行まで誤って test 宣言として拾ってしまう
@@ -303,48 +263,38 @@ EOF
   {
     printf '%s\n' '#!/usr/bin/env bats'
     printf '%s\n' '@test "impl exists" {'
-    printf '  [ -f "%s/impl.mjs" ]\n' "$REPO"
+    printf '  [ -f "%s/impl.ts" ]\n' "$REPO"
     printf '%s\n' '}'
   } > "$REPO/feature.bats"
-  make_mock_runner
-  mkdir -p "$REPO/.claude"
-  cat > "$REPO/mock-verdict.sh" <<EOF
-#!/usr/bin/env bash
-touch "$REPO/verdict-called"
-echo '{"comparability":"exact"}'
-EOF
-  chmod +x "$REPO/mock-verdict.sh"
-  {
-    echo "test_cmd=bash ./mock-runner.sh"
-    echo "verdict_cmd=bash ./mock-verdict.sh"
-  } > "$REPO/.claude/redgreen.conf"
+  make_mock_pm npx '{"comparability":"exact"}'
 
-  run bash "$SCRIPT" "$REPO" "feature.bats" "impl.mjs"
+  run env PATH="$REPO/mockbin:$PATH" bash "$SCRIPT" "$REPO" "feature.bats" "impl.ts"
   [ "$status" -eq 0 ]
-  [[ "$output" != *'"verdict"'* ]]
-  [ ! -f "$REPO/verdict-called" ]
+  [ "$(printf '%s' "$output" | jq -r '.results[0].red and .results[0].green')" = "true" ]
+  [ "$(printf '%s' "$output" | jq -r '.results[0] | has("verdict")')" = "false" ]
+  [ ! -f "$REPO/calls.log" ]
 }
 
-# -----------------------------------------------------------------------
-# F1-h: test_cmd 未設定(conf に verdict_cmd のみ)の node test AC では
-# node --test fallback で red/green は成立するが verdict_cmd は起動されない。
-# -----------------------------------------------------------------------
-@test "F1-h: test_cmd 未設定時は node --test fallback でも verdict_cmd が起動されない" {
-  echo "export const ok = true;" > "$REPO/impl.mjs"
-  make_test
-  mkdir -p "$REPO/.claude"
-  cat > "$REPO/mock-verdict.sh" <<'EOF'
-#!/usr/bin/env bash
-echo '{"comparability":"exact"}'
-EOF
-  chmod +x "$REPO/mock-verdict.sh"
-  echo "verdict_cmd=bash ./mock-verdict.sh" > "$REPO/.claude/redgreen.conf"
-
-  run bash "$SCRIPT" "$REPO" "feature.test.mjs" "impl.mjs"
+@test "F6: .claude/redgreen.conf を置いても読まれず結果も起動コマンドも変わらない" {
+  use_vdelta_vitest
+  make_mock_pm npx '{"comparability":"exact"}'
+  run env PATH="$REPO/mockbin:$PATH" bash "$SCRIPT" "$REPO" "feature.test.ts" "impl.ts"
   [ "$status" -eq 0 ]
-  [[ "$output" == *'"red":true'* ]]
-  [[ "$output" == *'"green":true'* ]]
-  [[ "$output" != *'"verdict"'* ]]
+  without_conf="$output"
+  calls_without_conf="$(cat "$REPO/calls.log")"
+  rm "$REPO/calls.log"
+
+  mkdir -p "$REPO/.claude"
+  printf '#!/usr/bin/env bash\ntouch "%s/conf-called"\necho "{\\"from\\":\\"conf\\"}"\n' "$REPO" > "$REPO/conf-cmd.sh"
+  {
+    echo "test_cmd=bash ./conf-cmd.sh"
+    echo "verdict_cmd=bash ./conf-cmd.sh"
+  } > "$REPO/.claude/redgreen.conf"
+  run env PATH="$REPO/mockbin:$PATH" bash "$SCRIPT" "$REPO" "feature.test.ts" "impl.ts"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$without_conf" ]
+  [ "$(cat "$REPO/calls.log")" = "$calls_without_conf" ]
+  [ ! -e "$REPO/conf-called" ]
 }
 
 # -----------------------------------------------------------------------
@@ -375,19 +325,18 @@ EOF
 }
 
 @test "G2: HEAD と同一内容の tracked impl のみは exit 2・no impl changed vs HEAD・テスト未実行・tree 不変" {
+  use_package_json '{"devDependencies":{"vitest":"^3.0.0"}}'
   echo "export const ok = true;" > "$REPO/impl.mjs"
   git -C "$REPO" add impl.mjs && git -C "$REPO" commit -q -m "add impl"
   rm "$REPO/.gitkeep"
   git -C "$REPO" stash push -q -m "other-session" -- .gitkeep
   make_test
-  make_mock_runner
-  mkdir -p "$REPO/.claude"
-  echo "test_cmd=bash ./mock-runner.sh" > "$REPO/.claude/redgreen.conf"
+  make_mock_pm npx '' impl.mjs
   before_status="$(git -C "$REPO" status --porcelain)"
   before_n="$(git -C "$REPO" stash list | wc -l | tr -d ' ')"
   before_sha="$(git -C "$REPO" rev-parse 'stash@{0}')"
 
-  run bash "$SCRIPT" "$REPO" "feature.test.mjs" "impl.mjs"
+  run env PATH="$REPO/mockbin:$PATH" bash "$SCRIPT" "$REPO" "feature.test.mjs" "impl.mjs"
   [ "$status" -eq 2 ]
   [[ "$output" == *'"reason":"no impl changed vs HEAD'* ]]
   [ ! -f "$REPO/calls.log" ]
@@ -434,15 +383,14 @@ EOF
 }
 
 @test "G5: worktree から削除した tracked impl は exit 2・impl file not found・テスト未実行" {
+  use_package_json '{"devDependencies":{"vitest":"^3.0.0"}}'
   echo "export const ok = true;" > "$REPO/impl.mjs"
   git -C "$REPO" add impl.mjs && git -C "$REPO" commit -q -m "add impl"
   rm "$REPO/impl.mjs"
   make_test
-  make_mock_runner
-  mkdir -p "$REPO/.claude"
-  echo "test_cmd=bash ./mock-runner.sh" > "$REPO/.claude/redgreen.conf"
+  make_mock_pm npx '' impl.mjs
 
-  run bash "$SCRIPT" "$REPO" "feature.test.mjs" "impl.mjs"
+  run env PATH="$REPO/mockbin:$PATH" bash "$SCRIPT" "$REPO" "feature.test.mjs" "impl.mjs"
   [ "$status" -eq 2 ]
   [[ "$output" == *'impl file not found: impl.mjs'* ]]
   [ ! -f "$REPO/calls.log" ]
@@ -499,8 +447,7 @@ EOF
 
 # -----------------------------------------------------------------------
 # H: JS の runner は repo の設定(package.json / vitest.config.* / jest.config.* / playwright.config.*)から
-# 判定する(issue #656 / #880)。test_cmd 未設定時は判定した runner を lockfile の PM 経由(lockfile 無しは npx)で起動、
-# test_cmd 設定時は JS のテストファイルをまとめて test_cmd 1 回に振り分ける。
+# 判定する(issue #656 / #880)。判定した runner を lockfile の PM 経由(lockfile 無しは npx)で起動する。
 # playwright.config.* がある repo の *.spec.ts はランナー未検出として exit 2。
 # -----------------------------------------------------------------------
 
@@ -516,16 +463,7 @@ EOF
   chmod +x "$REPO/mockbin/npx"
 }
 
-make_mock_runner_ts() {
-  cat > "$REPO/mock-runner.sh" <<EOF
-#!/usr/bin/env bash
-echo "\$@" >> "$REPO/calls.log"
-[ -f "$REPO/impl.ts" ]
-EOF
-  chmod +x "$REPO/mock-runner.sh"
-}
-
-@test "H1: vitest の repo の *.test.ts / *.test.tsx は test_cmd 未設定時 vitest run で red→green 判定される" {
+@test "H1: vitest の repo の *.test.ts / *.test.tsx は vitest run で red→green 判定される" {
   use_package_json '{"devDependencies":{"vitest":"^3.0.0"}}'
   echo "export const ok = true;" > "$REPO/impl.ts"
   echo "// feature test" > "$REPO/feature.test.ts"
@@ -602,74 +540,10 @@ EOF
   [ ! -f "$REPO/npx-calls.log" ]
 }
 
-@test "H4: test_cmd 設定時、vitest 系は test_cmd 経路で実行され VDELTA_TESTCMD_RAN=true で verdict_cmd が起動する" {
-  echo "export const ok = true;" > "$REPO/impl.ts"
-  echo "// feature test" > "$REPO/feature.test.ts"
-  make_mock_runner_ts
-  make_mock_npx
-  mkdir -p "$REPO/.claude"
-  cat > "$REPO/mock-verdict.sh" <<EOF
-#!/usr/bin/env bash
-touch "$REPO/verdict-called"
-echo '{"comparability":"exact"}'
-EOF
-  chmod +x "$REPO/mock-verdict.sh"
-  {
-    echo "test_cmd=bash ./mock-runner.sh"
-    echo "verdict_cmd=bash ./mock-verdict.sh"
-  } > "$REPO/.claude/redgreen.conf"
-
-  run env PATH="$REPO/mockbin:$PATH" bash "$SCRIPT" "$REPO" "feature.test.ts" "impl.ts"
-  [ "$status" -eq 0 ]
-  [[ "$output" == *'"red":true'* ]]
-  [[ "$output" == *'"green":true'* ]]
-  [[ "$output" == *'"verdict"'* ]]
-  [[ "$output" == *'"comparability":"exact"'* ]]
-  [ -f "$REPO/verdict-called" ]
-  [ -f "$REPO/calls.log" ]
-  [ "$(grep -c 'feature.test.ts' "$REPO/calls.log")" -eq 2 ]
-  [ ! -f "$REPO/npx-calls.log" ]
-}
-
-@test "H5: test_cmd 設定時、.test.mjs と vitest 系の混在は test_cmd 1 回の起動にまとめられる" {
-  echo "export const ok = true;" > "$REPO/impl.mjs"
-  make_test
-  echo "// feature test" > "$REPO/feature.test.ts"
-  make_mock_runner
-  mkdir -p "$REPO/.claude"
-  echo "test_cmd=bash ./mock-runner.sh" > "$REPO/.claude/redgreen.conf"
-
-  run bash "$SCRIPT" "$REPO" "feature.test.mjs,feature.test.ts" "impl.mjs"
-  [ "$status" -eq 0 ]
-  [[ "$output" == *'"red":true'* ]]
-  [[ "$output" == *'"green":true'* ]]
-  [ "$(grep -c 'feature.test.mjs feature.test.ts' "$REPO/calls.log")" -eq 2 ]
-}
-
-@test "H6: test_cmd 未設定時の vitest 系では verdict_cmd が起動されない" {
-  use_package_json '{"devDependencies":{"vitest":"^3.0.0"}}'
-  echo "export const ok = true;" > "$REPO/impl.ts"
-  echo "// feature test" > "$REPO/feature.test.ts"
-  make_mock_npx
-  mkdir -p "$REPO/.claude"
-  cat > "$REPO/mock-verdict.sh" <<'EOF'
-#!/usr/bin/env bash
-echo '{"comparability":"exact"}'
-EOF
-  chmod +x "$REPO/mock-verdict.sh"
-  echo "verdict_cmd=bash ./mock-verdict.sh" > "$REPO/.claude/redgreen.conf"
-
-  run env PATH="$REPO/mockbin:$PATH" bash "$SCRIPT" "$REPO" "feature.test.ts" "impl.ts"
-  [ "$status" -eq 0 ]
-  [[ "$output" == *'"red":true'* ]]
-  [[ "$output" == *'"green":true'* ]]
-  [[ "$output" != *'"verdict"'* ]]
-}
-
 # -----------------------------------------------------------------------
 # I: testcmd_ran / headdiff (issue #654 AC-1/AC-2)
-# test_cmd 経路が走らなかった invocation で testcmd_ran:false と headdiff が
-# 常時出力されること、test_cmd 経路が走った invocation では headdiff が
+# vdelta run 経路が走らなかった invocation で testcmd_ran:false と headdiff が
+# 常時出力されること、vdelta run 経路が走った invocation では headdiff が
 # 出力されないことを pin する。
 # -----------------------------------------------------------------------
 
@@ -715,34 +589,21 @@ make_feature_bats() {
   [[ "$output" == *'"headdiff":{"new":0,"modified":0,"unchanged":1,"total":1}'* ]]
 }
 
-@test "I4: test_cmd 経路が走った invocation は testcmd_ran:true で headdiff を出力しない" {
-  echo "export const ok = true;" > "$REPO/impl.mjs"
-  make_test
-  make_mock_runner
-  mkdir -p "$REPO/.claude"
-  echo "test_cmd=bash ./mock-runner.sh" > "$REPO/.claude/redgreen.conf"
-
-  run bash "$SCRIPT" "$REPO" "feature.test.mjs" "impl.mjs"
-  [ "$status" -eq 0 ]
-  [[ "$output" == *'"testcmd_ran":true'* ]]
-  [[ "$output" != *'"headdiff"'* ]]
-}
-
-@test "I5: test_cmd 経路に乗る test_files が bats と混在しても testcmd_ran:true で headdiff を出力しない" {
+# vdelta run 経路が走った 1 ペアの testcmd_ran:true / headdiff なしは F1 が同じ実行で見る
+@test "I5: vdelta run 経路に乗る test_files が bats と混在しても testcmd_ran:true で headdiff を出力しない" {
+  use_package_json '{"devDependencies":{"vitest":"^3.0.0","vdelta":"^0.10.0"}}'
   echo "export const ok = true;" > "$REPO/impl.mjs"
   make_test
   make_feature_bats
-  make_mock_runner
-  mkdir -p "$REPO/.claude"
-  echo "test_cmd=bash ./mock-runner.sh" > "$REPO/.claude/redgreen.conf"
+  make_mock_pm npx '' impl.mjs
 
-  run bash "$SCRIPT" "$REPO" "feature.test.mjs,feature.bats" "impl.mjs"
+  run env PATH="$REPO/mockbin:$PATH" bash "$SCRIPT" "$REPO" "feature.test.mjs,feature.bats" "impl.mjs"
   [ "$status" -eq 0 ]
   [[ "$output" == *'"testcmd_ran":true'* ]]
   [[ "$output" != *'"headdiff"'* ]]
 }
 
-@test "I6: conf 無しの node --test 直接経路も testcmd_ran:false と headdiff を出力する(拡張子非依存)" {
+@test "I6: node --test 直接経路も testcmd_ran:false と headdiff を出力する(拡張子非依存)" {
   echo "export const ok = true;" > "$REPO/impl.mjs"
   make_test
 
@@ -770,22 +631,26 @@ make_feature_bats() {
 # reason に載せて続行し、exit 2 は全ペアが入力エラーのときだけ。
 # -----------------------------------------------------------------------
 
-# impl1 / impl2 が worktree 版の内容(a = 1 / b = 2)で存在するかを呼び出しごとに記録する mock runner
-# (ペア間の退避分離を検証する。tracked-modified の base 化はファイルが残るので内容で判定する)
+# vitest の repo にし、impl1 / impl2 が worktree 版の内容(a = 1 / b = 2)で存在するかを呼び出しごとに記録する
+# npx stub を mockbin に置く(`npx vitest run <test>` の末尾引数で振り分ける。ペア間の退避分離を検証する。
+# tracked-modified の base 化はファイルが残るので内容で判定する)
 make_mock_runner_pairs() {
-  cat > "$REPO/mock-runner.sh" <<EOF
+  use_package_json '{"devDependencies":{"vitest":"^3.0.0"}}'
+  mkdir -p "$REPO/mockbin"
+  cat > "$REPO/mockbin/npx" <<EOF
 #!/usr/bin/env bash
+t="\${@: -1}"
 s1=absent; s2=absent
 grep -q "a = 1" "$REPO/impl1.mjs" 2>/dev/null && s1=present
 grep -q "b = 2" "$REPO/impl2.mjs" 2>/dev/null && s2=present
-echo "\$1 impl1=\$s1 impl2=\$s2" >> "$REPO/calls.log"
-case "\$1" in
+echo "\$t impl1=\$s1 impl2=\$s2" >> "$REPO/calls.log"
+case "\$t" in
   t1.test.mjs) [ "\$s1" = present ] ;;
   t2.test.mjs) [ "\$s2" = present ] ;;
   *) exit 99 ;;
 esac
 EOF
-  chmod +x "$REPO/mock-runner.sh"
+  chmod +x "$REPO/mockbin/npx"
 }
 
 @test "J1: 2 ペアを 1 呼び出しで判定し index 付き配列で両方 red→green が返る" {
@@ -794,17 +659,14 @@ EOF
   echo "// t1" > "$REPO/t1.test.mjs"
   echo "// t2" > "$REPO/t2.test.mjs"
   make_mock_runner_pairs
-  mkdir -p "$REPO/.claude"
-  echo "test_cmd=bash ./mock-runner.sh" > "$REPO/.claude/redgreen.conf"
 
-  run bash "$SCRIPT" "$REPO" "t1.test.mjs" "impl1.mjs" "t2.test.mjs" "impl2.mjs"
+  run env PATH="$REPO/mockbin:$PATH" bash "$SCRIPT" "$REPO" "t1.test.mjs" "impl1.mjs" "t2.test.mjs" "impl2.mjs"
   [ "$status" -eq 0 ]
   [ "$(printf '%s' "$output" | jq -r '.results | length')" -eq 2 ]
   [ "$(printf '%s' "$output" | jq -r '.results[0].index')" -eq 0 ]
   [ "$(printf '%s' "$output" | jq -r '.results[1].index')" -eq 1 ]
   [ "$(printf '%s' "$output" | jq -r '.results[0].red and .results[0].green')" = "true" ]
   [ "$(printf '%s' "$output" | jq -r '.results[1].red and .results[1].green')" = "true" ]
-  [ "$(printf '%s' "$output" | jq -r '.results[0].testcmd_ran')" = "true" ]
   [ -f "$REPO/impl1.mjs" ] && [ -f "$REPO/impl2.mjs" ]
 }
 
@@ -814,10 +676,8 @@ EOF
   echo "// t1" > "$REPO/t1.test.mjs"
   echo "// t2" > "$REPO/t2.test.mjs"
   make_mock_runner_pairs
-  mkdir -p "$REPO/.claude"
-  echo "test_cmd=bash ./mock-runner.sh" > "$REPO/.claude/redgreen.conf"
 
-  run bash "$SCRIPT" "$REPO" "t1.test.mjs" "impl1.mjs" "t2.test.mjs" "impl2.mjs"
+  run env PATH="$REPO/mockbin:$PATH" bash "$SCRIPT" "$REPO" "t1.test.mjs" "impl1.mjs" "t2.test.mjs" "impl2.mjs"
   [ "$status" -eq 0 ]
   # 呼び出し順: pair0 red / pair0 green / pair1 red / pair1 green
   [ "$(sed -n 1p "$REPO/calls.log")" = "t1.test.mjs impl1=absent impl2=present" ]
@@ -832,11 +692,9 @@ EOF
   echo "export const b = 2;" > "$REPO/impl2.mjs"
   echo "// t2" > "$REPO/t2.test.mjs"
   make_mock_runner_pairs
-  mkdir -p "$REPO/.claude"
-  echo "test_cmd=bash ./mock-runner.sh" > "$REPO/.claude/redgreen.conf"
 
   # pair0 は non-test glob(impl1.mjs を test として申告)、pair1 は正常
-  run bash "$SCRIPT" "$REPO" "impl1.mjs" "impl1.mjs" "t2.test.mjs" "impl2.mjs"
+  run env PATH="$REPO/mockbin:$PATH" bash "$SCRIPT" "$REPO" "impl1.mjs" "impl1.mjs" "t2.test.mjs" "impl2.mjs"
   [ "$status" -eq 0 ]
   [ "$(printf '%s' "$output" | jq -r '.results | length')" -eq 2 ]
   [ "$(printf '%s' "$output" | jq -r '.results[0].red or .results[0].green')" = "false" ]
@@ -888,12 +746,10 @@ EOF
   echo "// t1" > "$REPO/t1.test.mjs"
   echo "// t2" > "$REPO/t2.test.mjs"
   make_mock_runner_pairs
-  mkdir -p "$REPO/.claude"
-  echo "test_cmd=bash ./mock-runner.sh" > "$REPO/.claude/redgreen.conf"
   # mock runner が calls.log を作るので比較は calls.log を除いた status で行う
   before_status="$(git -C "$REPO" status --porcelain | grep -v calls.log)"
 
-  run bash "$SCRIPT" "$REPO" "t1.test.mjs" "impl1.mjs" "t2.test.mjs" "impl2.mjs"
+  run env PATH="$REPO/mockbin:$PATH" bash "$SCRIPT" "$REPO" "t1.test.mjs" "impl1.mjs" "t2.test.mjs" "impl2.mjs"
   [ "$status" -eq 0 ]
   [ "$(printf '%s' "$output" | jq -r '.results[0].red and .results[0].green')" = "true" ]
   [ "$(printf '%s' "$output" | jq -r '.results[1].red and .results[1].green')" = "true" ]
@@ -905,12 +761,12 @@ EOF
 # -----------------------------------------------------------------------
 # K: pnpm ワークスペースのビルド成果物(issue #754)
 # packages/shared の exports は git 管理外の ./dist を指し、packages/backend が workspace:* で依存する。
-# impl は shared のソース(base: v1 → worktree: v2)。mock runner(test_cmd)は dist の中身を calls.log に
-# 残し、dist が v2 のときだけ pass する。pnpm は stub(scripts.build を実行し呼び出し時点のソースを記録)。
+# impl は shared のソース(base: v1 → worktree: v2)。テストランナー(root は vitest・lockfile 無しなので npx の stub)は
+# dist の中身を calls.log に残し、dist が v2 のときだけ pass する。pnpm は stub(scripts.build を実行し呼び出し時点のソースを記録)。
 # -----------------------------------------------------------------------
 make_pnpm_workspace_pair() {
   mkdir -p "$REPO/packages/shared/src" "$REPO/packages/backend"
-  echo '{"name":"root","private":true,"scripts":{"test":"node --test"}}' > "$REPO/package.json"
+  echo '{"name":"root","private":true,"devDependencies":{"vitest":"^3.0.0"}}' > "$REPO/package.json"
   printf 'packages:\n  - packages/*\n' > "$REPO/pnpm-workspace.yaml"
   printf 'dist/\n' > "$REPO/.gitignore"
   cat > "$REPO/packages/shared/package.json" <<'JSON'
@@ -931,17 +787,15 @@ cd "$REPO/packages/shared" && sh -c "\$(jq -r '.scripts.build' package.json)"
 EOF
   chmod +x "$STUB_DIR/pnpm"
 
-  cat > "$REPO/mock-runner.sh" <<EOF
+  cat > "$STUB_DIR/npx" <<EOF
 #!/usr/bin/env bash
-echo "test \$1 dist=\$(grep -o 'hello v[0-9]' "$REPO/packages/shared/dist/greet.js" 2>/dev/null || echo absent)" >> "$REPO/calls.log"
+echo "test \${@: -1} dist=\$(grep -o 'hello v[0-9]' "$REPO/packages/shared/dist/greet.js" 2>/dev/null || echo absent)" >> "$REPO/calls.log"
 grep -q 'hello v2' "$REPO/packages/shared/dist/greet.js" 2>/dev/null
 EOF
-  chmod +x "$REPO/mock-runner.sh"
-  mkdir -p "$REPO/.claude"
-  echo "test_cmd=bash ./mock-runner.sh" > "$REPO/.claude/redgreen.conf"
+  chmod +x "$STUB_DIR/npx"
 }
 
-@test "K1: red / green の両方で test_cmd の前にその時点のソースからビルドが走り red→green が成立する(AC-3)" {
+@test "K1: red / green の両方でテストの前にその時点のソースからビルドが走り red→green が成立する(AC-3)" {
   make_pnpm_workspace_pair
   [ ! -e "$REPO/packages/shared/dist" ]
 
@@ -957,7 +811,7 @@ EOF
   [ "$(wc -l < "$REPO/calls.log" | tr -d ' ')" -eq 4 ]
 }
 
-@test "K2: ビルドが失敗したら test_cmd を実行せず、reason にビルド失敗と対象パッケージ名が残る(AC-4)" {
+@test "K2: ビルドが失敗したらテストを実行せず、reason にビルド失敗と対象パッケージ名が残る(AC-4)" {
   make_pnpm_workspace_pair
   printf '#!/usr/bin/env bash\nexit 1\n' > "$STUB_DIR/pnpm"
 
