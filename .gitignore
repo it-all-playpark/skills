@@ -5,8 +5,6 @@ plugins/*/.claude/settings.local.json
 # Track dynamic workflow definitions (dev-flow / pr-iterate are Claude workflows)
 !.claude/workflows/
 !.claude/workflows/**
-# Track redgreen-verify.sh opt-in config (issue #356: per-repo test_cmd/verdict_cmd)
-!.claude/redgreen.conf
 # Track path-scoped rules (dev-flow 内部仕様の遅延読み込み — AGENTS.md から分離)
 !.claude/rules/
 !.claude/rules/**
@@ -60,7 +58,7 @@ __pycache__/
 hunk-review
 
 
-# veridelta run records (redgreen-verify.sh verdict_cmd hook output)
+# veridelta run records (redgreen-verify.sh の vdelta run 経路の出力)
 .veridelta/
 
 # veridelta archived records (worktree-teardown.sh が worktree 削除前に退避)

@@ -9,16 +9,20 @@
 # references/exec-proxy.md)。そのため index を書く git は使わない(write_head_blob)。
 # test_files の受理判定と実行コマンドは detect-test-runner.sh(repo に既にある設定ファイルからランナーを判定)が決める。
 # ランナーが判定できないファイルを含むペアは reason "non-test file declared (ランナー未検出): <file>" の入力エラー(昇格しない)。
-# .claude/redgreen.conf の test_cmd は JS のテストファイル(vitest / jest / node と判定したもの)にだけ掛ける。
+# vdelta 経路: package.json の dependencies / devDependencies に vdelta があり、ランナーが vitest のときだけ、
+# vitest の単体実行コマンドを `<PM の exec> vdelta run --report json -- <vitest のコマンド>` で包み、green 後に
+# `<PM の exec> vdelta compare --report json` の出力を verdict として載せる(PM の exec は vitest コマンドの
+# vitest より前の部分 = detect-test-runner.sh が lockfile から決めた prefix)。それ以外は素のランナーで実行する。
 # 出力(stdout, JSON 1行。results は引数順の配列。root を object にするのは workflow の agent() schema が
 # root object を要求するため — haiku proxy に配列を包み直させず verbatim 転写で済ませる):
 #   {"results":[{"index":N,"red":bool,"green":bool,"reason":"...","testcmd_ran":bool[,"headdiff":{new,modified,unchanged,total}][,"verdict":{...}]}, ...]}
+# testcmd_ran は当該ペアで vdelta run 経路を実行したか。
 # 入力・分離エラーのペアは {"index":N,"red":false,"green":false,"reason":"..."} で続行する(testcmd_ran なし)。
 # red / green どちらの test 実行の前にも workspace-prebuild.sh で pnpm ワークスペースのビルド成果物を
 # その時点のソースから作り直す(issue #754。red は impl 退避後・green は復元後でソースが違うため両方で呼ぶ)。
 # ビルドが失敗した phase ではテストを実行せず、当該ペアを reason "workspace build failed: <pkgs> (red|green)"
 # の入力・分離エラーと同じ形で返す(テスト未実行を red / green と判定しない)。
-# headdiff は test_cmd 経路が走らなかったペア(testcmd_ran=false)でのみ付く。
+# headdiff は vdelta run 経路が走らなかったペア(testcmd_ran=false)でのみ付く。
 # test_files を HEAD 基準で new(HEAD に無い)/modified(HEAD にあり差分あり)/unchanged(HEAD と同一)
 # に三分類した件数で、runner の種類・拡張子に依存しない fallback 信号。red/green の判定には影響しない。
 # exit 0 = 1 ペア以上が判定完了(red/green は JSON 参照) / exit 2 = 全ペアが入力・分離エラー、
@@ -38,28 +42,25 @@ DETECT="$SCRIPT_DIR/detect-test-runner.sh"
 
 cd "$WT" 2>/dev/null || { echo "cd failed: $WT" >&2; echo '{"results":[]}'; exit 2; }
 
-# opt-in 設定(.claude/redgreen.conf, key=value 平文, source は使わない)
-# 不在・キー不在・値なしなら空文字のまま = 従来挙動と完全不変。
-RG_CONF="$WT/.claude/redgreen.conf"
-RG_TEST_CMD=""
-RG_VERDICT_CMD=""
-if [ -f "$RG_CONF" ]; then
-  RG_TEST_CMD="$(grep -E '^test_cmd=' "$RG_CONF" | head -1 | cut -d= -f2-)"
-  RG_VERDICT_CMD="$(grep -E '^verdict_cmd=' "$RG_CONF" | head -1 | cut -d= -f2-)"
+# vdelta 経路の有効化は repo の package.json の依存だけで決める(dev-flow 専用の設定ファイルは読まない)
+VDELTA=false
+if [ -f package.json ] && jq -e '((.dependencies // {}) + (.devDependencies // {})) | has("vdelta")' package.json >/dev/null 2>&1; then
+  VDELTA=true
 fi
 
 # --- ペア単位の状態(verify_pair の冒頭で毎回リセットする) ---
 TESTS=()
 IMPLS=()
-# detect-test-runner.sh が当該ペアの test_files について返した JS ファイル(test_cmd の対象)と実行コマンド
+# detect-test-runner.sh が当該ペアの test_files について返した実行コマンド
 # (1 要素 = argv を 1 行 1 要素で連結した文字列。先頭行は runner 名)
-JS_TESTS=()
 RUN_CMDS=()
-# verdict_cmd は当該ペアで test_cmd(vdelta run) 経路が実際に実行された
-# 場合のみ起動する。bats-only 等 test_cmd 未実行のペアでは RunStore に
+# vdelta compare は当該ペアで vdelta run 経路が実際に実行された
+# 場合のみ起動する。bats-only 等 vdelta run 未実行のペアでは RunStore に
 # 当該 red/green の run pair が存在せず、無条件実行すると spurious な
 # baseline-missing/malformed verdict を招くため。
 VDELTA_TESTCMD_RAN=false
+# vdelta run 経路で使った PM の exec prefix(vdelta compare も同じ prefix で起動する)
+VDELTA_PREFIX=()
 # impl ファイルを HEAD 基準で三分類する。共有 stash スタック(main checkout・全 worktree・
 # 全セッションで共有)には一切読み書きしない — 位置指定 pop は「自分が積んだ entry」を
 # 保証せず、他セッションの WIP を worktree に適用する(issue #630)。
@@ -77,28 +78,27 @@ PAIR_JSON=""
 BUILD_FAILURE=""
 
 run_tests() {
-  local rc=0 pb_out c runner argv a skip_js=false
+  local rc=0 pb_out c runner argv a prefix
   BUILD_FAILURE=""
   if ! pb_out="$(bash "$PREBUILD" "$PWD" 2>/dev/null)"; then
     BUILD_FAILURE="$(jq -r '.reason // empty' <<< "$pb_out" 2>/dev/null)"
     [ -n "$BUILD_FAILURE" ] || BUILD_FAILURE="workspace build failed"
     return 1
   fi
-  if [ -n "$RG_TEST_CMD" ] && [ "${#JS_TESTS[@]}" -gt 0 ]; then
-    local _tc=()
-    read -r -a _tc <<< "$RG_TEST_CMD"
-    "${_tc[@]}" "${JS_TESTS[@]}" >/dev/null 2>&1 || rc=1
-    # test_cmd(vdelta run) 経路を実行した事実を記録する(rc とは独立。
-    # red phase の失敗は期待値であり test_cmd 未実行を意味しない)。
-    VDELTA_TESTCMD_RAN=true
-    skip_js=true
-  fi
   if [ "${#RUN_CMDS[@]}" -gt 0 ]; then
     for c in "${RUN_CMDS[@]}"; do
       runner="${c%%$'\n'*}"
-      case "$runner" in vitest|jest|node) [ "$skip_js" = true ] && continue ;; esac
       argv=()
       while IFS= read -r a; do argv+=("$a"); done <<< "${c#*$'\n'}"
+      if [ "$runner" = vitest ] && [ "$VDELTA" = true ]; then
+        prefix=()
+        for a in "${argv[@]}"; do [ "$a" = vitest ] && break; prefix+=("$a"); done
+        VDELTA_PREFIX=(${prefix[@]+"${prefix[@]}"})
+        argv=(${prefix[@]+"${prefix[@]}"} vdelta run --report json -- "${argv[@]}")
+        # vdelta run 経路を実行した事実を記録する(rc とは独立。
+        # red phase の失敗は期待値であり vdelta run 未実行を意味しない)。
+        VDELTA_TESTCMD_RAN=true
+      fi
       "${argv[@]}" >/dev/null 2>&1 || rc=1
     done
   fi
@@ -148,10 +148,10 @@ trap restore_impl EXIT
 # 退避した impl の復元は呼び出し側の restore_impl が担う(return 経路を問わず必ず呼ぶ)。
 verify_pair() {
   local test_csv="$1" impl_csv="$2" t i f
-  TESTS=(); IMPLS=(); JS_TESTS=(); RUN_CMDS=()
+  TESTS=(); IMPLS=(); RUN_CMDS=()
   UNTRACKED_IMPLS=(); TRACKED_IMPLS=(); UNCHANGED_IMPLS=()
   UNTRACKED_SAVED=false; TRACKED_SAVED=false
-  VDELTA_TESTCMD_RAN=false
+  VDELTA_TESTCMD_RAN=false; VDELTA_PREFIX=()
   PAIR_JSON=""
 
   IFS=',' read -r -a TESTS <<< "$test_csv"
@@ -168,9 +168,6 @@ verify_pair() {
     PAIR_JSON="\"red\":false,\"green\":false,\"reason\":\"non-test file declared (ランナー未検出): $unknown\""; return 2
   fi
   # 1 行 1 要素の出力を here-string で読む(process substitution は sandbox で /dev/fd が塞がれる)
-  while IFS= read -r t; do
-    [ -n "$t" ] && JS_TESTS+=("$t")
-  done <<< "$(jq -r '.files[] | select(.runner == "vitest" or .runner == "jest" or .runner == "node") | .file' <<< "$det")"
   while IFS= read -r c; do
     [ -n "$c" ] && RUN_CMDS+=("$(jq -r '.runner, .argv[]' <<< "$c")")
   done <<< "$(jq -c '.commands[]' <<< "$det")"
@@ -256,7 +253,7 @@ verify_pair() {
     PAIR_JSON="\"red\":false,\"green\":false,\"reason\":\"$build_failure\""; return 2
   fi
 
-  # headdiff: test_cmd 経路が走らなかったペア(VDELTA_TESTCMD_RAN=false)でのみ、
+  # headdiff: vdelta run 経路が走らなかったペア(VDELTA_TESTCMD_RAN=false)でのみ、
   # test_files を HEAD 基準で三分類する(拡張子非依存の fallback 信号。判定には使わない)。
   local headdiff_json="" hd_new=0 hd_mod=0 hd_unch=0
   if [ "$VDELTA_TESTCMD_RAN" = false ] && git rev-parse --verify -q HEAD >/dev/null 2>&1; then
@@ -272,14 +269,13 @@ verify_pair() {
 
   PAIR_JSON="\"red\":$red,\"green\":$green,\"reason\":\"ok\",\"testcmd_ran\":$VDELTA_TESTCMD_RAN$headdiff_json"
 
-  # post-green verdict フック(opt-in, fail-open): red/green 判定が確定した後にのみ走る。
+  # post-green verdict(fail-open): red/green 判定が確定した後にのみ走る。
   # 非ゼロ exit・空出力・不正 JSON・jq 不在のいずれでも PAIR_JSON をそのまま返す。
-  # 当該ペアで test_cmd 経路が実行されていない場合(bats-only AC 等)は
+  # 当該ペアで vdelta run 経路が実行されていない場合(bats-only AC・vitest 以外のランナー等)は
   # RunStore に run pair が存在しないため起動しない(VDELTA_TESTCMD_RAN guard)。
-  if [ -n "$RG_VERDICT_CMD" ] && [ "$VDELTA_TESTCMD_RAN" = true ] && command -v jq >/dev/null 2>&1; then
-    local vc=() hook_json hook_rc merged
-    read -r -a vc <<< "$RG_VERDICT_CMD"
-    hook_json="$("${vc[@]}" 2>/dev/null)"
+  if [ "$VDELTA_TESTCMD_RAN" = true ] && command -v jq >/dev/null 2>&1; then
+    local hook_json hook_rc merged
+    hook_json="$(${VDELTA_PREFIX[@]+"${VDELTA_PREFIX[@]}"} vdelta compare --report json 2>/dev/null)"
     hook_rc=$?
     if [ "$hook_rc" -eq 0 ] && [ -n "$hook_json" ] && jq -c . >/dev/null 2>&1 <<< "$hook_json"; then
       merged="$(jq -c --argjson v "$hook_json" '. + {verdict: $v}' <<< "{$PAIR_JSON}")"
