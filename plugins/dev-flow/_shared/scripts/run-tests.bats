@@ -172,12 +172,24 @@ EOF
 @test "run-*.sh 無し: pnpm-lock.yaml があれば pnpm test、exit 1 → failed" {
     echo '{"name":"x","scripts":{"test":"vitest run"}}' > "$WT/package.json"
     : > "$WT/pnpm-lock.yaml"
-    printf '#!/usr/bin/env bash\necho " FAIL  src/a.test.ts > x"\nexit 1\n' > "$STUB_DIR/pnpm"
+    printf '#!/usr/bin/env bash\necho " FAIL  src/a.test.ts > x"\necho "[ELIFECYCLE] Test failed. See above for more details."\necho "Error: ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL"\nexit 1\n' > "$STUB_DIR/pnpm"
     chmod +x "$STUB_DIR/pnpm"
     export PATH="$STUB_DIR:$PATH"
     run_tests
     echo "$JSON" | jq -e '.status == "failed" and .scripts == [{path: "pnpm test", exit: 1, launch_failed: false}]'
     echo "$JSON" | jq -e '.failed_files == ["src/a.test.ts"]'
+}
+
+@test "run-*.sh 無し: pnpm test がテスト前の依存 install で失敗したら起動失敗として error（failed にしない）" {
+    echo '{"name":"x","scripts":{"test":"vitest run"}}' > "$WT/package.json"
+    : > "$WT/pnpm-lock.yaml"
+    printf '#!/usr/bin/env bash\necho "\033[31m[ERR_PNPM_EPERM]\033[39m [importPackage x] Operation not permitted"\necho "pnpm: Command failed with exit code 1: '"'"'/opt/pnpm/11.0.8/node_modules/@pnpm/exe/pnpm'"'"' install"\nexit 1\n' > "$STUB_DIR/pnpm"
+    chmod +x "$STUB_DIR/pnpm"
+    export PATH="$STUB_DIR:$PATH"
+    run_tests
+    echo "$JSON" | jq -e '.status == "error" and .tests == "error" and .green == false'
+    echo "$JSON" | jq -e '.scripts == [{path: "pnpm test", exit: 1, launch_failed: true}] and .failed_files == []'
+    echo "$JSON" | jq -e '.summary | contains("launch failed: pnpm test")'
 }
 
 @test "run-*.sh 無し: フォールバックの exit 126 も起動失敗として error" {

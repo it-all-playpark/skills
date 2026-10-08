@@ -36,6 +36,9 @@
 #
 # status は全 script の exit code だけで決まる: 起動失敗（exit 126 / 127）が 1 本でもあれば "error"、
 # それ以外で exit 非 0 が 1 本でもあれば "failed"、全本 0（0 本を含む）なら "passed"。
+# 例外: フォールバックの `pnpm test` が、テスト前の依存 install（pnpm の verifyDepsBeforeRun）の失敗
+# （出力に `Command failed with exit code N: '<pnpm>' install`）で非 0 になったときは起動失敗とする —
+# テストは 1 件も走っておらず、red と報告すると本物の失敗と区別できない。
 # tests / green は workflow の GREEN schema の必須キーで、status から機械的に写す（agent に組み立てさせない）:
 #   passed → tests "passed" green true / failed → "failed" false / error → "error" false /
 #   実行対象 0 本 → status "passed"・tests "no_tests"・green false（何も走っていないので green を主張しない）
@@ -251,8 +254,12 @@ for i in "${!TARGETS[@]}"; do
     launch=false
     if [[ $rc -eq 126 || $rc -eq 127 ]]; then
         launch=true
-        LAUNCH_FAILED_ANY=true
+    elif [[ $rc -ne 0 && "${COMMANDS[$i]}" == "pnpm test" ]] \
+        && LC_ALL=C sed $'s/\x1b\\[[0-9;]*[A-Za-z]//g' "$log" \
+            | LC_ALL=C grep -qE "Command failed with exit code [0-9]+: '[^']*/pnpm[^'/]*' install[[:space:]]*$"; then
+        launch=true
     fi
+    [[ "$launch" == true ]] && LAUNCH_FAILED_ANY=true
     echo "[run-tests] $target exit=$rc launch_failed=$launch (log: $log)" >&2
     SCRIPTS_JSON=$(jq -c --arg p "$target" --argjson e "$rc" --argjson l "$launch" \
         '. + [{path: $p, exit: $e, launch_failed: $l}]' <<< "$SCRIPTS_JSON")
