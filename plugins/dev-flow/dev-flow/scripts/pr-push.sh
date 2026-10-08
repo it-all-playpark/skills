@@ -3,8 +3,8 @@
 #
 # Usage: pr-push <log-file>
 #
-# cwd（PR phase の worktree）で `git push -u origin HEAD` を 1 回だけ実行する（--no-verify は付けない・
-# リトライしない）。git の stdout / stderr は合わせて <log-file> へ書き、そのまま端末へは流さない。終了後に
+# cwd（PR phase の worktree）で `git push origin HEAD` を 1 回だけ実行する（--no-verify は付けない・
+# リトライしない。-u は付けない — 起動元 repo の .git/config は sandbox 内から書けないので upstream を書かない）。git の stdout / stderr は合わせて <log-file> へ書き、そのまま端末へは流さない。終了後に
 #
 #   pr-push: exit=<git の exit code> log=<log-file>
 #   <<<PUSH_TAIL_BEGIN>>>
@@ -19,8 +19,9 @@
 # 末尾行は ANSI エスケープと \r 区切りの進捗表示を落とし、1 行 PUSH_TAIL_MAX_COLS バイトで切る
 # （1 行が極端に長い出力でも返す量の上限を固定するため）。
 #
-# 認証付き network I/O を内部に持つ exec-proxy の例外（.claude/rules/dev-flow.md）。push の出力を
-# 呼び出し側から pipe / リダイレクトで受ける形は起動形の制約と両立しないため、push 自体をここで行う。
+# 認証付き network I/O を内部に持つ exec-proxy の例外（.claude/rules/dev-flow.md）。sandbox 内で動き、
+# pre-push hook（repo の任意コード）も sandbox 内で走る。hook が sandbox 内で前提を満たせない処理（docker 等）は
+# その repo の hook 側で skip する（E2E は CI が回す）。
 
 set -uo pipefail
 
@@ -34,7 +35,7 @@ if [[ -z "$log" ]]; then
 fi
 mkdir -p "$(dirname "$log")" || exit 2
 
-git push -u origin HEAD >"$log" 2>&1
+git push origin HEAD >"$log" 2>&1
 rc=$?
 
 esc="$(printf '\033')"

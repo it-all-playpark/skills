@@ -542,15 +542,12 @@ test('[pr-artifacts] prompt: 本文を verbatim 転写させ bare 単文の git 
   assert.ok(p.includes('<<<COMMIT_MSG_BEGIN>>>') && p.includes('<<<COMMIT_MSG_END>>>'));
   assert.ok(p.includes('<<<PR_BODY_BEGIN>>>') && p.includes('<<<PR_BODY_END>>>'));
   assert.ok(p.includes('/tmp/wt/.devflow-tmp/commit-msg.txt') && p.includes('/tmp/wt/.devflow-tmp/pr-body.md'));
-  // git は全て -C なしの bare 形（issue #700: `git -C` 形は sandbox 除外に当たらず、push は credential helper、
-  // add / commit は write deny 下の .git で index.lock 作成が失敗する）
+  // git は cwd（worktree）で実行する bare 単文
   assert.ok(p.includes('`git add -A`'), '手順 1 の add が bare 形でない');
   assert.ok(p.includes('`git commit -F /tmp/wt/.devflow-tmp/commit-msg.txt`'), '手順 2 の commit が bare 形でない');
   assert.ok(p.includes('3. `pr-push /tmp/wt/.devflow-tmp/push-output.log`'), '手順 3 の push が bare 名 pr-push でない');
   assert.ok(p.includes('`git rev-parse HEAD`'), '手順 6 の rev-parse が bare 形でない');
-  assert.ok(!/git -C /.test(p), `prompt に git -C 形が含まれてはならない: ${p.match(/git -C [^\n]*/)?.[0]}`);
-  assert.ok(p.includes('cwd は worktree（EnterWorktree 済み）なので git には -C も cd も付けない'), 'bare 注記が cwd=worktree 前提の文言になっていない');
-  assert.ok(!p.includes('-C で worktree を渡しているため cd は不要'), '旧 bare 注記（-C 前提）が残っている');
+  assert.ok(p.includes('cwd は worktree（EnterWorktree 済み）'), 'bare 注記が cwd=worktree 前提の文言になっていない');
   assert.ok(p.includes('`gh pr create --repo o/r --draft --base main --head feature/issue-642 --title "refactor(dev-flow): PR phase を純関数で生成する (#642)" --body-file /tmp/wt/.devflow-tmp/pr-body.md`'));
   assert.ok(p.includes('pr_url') && p.includes('pr_number') && p.includes('committed'));
 });
@@ -620,7 +617,7 @@ test('[pr-artifacts] prompt: 手順 3 は pr-push に push log を渡し、failu
   // マーカー定数は pr-push.sh が出す行と一致する（script 側と prompt 側のずれ防止）
   const script = readFileSync(join(here, '..', 'dev-flow', 'scripts', 'pr-push.sh'), 'utf8');
   assert.ok(script.includes(`echo "${PR_PUSH_TAIL_BEGIN}"`) && script.includes(`echo "${PR_PUSH_TAIL_END}"`), 'pr-push.sh のマーカーが定数と一致しない');
-  assert.ok(script.includes('git push -u origin HEAD'), 'pr-push.sh が git push -u origin HEAD を実行しない');
+  assert.ok(script.includes('git push origin HEAD'), 'pr-push.sh が git push origin HEAD を実行しない');
 });
 
 test('[pr-artifacts] prPhaseFailure: step:push なら pushLog のパスをエラー文に載せ、他の step・pushLog 未指定では載せない', () => {
@@ -659,7 +656,7 @@ test('[pr-artifacts] prPhaseFailure: step:push で push_header が pr-push: exit
     const msg = prPhaseFailure(pr, { pushLog });
     assert.ok(msg.includes(`step: push、reason: ${PR_PUSH_NOT_INVOKED_REASON}）`), msg);
     assert.ok(!msg.includes('push 出力全文') && !msg.includes(pushLog), msg);
-    const comment = prPhaseFailureComment({ worktree: '/wt', branch: 'b', facts, commands: ['git push -u origin HEAD'] });
+    const comment = prPhaseFailureComment({ worktree: '/wt', branch: 'b', facts, commands: ['git push origin HEAD'] });
     assert.ok(comment.includes(`\`\`\`\n${PR_PUSH_NOT_INVOKED_REASON}\n\`\`\``), comment);
     assert.ok(!comment.includes('push 出力全文') && !comment.includes(pushLog), comment);
   }
@@ -744,13 +741,13 @@ test('[pr-artifacts] prPhaseRecoveryCommands: committed と失敗段に応じて
   const common = { base: 'main', branch: 'feature/issue-9', repo: 'o/r', commitMessage: 'fix(x): "q" (#9)\n\nbody' };
   const create = 'gh pr create --draft --body-file .devflow-tmp/pr-body.md --repo o/r --base main --head feature/issue-9 --title "fix(x): \\"q\\" (#9)"';
   assert.deepEqual(prPhaseRecoveryCommands({ ...common, committed: false, failedStep: 'commit' }),
-    ['git add -A', 'git commit -F .devflow-tmp/commit-msg.txt', 'git push -u origin HEAD', create, '/pr-iterate <N>']);
+    ['git add -A', 'git commit -F .devflow-tmp/commit-msg.txt', 'git push origin HEAD', create, '/pr-iterate <N>']);
   assert.deepEqual(prPhaseRecoveryCommands({ ...common, committed: true, failedStep: 'push' }),
-    ['git push -u origin HEAD', create, '/pr-iterate <N>']);
+    ['git push origin HEAD', create, '/pr-iterate <N>']);
   // pr-create で落ちた run は push 済み
   assert.deepEqual(prPhaseRecoveryCommands({ ...common, committed: true, failedStep: 'pr-create' }), [create, '/pr-iterate <N>']);
   // 段が不明なら push を飛ばさない（再 push は up-to-date で終わる）
-  assert.equal(prPhaseRecoveryCommands({ ...common, committed: true, failedStep: 'unknown' })[0], 'git push -u origin HEAD');
+  assert.equal(prPhaseRecoveryCommands({ ...common, committed: true, failedStep: 'unknown' })[0], 'git push origin HEAD');
   // repo 不明なら --repo を付けない
   assert.ok(!prPhaseRecoveryCommands({ ...common, repo: null, committed: true, failedStep: 'push' })[1].includes('--repo'));
 });

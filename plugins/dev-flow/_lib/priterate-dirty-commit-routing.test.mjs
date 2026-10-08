@@ -95,16 +95,19 @@ test('[D1][AC-3] fix applied:true + commit-ensure dirty:false -> commit-ensure#1
       `commit-ensure#1 の prompt は '${forbidden}' を含んではならない。先頭400文字: ${commitEnsurePrompt.slice(0, 400)}`,
     );
   }
-  // .git へ書く add / commit と network を伴う push は bare 形（issue #700: `git -C` 形は sandbox 除外に当たらず、
-  // push は credential helper、add / commit は write deny 下の .git で index.lock 作成が失敗する）
+  // add / commit / push は cwd で実行する bare 単文。worktree は upstream を持たない（起動元 repo の .git/config は
+  // sandbox 内から書けない）ので、push は remote と HEAD を明示し、push 済みの判定は origin/<head_ref> と比べる
+  const gitCmds = commitEnsurePrompt.match(/`git [^`]*`/g) ?? [];
   assert.ok(
-    commitEnsurePrompt.includes('`git add -A`') && commitEnsurePrompt.includes('`git commit -m "fix(pr-5)')
-      && commitEnsurePrompt.includes('`git push`') && commitEnsurePrompt.includes('`git push -u origin HEAD`'),
-    `commit-ensure#1 の prompt は bare \`git add -A\` / \`git commit\` / \`git push\` / \`git push -u origin HEAD\` を含むべき: ${commitEnsurePrompt.match(/`git [^`]*`/g)?.join(' | ')}`,
+    gitCmds.includes('`git add -A`') && commitEnsurePrompt.includes('`git commit -m "fix(pr-5)')
+      && gitCmds.includes('`git push origin HEAD`'),
+    `commit-ensure#1 の prompt は bare \`git add -A\` / \`git commit\` / \`git push origin HEAD\` を含むべき: ${gitCmds.join(' | ')}`,
   );
+  assert.deepEqual([...new Set(gitCmds.filter((c) => c.includes(' push')))], ['`git push origin HEAD`'],
+    `commit-ensure#1 の push は \`git push origin HEAD\` だけ（-u を付けない）: ${gitCmds.join(' | ')}`);
   assert.ok(
-    !/git -C \S+ (add|commit|push)\b/.test(commitEnsurePrompt),
-    `commit-ensure#1 の prompt に -C 付き add / commit / push が含まれてはならない: ${commitEnsurePrompt.match(/git -C \S+ (add|commit|push)[^`]*/)?.[0]}`,
+    commitEnsurePrompt.includes('`git -C /tmp/wt rev-list "origin/feature/x"..HEAD --count`'),
+    `commit-ensure#1 の push 済み判定は origin/<head_ref> と比べるべき: ${gitCmds.join(' | ')}`,
   );
 
   assert.equal(result?.status, 'lgtm', `result.status は lgtm であるべきだが '${result?.status}' だった`);

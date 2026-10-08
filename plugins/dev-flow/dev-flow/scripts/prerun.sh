@@ -12,8 +12,11 @@
 # detect-stack。各段は独立に ok/error を報告し、後続段を巻き込まない。
 #
 # deps install はここで行わない（issue #868）。install は対象 repo の依存の postinstall（任意コード）を走らせる。
-# このスクリプトは git の書き込み（worktree 作成・fast-forward）のため sandbox 外で起動されるので、子として
-# install を呼ぶと postinstall まで sandbox 外で走る。
+# このスクリプトは repo の任意コードを実行しない — install は wrapper が別の Bash 呼び出しで回す。
+#
+# sandbox 内で動く。起動元 repo の .git/config は sandbox 内から書けないので、config を書く git を使わない:
+# worktree は --no-track で作り（upstream を書かない）、再利用 worktree の起点は upstream ではなく
+# branch の reflog の作成記録（`branch: Created from <ref>`）で判定する。
 #
 # GitHub I/O は analyze 段の `analyze-issue`（GitHub CLI の issue 取得を内蔵）と blocker 判定
 # （prerun-analyze.sh の dependencies API / Blocked by 先の issue 状態）の読み取りのみ。
@@ -184,26 +187,23 @@ worktree_removed=false
 head=""
 SEG2_OK=false
 
-validate_upstream() {
-    # sets global worktree_error on mismatch. echoes "match" / "mismatch" to stdout.
-    local br="$1" remote merge short upstream expected pushed
-    remote="$(git -C "$ROOT" config --get "branch.${br}.remote" 2>/dev/null)" || remote=""
-    merge="$(git -C "$ROOT" config --get "branch.${br}.merge" 2>/dev/null)" || merge=""
-    short="${merge#refs/heads/}"
-    if [[ -n "$remote" && -n "$short" ]]; then
-        upstream="${remote}/${short}"
-    else
-        upstream=""
+validate_start_point() {
+    # branch の起点を reflog の最古の記録（`branch: Created from <ref>`）で判定する。sets global worktree_error on mismatch.
+    # origin/feature/issue-<N> は pr-iterate-prerun が PR head から作った branch。
+    local br="$1" created start="" expected pushed
+    created="$(git -C "$ROOT" log -g --format=%gs "refs/heads/${br}" -- 2>/dev/null | tail -n 1)" || created=""
+    if [[ "$created" == "branch: Created from "* ]]; then
+        start="${created#branch: Created from }"
     fi
     expected="origin/${base}"
     pushed="origin/feature/issue-${ISSUE}"
-    if [[ "$upstream" == "$expected" || "$upstream" == "$pushed" ]]; then
+    if [[ "$start" == "$expected" || "$start" == "$pushed" ]]; then
         return 0
     fi
-    if [[ -z "$upstream" ]]; then
-        worktree_error="既存 worktree の起点を判定できなかった（upstream tracking 未設定）。期待する起点: ${expected}。$(RECOVERY_STEPS_FOR "$WT" "$base")"
+    if [[ -z "$start" ]]; then
+        worktree_error="既存 worktree の起点を判定できなかった（branch ${br} の reflog に作成記録が無い）。期待する起点: ${expected}。$(RECOVERY_STEPS_FOR "$WT" "$base")"
     else
-        worktree_error="既存 worktree の起点が一致しない。実際の起点: ${upstream} / 期待する起点: ${expected}。$(RECOVERY_STEPS_FOR "$WT" "$base")"
+        worktree_error="既存 worktree の起点が一致しない。実際の起点: ${start} / 期待する起点: ${expected}。$(RECOVERY_STEPS_FOR "$WT" "$base")"
     fi
     return 1
 }
@@ -281,7 +281,7 @@ if [[ "$BASE_OK" == true ]]; then
             # 別 branch を checkout した worktree を ok:true で返すと存在しない branch を指すので fail-closed
             worktree_error="既存 worktree の checkout branch が ${BRANCH} でない（実際: ${BRANCH_FOUND}）。$(RECOVERY_STEPS_FOR "$WT" "$base")"
         else
-            if validate_upstream "$BRANCH_FOUND" && fast_forward_reused; then
+            if validate_start_point "$BRANCH_FOUND" && fast_forward_reused; then
                 SEG2_CORE_OK=true
             fi
         fi
@@ -297,7 +297,7 @@ if [[ "$BASE_OK" == true ]]; then
             if ADD_ERR="$(git -C "$ROOT" worktree add "$WT" "$BRANCH" 2>&1)"; then
                 worktree_status="created"
                 CREATED_THIS_CALL=true
-                if validate_upstream "$BRANCH"; then
+                if validate_start_point "$BRANCH"; then
                     SEG2_CORE_OK=true
                 fi
             else
@@ -305,7 +305,7 @@ if [[ "$BASE_OK" == true ]]; then
                 worktree_error="$ADD_ERR"
             fi
         else
-            if ADD_ERR="$(git -C "$ROOT" worktree add --track -b "$BRANCH" "$WT" "origin/${base}" 2>&1)"; then
+            if ADD_ERR="$(git -C "$ROOT" worktree add --no-track -b "$BRANCH" "$WT" "origin/${base}" 2>&1)"; then
                 worktree_status="created"
                 CREATED_THIS_CALL=true
                 SEG2_CORE_OK=true

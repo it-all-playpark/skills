@@ -94,12 +94,15 @@ test('[fix-prompt-contract] (d) fix_loop / ci_gate の fix#1 prompt は push に
   for (const [label, prompt] of Object.entries(prompts)) {
     const steps = sectionOf(prompt, '## Steps');
     assertPushRule(steps, label);
-    assert.ok(steps.indexOf('`git push`') < steps.indexOf('timeout: 600000'), `${label}: push 規約が git push 手順の後に無い`);
+    assert.ok(steps.indexOf('`git push origin HEAD`') < steps.indexOf('timeout: 600000'), `${label}: push 規約が git push 手順の後に無い`);
+    // 作業ツリーは PR head の branch で用意済み。checkout させず（.git/config に追跡設定を書く）、そのまま修正させる
+    assert.ok(steps.includes('作業ツリー（/tmp/wt）は PR ブランチ（`feature/x`）を checkout 済み。branch を切り替えずに、(1) 下記の'), `${label}: checkout 済み前提の手順になっていない: ${steps}`);
+    assert.doesNotMatch(prompt, /gh pr checkout/, `${label}: fix prompt が gh pr checkout を指示している`);
     assert.ok(steps.includes('timeout に達した場合はそこで中断し、applied:false とし、summary に timeout に達した旨と push の stderr 末尾を書く'), `${label}: timeout 到達時の報告指示が無い: ${steps}`);
   }
 });
 
-test('[fix-prompt-contract] (e) commit-ensure#1 prompt の push も timeout: 600000 指定・background 化と再発行の禁止を持ち、timeout 時は git push -u origin HEAD を打たない', async () => {
+test('[fix-prompt-contract] (e) commit-ensure#1 prompt の push も timeout: 600000 指定・background 化と再発行の禁止を持ち、失敗・timeout でも再発行しない', async () => {
   const { ctx, calls } = makePrIterateSandbox({
     overrides: {
       'review#1': { decision: 'request-changes', issues: [{ severity: 'major', topic: 't', file: 'src/a.js', line: 1, description: 'd', suggestion: '' }], summary: 'ng' },
@@ -111,8 +114,7 @@ test('[fix-prompt-contract] (e) commit-ensure#1 prompt の push も timeout: 600
   assert.ok(ensure, `commit-ensure#1 が dispatch されていない: ${calls.map((c) => c.label).join(', ')}`);
   const steps = sectionOf(ensure.prompt, '## Steps');
   assertPushRule(steps, 'commit-ensure');
-  assert.ok(steps.includes('timeout に達した場合は再発行せず手順 3 へ進む'), `commit-ensure: timeout 時に git push -u origin HEAD を打たない指示が無い: ${steps}`);
-  assert.ok(steps.includes('push が timeout 以外で失敗（exit 非0）した場合のみ `git push -u origin HEAD` を 1 回実行'), `commit-ensure: fallback push の条件が timeout 以外に限定されていない: ${steps}`);
+  assert.ok(steps.includes('`git push origin HEAD`（失敗・timeout でも再発行せず手順 3 へ進む）'), `commit-ensure: push 失敗・timeout 時に再発行しない指示が無い: ${steps}`);
 });
 
 test('[fix-prompt-contract] (c) 静的: callFixAgent に渡す prompt は fixPrompt() で組んだ 2 つだけ', () => {

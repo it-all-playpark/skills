@@ -88,8 +88,21 @@ advance_origin_head() {
     wt="$(echo "$output" | jq -r '.worktree')"
     [ "$(git -C "$wt" rev-parse HEAD)" = "$HEAD_SHA" ]
     [ "$(git -C "$wt" rev-parse --abbrev-ref HEAD)" = "feature/x" ]
-    [ "$(git -C "$wt" rev-parse --abbrev-ref '@{u}')" = "origin/feature/x" ]
     grep -qx "pr view 5 --json url,headRefName,baseRefName,headRefOid" "$GH_STUB_LOG"
+}
+
+# sandbox 内からは起動元 repo の .git/config を書けない。config.lock で config の書き込みを全て失敗させても
+# worktree を作れること（upstream を書かない）を確かめる。
+@test "(1c) .git/config に書けなくても worktree を作り、upstream を書かない" {
+    : >"$ROOT/.git/config.lock"
+    cd "$ROOT"
+    run bash "$SCRIPT" 5
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.ok == true and .worktree_status == "created"'
+    wt="$(echo "$output" | jq -r '.worktree')"
+    [ "$(git -C "$wt" rev-parse HEAD)" = "$HEAD_SHA" ]
+    run git -C "$ROOT" config --get "branch.feature/x.merge"
+    [ "$status" -ne 0 ]
 }
 
 @test "(1b) --repo を gh pr view に渡し、出力の repo はその値" {
@@ -105,7 +118,7 @@ advance_origin_head() {
 @test "(2) head branch を checkout 済みの worktree（dev-flow の df-<N> 等）があれば候補パスより優先して再利用する" {
     cd "$ROOT"
     DF="$BATS_TEST_TMPDIR/wt/df-1"
-    git worktree add -q --track -b feature/x "$DF" origin/feature/x
+    git worktree add -q --no-track -b feature/x "$DF" origin/feature/x
     DF_P="$(cd "$DF" && pwd -P)"
 
     run bash "$SCRIPT" 5

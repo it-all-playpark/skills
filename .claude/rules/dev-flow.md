@@ -55,19 +55,20 @@ dev-flow 本体（workflow / agent 定義 / `_lib` canonical / generator）を�
 
 ## exec-proxy（起動形の制約）
 
-- script は plugin `bin/` の bare 名を**先頭トークン**にする。絶対パス・`bash`/`cd`/env 前置は書かない（sandbox excludedCommands は先頭トークン一致。dotfiles 側と対で運用、片側だけ変えると止まる）
+- script は `bin/` の bare 名を**先頭トークン**にする。絶対パス・`bash`/`cd`/env 前置は書かない
+- dev-flow の `bin/` は sandbox 内で動かし excludedCommands に登録しない（子の hook・テストが sandbox 外で走る。blast-radius）
+- 起動元 repo の `.git/config` を書く git / gh（`push -u`・`--track`・`gh pr checkout`）を使わない（sandbox 内で書けない）
 - plugin の `bin/` PATH はセッション起動時に version 込みで焼かれる — update 後は新セッションで `command -v` 確認（素のシェルでは常に失敗）
 
 > exec-proxy スクリプトは認証付き network I/O（gh・git push）を内部に持ってはならない（例外は 2 つ:
 > `analyze-issue` は issue 取得の bare `gh issue view` を内蔵し stdout を in-process で受ける。呼び出し元は
-> subagent ではなく prerun（`dev-flow-prerun` → `prerun-analyze.sh`）で、Jev もそこから呼ぶ —
-> subagent の sandbox 内では資格情報に届かない。`pr-push` は PR phase の push 1 回を内蔵し
-> 全文を log に残して末尾だけ返す — pipe で末尾を受ける形は起動形と両立しない。両方 excludedCommands に登録する）。GitHub I/O は subagent の Bash で「先頭トークンが gh または git の bare 単文」（gh は --repo、git は -C 不可、
+> subagent ではなく prerun（`dev-flow-prerun` → `prerun-analyze.sh`）で、Jev もそこから呼ぶ。
+> `pr-push` は PR phase の push 1 回を内蔵し全文を log に残して末尾だけ返す — 長い hook 出力の末尾を落とさない）。GitHub I/O は subagent の Bash で「先頭トークンが gh または git の bare 単文」（gh は --repo、
 > cd &&・bash・env 前置禁止）として実行し、出力を $TMPDIR の file に落とすか、呼び出し側 agent が
 > stdout/stderr を argv でスクリプトへ verbatim 転写して、スクリプトは file または argv 入力の
 > 純変換とする。prompt に sandbox / excludedCommands / 特定パス起動の理由を書いてはならない —
 > exec-proxy prompt は決定論スクリプトへの verbatim 転写契約であり、起動形の正しさは
-> excludedCommands という設定側の不変条件である。設定の正当化は本ファイルと AGENTS.md の一箇所に置き、
+> 設定側（`bin/` の PATH・isolation guard）の不変条件である。設定の正当化は本ファイルと AGENTS.md の一箇所に置き、
 > per-prompt で再説明しない（再説明は転写契約に判断余地を持ち込み、下流の prompt へ引用・増幅される）。
 > **例外はない**。wall-clock polling も同じで、1 spawn = 1 判定・ループは script 側。初回 poll は
 > `ci-check`、2 回目以降は `ci-wait-check`（1 spawn。数秒超の bare `sleep` は Bash tool が拒否する）。

@@ -3,10 +3,9 @@
 # .veridelta/runs/*.json を veridelta-archive.sh で中央 archive-root へ退避してから
 # git worktree remove を実行する(退避 -> 削除の順序保証。AC-1)。
 #
-# 実行文脈: 非 sandbox の human terminal での実行を前提とする。Claude sandbox 下では
-# repo 内書き込み(archive 側)が deny され fail-open で警告を出すのみになる
-# (sandbox 経由で使う場合は .claude/settings.json の sandbox write allow へ
-# .veridelta-archive/ の追加が必要)。
+# 実行文脈: human terminal と Claude の sandbox 内のどちらでも動く（.git/config を書かない）。
+# repo 内書き込みが deny される checkout（skills の live checkout 等）では archive 側が
+# fail-open で警告を出すのみになる。
 #
 # 使い方: worktree-teardown.sh <worktree-path> [--archive-root <dir>] [--force]
 #

@@ -29,6 +29,9 @@
 #
 # GitHub I/O は `gh pr view`（読み取り）のみ。push / comment / worktree の削除（この呼び出しで作った
 # 書けない worktree の退避を除く）はしない — 単体起動の worktree は回収後も人間が確認できるよう残す。
+#
+# sandbox 内で動く。起動元 repo の .git/config は sandbox 内から書けないので、worktree は --no-track で作る
+# （upstream を書かない。呼び出し側の push は remote と HEAD を明示して同名 branch へ送る）。
 
 set -euo pipefail
 
@@ -256,7 +259,7 @@ create_at() {
     if git -C "$ROOT" show-ref --verify --quiet "refs/heads/${head_ref}"; then
         add_err="$(git -C "$ROOT" worktree add "$wt" "$head_ref" 2>&1)" || { error="$add_err"; return 1; }
     else
-        add_err="$(git -C "$ROOT" worktree add --track -b "$head_ref" "$wt" "origin/${head_ref}" 2>&1)" || { error="$add_err"; return 1; }
+        add_err="$(git -C "$ROOT" worktree add --no-track -b "$head_ref" "$wt" "origin/${head_ref}" 2>&1)" || { error="$add_err"; return 1; }
     fi
     return 0
 }

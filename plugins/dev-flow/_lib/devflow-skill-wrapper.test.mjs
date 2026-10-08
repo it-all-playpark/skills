@@ -122,7 +122,7 @@ test('[devflow-skill-wrapper] needs_clarification 再起動で setup を再利�
   );
 });
 
-// (m) issue #868: deps install は prerun（sandbox 外で起動される）の子ではなく、wrapper が別の Bash 呼び出しで
+// (m) issue #868: deps install は prerun（repo の任意コードを実行しない）の子ではなく、wrapper が別の Bash 呼び出しで
 //     `ensure-worktree-deps --setup <worktree>/.devflow-tmp/prerun-setup.json` として回し、その stdout を setup に渡す。
 //     needs_clarification の再起動でも同じ段を通す（prerun 出力は deps / epoch_end を持たない）。
 test('[devflow-skill-wrapper] deps install は手順2b の別 Bash 呼び出し（ensure-worktree-deps --setup）で回し、その stdout を setup に渡す', () => {
@@ -154,7 +154,7 @@ test('[devflow-skill-wrapper] PR phase 失敗（pr_phase_failed）は issue_comm
   for (const s of [
     'pr_phase_failed', 'issue_comment', 'Write tool', '.devflow-tmp/pr-phase-failure-comment.md',
     'bare 単文 `gh issue comment <issue> --repo <repo> --body-file', 'committed', 'failed_step',
-    'git push -u origin HEAD', 'gh pr create --draft --body-file .devflow-tmp/pr-body.md', '/pr-iterate <N>',
+    'git push origin HEAD', 'gh pr create --draft --body-file .devflow-tmp/pr-body.md', '/pr-iterate <N>',
     '.devflow-tmp/commit-msg.txt', '再生成しない', '再試行せず',
   ]) {
     assert.ok(section.includes(s), `dev-flow/SKILL.md「PR phase 失敗の扱い」節に '${s}' が無い`);

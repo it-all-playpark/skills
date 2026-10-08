@@ -367,11 +367,11 @@ test('[abort-telemetry] (8) PR phase 失敗: 回収コマンドは committed に
   const { ctx } = makeSandbox({ analyzeReq: STANDARD_ANALYZE_REQ, prResponse: PR_PUSH_FAILED });
   const { result } = await runDevFlowInSandbox(src, ctx);
   const cmds = result.recovery_commands;
-  assert.equal(cmds[0], 'git push -u origin HEAD', `push 失敗（commit 済み）は push から: ${JSON.stringify(cmds)}`);
+  assert.equal(cmds[0], 'git push origin HEAD', `push 失敗（commit 済み）は push から: ${JSON.stringify(cmds)}`);
   assert.ok(cmds[1].startsWith('gh pr create --draft --body-file .devflow-tmp/pr-body.md --base main --head feature/issue-1 --title "'), cmds[1]);
   assert.equal(cmds[2], '/pr-iterate <N>');
   assert.equal(cmds.length, 3);
-  for (const s of ['step: push', PUSH_REASON, '/tmp/wt/.devflow-tmp/push-output.log', 'git push -u origin HEAD', '/pr-iterate <N>', '.devflow-tmp/pr-body.md', 'b'.repeat(40)]) {
+  for (const s of ['step: push', PUSH_REASON, '/tmp/wt/.devflow-tmp/push-output.log', 'git push origin HEAD', '/pr-iterate <N>', '.devflow-tmp/pr-body.md', 'b'.repeat(40)]) {
     assert.ok(result.issue_comment.includes(s), `issue_comment に '${s}' が無い:\n${result.issue_comment}`);
   }
 
@@ -385,7 +385,7 @@ test('[abort-telemetry] (8) PR phase 失敗: 回収コマンドは committed に
   assert.equal(result2.committed, false);
   assert.ok(!('head_sha' in result2), `head_sha が取れなかった run に head_sha キーがある: ${result2.head_sha}`);
   assert.ok(!('push_log' in result2), 'commit 失敗に push_log が載っている');
-  assert.deepEqual([...result2.recovery_commands.slice(0, 3)], ['git add -A', 'git commit -F .devflow-tmp/commit-msg.txt', 'git push -u origin HEAD']);
+  assert.deepEqual([...result2.recovery_commands.slice(0, 3)], ['git add -A', 'git commit -F .devflow-tmp/commit-msg.txt', 'git push origin HEAD']);
 });
 
 test('[abort-telemetry] (8) PR phase 失敗: abort entry ではなく outcome=failure / error_category=pr_phase_failed の handoff を 1 件書き、nested pr-iterate・Merge tier・終端サマリは実行しない', async () => {

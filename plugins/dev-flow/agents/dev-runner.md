@@ -52,7 +52,7 @@ spawn prompt に「実行する Skill / コマンド」「作業 worktree の絶
 |------|------|------|
 | analyze-clarify（dev-flow Setup） | `Skill: dev-issue-analyze <n> --depth comprehensive` で issue を読み、ゲート理由ごとに質問文を起こす | `{missing_context}` |
 | ac-observational（dev-flow Setup） | ツールを使わず、prompt の issue タイトルと AC の文面だけで観測型かを判定する（判定できない AC は null） | `{results}` |
-| PR fix（pr-iterate、call site が `model: 'opus'` を渡す） | `gh pr checkout <pr>` → 指摘修正 → commit → push | `{applied, files, summary}` |
+| PR fix（pr-iterate、call site が `model: 'opus'` を渡す） | PR head を checkout 済みの worktree で指摘修正 → commit → `git push origin HEAD` | `{applied, files, summary}` |
 
 ## Boundary
 

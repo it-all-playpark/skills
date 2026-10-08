@@ -92,7 +92,7 @@ exit 1'
     done <<< "$(tail_block)"
 }
 
-@test "hook が通れば exit 0 で push され、upstream が設定される" {
+@test "hook が通れば exit 0 で同名 branch へ push され、.git/config に upstream を書かない" {
     install_hook 'echo "✓ all checks passed"; exit 0'
     cd "$WT"
     run bash "$SCRIPT" "$LOG"
@@ -100,8 +100,20 @@ exit 1'
     [ "$(printf '%s\n' "$output" | head -n 1)" = "pr-push: exit=0 log=$LOG" ]
     printf '%s\n' "$output" | grep -qx '<<<PUSH_TAIL_BEGIN>>>'
     printf '%s\n' "$output" | grep -qx '<<<PUSH_TAIL_END>>>'
+    tail_block | grep -qx '✓ all checks passed'
     [ "$(git -C "$REMOTE" rev-parse refs/heads/feature/issue-1)" = "$(git -C "$WT" rev-parse HEAD)" ]
-    [ "$(git -C "$WT" rev-parse --abbrev-ref '@{u}')" = "origin/feature/issue-1" ]
+    run git -C "$WT" config --get "branch.feature/issue-1.merge"
+    [ "$status" -ne 0 ]
+}
+
+@test "push.default が simple（upstream 無し）でも同名 branch へ届く" {
+    install_hook 'exit 0'
+    git -C "$WT" config push.default simple
+    cd "$WT"
+    # 環境の GIT_CONFIG_*（wrapper の push.default=current）を外し、repo の simple を効かせる
+    run env -u GIT_CONFIG_COUNT bash "$SCRIPT" "$LOG"
+    [ "$status" -eq 0 ]
+    [ "$(git -C "$REMOTE" rev-parse refs/heads/feature/issue-1)" = "$(git -C "$WT" rev-parse HEAD)" ]
 }
 
 @test "log 引数が無ければ push せず exit 2" {
@@ -113,9 +125,9 @@ exit 1'
     [ "$status" -ne 0 ]
 }
 
-@test "push は git push -u origin HEAD の 1 回だけで、--no-verify を使わない" {
+@test "push は git push origin HEAD の 1 回だけで、--no-verify を使わない" {
     run grep -v '^[[:space:]]*#' "$SCRIPT"
     [ "$(printf '%s\n' "$output" | grep -c 'git push')" -eq 1 ]
-    printf '%s\n' "$output" | grep -q '^git push -u origin HEAD '
+    printf '%s\n' "$output" | grep -q '^git push origin HEAD '
     [ "$(printf '%s\n' "$output" | grep -c -- '--no-verify')" -eq 0 ]
 }

@@ -38,7 +38,7 @@ Skill(skill: "git-commit", args: "--all --worktree <path>")
 ### Step 2: Push
 
 ```bash
-git push -u origin "$BRANCH_NAME"
+git push origin "$BRANCH_NAME"
 ```
 
 ### Step 3: Create PR

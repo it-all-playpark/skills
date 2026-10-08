@@ -302,8 +302,8 @@ Run（Phase 6 で起票した agent issue の番号を起票順に全部渡す�
 dev-flow-ready-set [--repo owner/repo] --with-in-flight <M1> <M2> ...
 ```
 
-- bare 名を先頭トークンにして実行する（`cd` / env 前置・パイプ・リダイレクトを付けない。sandbox の
-  `excludedCommands` は先頭トークン一致で、外れると gh の資格情報が読めない）
+- bare 名を先頭トークンにして実行する（`cd` / env 前置・パイプ・リダイレクトを付けない。plugin の `bin/` は
+  PATH 上の bare 名で解決する）
 - in_flight の判定はカレントの git repo の local branch / worktree を読むので、対象 repo の作業ツリーの中で
   実行する。カレントが対象 repo でなければ実行せず、上のコマンドを `## Launch Order` に載せて人間に渡す
 - `--dry-run` では issue 番号が無いので実行しない（`## Launch Order` は `- Dry-run: 起票後に判定`）
