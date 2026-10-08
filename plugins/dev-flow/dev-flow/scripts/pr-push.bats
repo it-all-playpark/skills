@@ -14,6 +14,7 @@ setup() {
     REMOTE="$BATS_TEST_TMPDIR/remote.git"
     WT="$BATS_TEST_TMPDIR/wt"
     LOG="$WT/.devflow-tmp/push-output.log"
+    LOCK="$WT/.git/dev-flow-pr-push.lock"
     git init -q --bare "$REMOTE"
     git init -q -b main "$WT"
     git -C "$WT" config user.name "Test"
@@ -53,6 +54,8 @@ exit 1'
     # 出力全体（約 50 万字）に関係なく、返す量は末尾数行に収まる
     [ "${#output}" -lt 4000 ]
     [ "$(printf '%s\n' "$tail" | wc -l | tr -d ' ')" -le 5 ]
+    # push が失敗しても lock は残らない
+    [ ! -e "$LOCK" ]
 }
 
 @test "出力全文が log に残る（先頭の warning から git の failed to push 行まで）" {
@@ -104,6 +107,7 @@ exit 1'
     [ "$(git -C "$REMOTE" rev-parse refs/heads/feature/issue-1)" = "$(git -C "$WT" rev-parse HEAD)" ]
     run git -C "$WT" config --get "branch.feature/issue-1.merge"
     [ "$status" -ne 0 ]
+    [ ! -e "$LOCK" ]
 }
 
 @test "push.default が simple（upstream 無し）でも同名 branch へ届く" {
@@ -123,6 +127,83 @@ exit 1'
     [ "$status" -eq 2 ]
     run git -C "$REMOTE" rev-parse --verify --quiet refs/heads/feature/issue-1
     [ "$status" -ne 0 ]
+}
+
+# 以下は repo 単位の push lock（issue #872）。同じ repo の並行 run の pre-push hook が重なると、テストが
+# CPU を奪い合って落ちる。lock は git-common-dir 配下に mkdir / rmdir で取る。
+
+@test "同じ repo の 2 つの worktree から同時に起動すると、2 つ目の push（pre-push hook）は 1 つ目の終了後に始まる" {
+    events="$BATS_TEST_TMPDIR/hook-events"
+    install_hook "echo \"start \$(date +%s)\" >>'$events'; sleep 2; echo \"end \$(date +%s)\" >>'$events'; exit 0"
+    WT2="$BATS_TEST_TMPDIR/wt2"
+    git -C "$WT" worktree add -q -b feature/issue-2 "$WT2"
+    export PR_PUSH_LOCK_POLL_SECONDS=0.2
+    (cd "$WT" && bash "$SCRIPT" "$LOG" >"$BATS_TEST_TMPDIR/out1" 2>&1; echo $? >"$BATS_TEST_TMPDIR/rc1") 3>&- &
+    p1=$!
+    (cd "$WT2" && bash "$SCRIPT" "$WT2/.devflow-tmp/push-output.log" >"$BATS_TEST_TMPDIR/out2" 2>&1; echo $? >"$BATS_TEST_TMPDIR/rc2") 3>&- &
+    p2=$!
+    wait "$p1" "$p2"
+    [ "$(cat "$BATS_TEST_TMPDIR/rc1")" -eq 0 ]
+    [ "$(cat "$BATS_TEST_TMPDIR/rc2")" -eq 0 ]
+    # hook の start / end は交互に並び（重ならない）、2 つ目の start 時刻は 1 つ目の end 時刻以降
+    [ "$(cut -d' ' -f1 "$events" | tr '\n' ' ')" = "start end start end " ]
+    [ "$(sed -n 3p "$events" | cut -d' ' -f2)" -ge "$(sed -n 2p "$events" | cut -d' ' -f2)" ]
+    [ "$(git -C "$REMOTE" rev-parse refs/heads/feature/issue-1)" = "$(git -C "$WT" rev-parse HEAD)" ]
+    [ "$(git -C "$REMOTE" rev-parse refs/heads/feature/issue-2)" = "$(git -C "$WT2" rev-parse HEAD)" ]
+    [ ! -e "$LOCK" ]
+}
+
+@test "生きているプロセスが lock を持ったまま待ち上限を超えると、push せず exit 75 と pr-push: lock_timeout 行を返す" {
+    install_hook "touch '$BATS_TEST_TMPDIR/hook-ran'; exit 0"
+    sleep 30 >/dev/null 2>&1 3>&- &
+    holder=$!
+    mkdir -p "$LOCK/pid-$holder"
+    cd "$WT"
+    run env PR_PUSH_LOCK_WAIT_SECONDS=1 PR_PUSH_LOCK_POLL_SECONDS=0.2 bash "$SCRIPT" "$LOG"
+    kill "$holder"
+    [ "$status" -eq 75 ]
+    [ "$(printf '%s\n' "$output" | head -n 1)" = "pr-push: exit=75 log=$LOG" ]
+    tail_block | grep -q '^pr-push: lock_timeout '
+    [ ! -e "$BATS_TEST_TMPDIR/hook-ran" ]
+    run git -C "$REMOTE" rev-parse --verify --quiet refs/heads/feature/issue-1
+    [ "$status" -ne 0 ]
+    # 他のプロセスの lock は消さない
+    [ -d "$LOCK/pid-$holder" ]
+}
+
+@test "記録した PID が生きていない stale lock は奪って push し、push 後に lock を残さない" {
+    install_hook 'exit 0'
+    (exit 0) &
+    dead=$!
+    wait "$dead" || true
+    mkdir -p "$LOCK/pid-$dead"
+    cd "$WT"
+    run env PR_PUSH_LOCK_WAIT_SECONDS=5 PR_PUSH_LOCK_POLL_SECONDS=0.2 bash "$SCRIPT" "$LOG"
+    [ "$status" -eq 0 ]
+    [ "$(git -C "$REMOTE" rev-parse refs/heads/feature/issue-1)" = "$(git -C "$WT" rev-parse HEAD)" ]
+    [ ! -e "$LOCK" ]
+}
+
+@test "kill -0 が EPERM を返す PID の lock は生きている扱いで奪わない" {
+    # 非 root からの kill -0 1（init / launchd）は EPERM
+    [ "$(id -u)" -ne 0 ] || skip "root では kill -0 1 が EPERM にならない"
+    install_hook 'exit 0'
+    mkdir -p "$LOCK/pid-1"
+    cd "$WT"
+    run env PR_PUSH_LOCK_WAIT_SECONDS=1 PR_PUSH_LOCK_POLL_SECONDS=0.2 bash "$SCRIPT" "$LOG"
+    [ "$status" -eq 75 ]
+    run git -C "$REMOTE" rev-parse --verify --quiet refs/heads/feature/issue-1
+    [ "$status" -ne 0 ]
+    [ -d "$LOCK/pid-1" ]
+}
+
+@test "exec-proxy.md の失敗ポリシー表に lock_timeout の行があり、exit code が実装と一致する" {
+    doc="$(dirname "$SCRIPT")/../references/exec-proxy.md"
+    row="$(grep '^| pr-push の lock_timeout' "$doc")"
+    [ -n "$row" ]
+    code="$(sed -n 's/^LOCK_TIMEOUT_EXIT=//p' "$SCRIPT")"
+    [ -n "$code" ]
+    [[ "$row" == *"exit ${code}"* ]]
 }
 
 @test "push は git push origin HEAD の 1 回だけで、--no-verify を使わない" {
