@@ -12,7 +12,7 @@ setup() {
 
 # skills の clone（~/ghq/.../skills/）の絶対パスも書かない。clone は sandbox から書けるので
 # excludedCommands に入らず、そこを指す実行例は sandbox 内に落ちる（除外されるのは plugin cache だけ）。
-@test "全skillのSKILL.md/referencesに~/.claude/skills/絶対パス記述が残っていない" {
+@test "全skillのSKILL.md/referencesに~/.claude/skills/とskills cloneの絶対パス記述が残っていない" {
     run git -C "$REPO_ROOT" grep -nIF \
         -e '~/.claude/skills/' \
         -e '$HOME/.claude/skills/' \
