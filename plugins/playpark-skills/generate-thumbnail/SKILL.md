@@ -16,7 +16,7 @@ model: haiku
 Generate blog thumbnail from MDX frontmatter via Codex CLI built-in `image_gen` tool (gpt-image-2). API キー不要、Codex サブスクリプションの usage limit を消費する。
 
 ```bash
-bash /Users/naramotoyuuji/ghq/github.com/it-all-playpark/skills/plugins/playpark-skills/generate-thumbnail/scripts/generate_thumbnail.sh content/blog/<file>.mdx --optimize
+bash ${CLAUDE_PLUGIN_ROOT}/generate-thumbnail/scripts/generate_thumbnail.sh content/blog/<file>.mdx --optimize
 ```
 
 Options: `--optimize` converts to WebP and deletes original PNG.
@@ -24,12 +24,13 @@ Options: `--optimize` converts to WebP and deletes original PNG.
 ## 絶対に守る制約
 
 **スクリプトは必ず literal な絶対パスを先頭トークンにした bare 形（`bash /abs/path/generate_thumbnail.sh …`）で呼ぶ。**
-sandbox 除外は呼び出しコマンドの先頭トークンのテキスト一致で判定される。
+sandbox 除外は呼び出しコマンドの先頭トークンのテキスト一致で判定され、除外されるのは plugin cache
+（`~/.claude/plugins/cache/playpark/`）配下のパスだけ。skills の clone 配下のパスは sandbox から書けるので除外されない。
 `SKILL_DIR=…; bash "$SKILL_DIR/scripts/generate_thumbnail.sh"`、`cd "$ROOT" && bash …`、
 `bash "$(dirname …)/generate_thumbnail.sh"` のように変数・`cd`・`$( )` で包むと一致せず sandbox 内実行に落ち、
 内部の `codex exec` が app-server 初期化で `Operation not permitted` になって死ぬ。
 
-- パスは本 SKILL.md のロード元ディレクトリを**文字列として書き下す**（上の例がその形）。シェル変数に入れて展開しない
+- 上の例のパスは読み込み時に plugin cache の絶対パスへ置換されている。その**文字列をそのまま書き下す**。シェル変数に入れて展開しない
 - cwd は対象 project の git root でよい（`<mdx-path>` は git root 相対で渡せる）。`cd` を前置しない
 - 素の `codex exec "echo hi"` が通ることは、この skill が動く証拠にならない（`codex:*` は先頭トークンが `codex` のときだけ除外される）
 
