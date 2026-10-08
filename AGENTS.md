@@ -1,8 +1,6 @@
 # Project overview
 
 Skills Repository — Claude Code Skills のモノレポ。cross-vendor の coding agent
-(Claude Code / Codex CLI / Cursor / Aider / Amp / Gemini CLI / GitHub Copilot /
-Devin / Jules / Zed / Continue / Roo Code / Factory Droids / Windsurf / Amazon Q)
 で共通の project context を提供する。
 
 This file follows the [agents.md](https://agents.md) standard (Linux Foundation AAIF, 2025-12).
@@ -11,10 +9,6 @@ Subdirectory `AGENTS.md` files take precedence over this root file for their res
 ## Setup commands
 
 ```bash
-# bats (テストフレームワーク) のインストール
-brew install bats-core        # macOS
-apt-get install bats          # Ubuntu / Debian
-
 # テスト実行
 bash tests/run-all-bats.sh           # ローカル開発 (bats 未インストール時は graceful skip)
 bash tests/run-all-bats.sh --strict  # CI 用 (bats 未インストールを error 扱い)
@@ -24,18 +18,7 @@ bash tests/run-all-bats.sh --strict  # CI 用 (bats 未インストールを err
 cd plugins/playpark-skills && npx skills experimental_install   # tracked の skills-lock.json から一括復元
 ```
 
-Claude Code 限定の代替 (marketplace 経由 install。3 plugin 構成 — 詳細は README.md):
-
-```
-/plugin marketplace add it-all-playpark/skills
-/plugin install playpark-core@playpark    # 共有基盤（dev-flow / playpark-skills が dependencies で要求）
-/plugin install dev-flow@playpark         # issue-to-LGTM ワークフロー
-/plugin install playpark-skills@playpark  # 個人用スキル一式（任意）
-```
-
-自分用に本 repo を clone して開発する場合は link mode を使う (symlink 撤去 → dotfiles
-`extraKnownMarketplaces` に `"mode": "link"` で登録 → 3 plugin 個別 install。手順詳細は
-README.md の「自分用インストール（link mode）」節)。
+plugin の install 手順（marketplace / link mode）は README.md を参照。
 
 新規スキル作成は `/skill-creator` を使用。新規 skill は `plugins/playpark-skills/<name>/` に作る。
 共有処理は plugin 内の `_shared/` か `_lib/` に配置し、plugin を跨ぐ共有は playpark-core
@@ -67,14 +50,6 @@ SKILL.md description は third-person 命令形で書く (`Extracts ...`, `Conve
 ```
 skill-name/scripts/foo.sh      # 実装
 skill-name/scripts/foo.bats    # テスト (隣接配置)
-```
-
-実行:
-
-```bash
-bats skill-name/scripts/foo.bats          # 単体
-bash tests/run-all-bats.sh               # 全 bats 一括
-bash tests/run-all-bats.sh --strict      # CI 用 (bats なしを error 扱い)
 ```
 
 bats が見つからない環境でも `tests/run-all-bats.sh` は exit 0 を返すため、
@@ -126,20 +101,12 @@ inline 生成の詳細は `plugins/dev-flow/dev-flow/references/` を参照。
 
 ### 設計原則 (要約)
 
+Code style に加えて:
+
 1. **機能特化** — 汎用ロール (QA engineer 等) ではなく機能特化スキルを作る
-2. **Progressive Disclosure** — description は簡潔に、詳細は `references/` に分離
-3. **決定論的処理の分離** — LLM に任せるべきでない処理はスクリプトに抽出
-4. **Namespace 命名** — `dev-*`, `blog-*`, `git-*` 等のプレフィックスで整理
-5. **小タスクは vanilla** — 小さいタスクは素の Claude Code の方が優秀
-6. **破壊的・大量変更系は `disable-model-invocation: true`** を検討
-7. **「毎回確定実行」したい挙動は skill ではなく hook で実装**
-8. **後方互換 scaffolding を作らない** — 内製スキルは新形式のみ受理、out-of-enum は schema error
-
-### 実装は 1 issue = 1 agent spawn (issue 分割しない)
-
-Plan phase は持たず、Setup 末尾の analyze ゲート直後に issue から単一 task の plan を合成するだけで、planner / plan-reviewer は起動しない。
-Implement は `dev-implementer` が issue 本文と AC を受け取り、計画から実装まで 1 spawn で仕上げる。
-BLOCKED 再実装・Validate green-fix・Evaluate 差し戻しも同じ agent への再 spawn。複数 issue 分割は使わない。
+2. **小タスクは vanilla** — 小さいタスクは素の Claude Code の方が優秀
+3. **破壊的・大量変更系は `disable-model-invocation: true`** を検討
+4. **「毎回確定実行」したい挙動は skill ではなく hook で実装**
 
 ### Subagent dispatch — 必須 5 要素
 
