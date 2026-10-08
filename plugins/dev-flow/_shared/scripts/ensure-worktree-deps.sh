@@ -16,7 +16,7 @@
 # <WT>/.devflow-tmp/prerun-setup.json を読み、その worktree に `--lockfile-only --skip-custom` で install して、
 # setup に deps（{ok, note}）と epoch_end（install 完了後の時刻）を足した JSON 1 行を stdout に出す。wrapper は
 # これをそのまま Workflow の args.setup に渡す。wrapper は prerun とは別の Bash 呼び出しでこれを実行する —
-# install は依存の postinstall（repo の任意コード）を走らせるので、sandbox 外で起動される prerun の子にしない。
+# install は依存の postinstall（repo の任意コード）を走らせるので、repo の任意コードを実行しない prerun の子にしない。
 # setup が読めない・ok:true でない・worktree が無いときは stderr に理由を出して exit 2（stdout 空）。
 # deps の失敗は advisory（deps.ok:false + note）で exit 0。
 

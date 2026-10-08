@@ -86,6 +86,24 @@ make_issue_fixture() {
     echo "$output" | jq -e '.stack.frameworks == []'
 }
 
+# ---- (1c) 起動元 repo の .git/config に書かない ----
+# sandbox 内からは起動元 repo の .git/config を書けない。config.lock を置いて config の書き込みを全て失敗させ、
+# それでも worktree を作れること（upstream を書かない）と、再利用時の起点判定が通ることを確かめる。
+
+@test "(1c) .git/config に書けなくても新規作成・再利用とも ok:true で、upstream を書かない" {
+    : >"$ROOT/.git/config.lock"
+    cd "$ROOT"
+    run --separate-stderr "$SCRIPT" --issue 1 --worktree "$WT"
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.ok == true and .worktree_status == "created"'
+    run git -C "$ROOT" config --get "branch.feature/issue-1.merge"
+    [ "$status" -ne 0 ]
+
+    run --separate-stderr "$SCRIPT" --issue 1 --worktree "$WT"
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.ok == true and .worktree_status == "reused"'
+}
+
 # ---- (2) origin に dev 無し ----
 
 @test "(2) origin に dev が無い -> origin/HEAD の default branch (main) を起点にする" {
@@ -160,7 +178,7 @@ make_issue_fixture() {
 
 @test "(6) 既存worktreeの起点が不一致 -> ok:false, reused, worktree_errorに詳細" {
     cd "$ROOT"
-    git worktree add -q --track -b feature/issue-1 "$WT" origin/main
+    git worktree add -q --no-track -b feature/issue-1 "$WT" origin/main
 
     run --separate-stderr "$SCRIPT" --issue 1 --worktree "$WT"
     [ "$status" -eq 0 ]
@@ -177,7 +195,7 @@ make_issue_fixture() {
 
 @test "(6b) 既存worktreeのcheckout branchがfeature/issue-Nでない -> ok:false, worktree_errorに実branch" {
     cd "$ROOT"
-    git worktree add -q --track -b other-branch "$WT" origin/dev
+    git worktree add -q --no-track -b other-branch "$WT" origin/dev
 
     run --separate-stderr "$SCRIPT" --issue 1 --worktree "$WT"
     [ "$status" -eq 0 ]
@@ -203,7 +221,7 @@ make_issue_fixture() {
 }
 
 # ---- (6d) deps install を呼ばない（issue #868）----
-# prerun は git の書き込みのため sandbox 外で起動される。install（依存の postinstall = repo の任意コード）を
+# prerun は repo の任意コードを実行しない。install（依存の postinstall = repo の任意コード）を
 # その子として走らせないことを、lockfile のある repo で install コマンドが 1 度も起動されないことで pin する。
 # install は wrapper が別の Bash 呼び出しで ensure-worktree-deps --setup を実行して行う（そちらの bats 参照）。
 
@@ -242,31 +260,31 @@ make_issue_fixture() {
     [ ! -f "$WT/.devflow-tmp/prerun-setup.json" ]
 }
 
-# ---- (7) push -u 後は origin/feature/issue-N も一致扱い ----
+# ---- (7) pr-iterate-prerun が PR head（origin/feature/issue-N）から作った branch も一致扱い ----
 
-@test "(7) push -u 後の upstream (origin/feature/issue-1) は一致扱い" {
+@test "(7) origin/feature/issue-1 から作った branch の worktree は一致扱い" {
+    git -C "$SEED" checkout -q -b feature/issue-1 dev
+    git -C "$SEED" push -q origin feature/issue-1
     cd "$ROOT"
-    run --separate-stderr "$SCRIPT" --issue 1 --worktree "$WT"
-    [ "$status" -eq 0 ]
-
-    git -C "$ROOT" push -q origin "feature/issue-1"
-    git -C "$WT" branch --set-upstream-to=origin/feature/issue-1 feature/issue-1
+    git fetch -q origin
+    git worktree add -q --no-track -b feature/issue-1 "$WT" origin/feature/issue-1
 
     run --separate-stderr "$SCRIPT" --issue 1 --worktree "$WT"
     [ "$status" -eq 0 ]
-    echo "$output" | jq -e '.ok == true'
+    echo "$output" | jq -e '.ok == true and .worktree_status == "reused"'
 }
 
-# ---- (8) --no-track で upstream 未設定 ----
+# ---- (8) branch の reflog に作成記録が無い ----
 
-@test "(8) upstream tracking 未設定 -> worktree_errorに'upstream'を含む" {
+@test "(8) 起点の記録（branch の reflog）が無い -> ok:false, worktree_errorに'reflog'を含む" {
     cd "$ROOT"
-    git worktree add -q --no-track -b feature/issue-1 "$WT" origin/dev
+    git -c core.logAllRefUpdates=false branch --no-track feature/issue-1 origin/dev
+    git worktree add -q "$WT" feature/issue-1
 
     run --separate-stderr "$SCRIPT" --issue 1 --worktree "$WT"
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.ok == false'
-    echo "$output" | jq -e '.worktree_error | test("upstream")'
+    echo "$output" | jq -e '.worktree_error | test("reflog")'
 }
 
 # ---- (9) prunable (実体削除) からの再作成 ----

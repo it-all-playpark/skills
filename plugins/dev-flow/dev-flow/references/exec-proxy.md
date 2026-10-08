@@ -9,8 +9,7 @@ exec-proxy script の起動形詳細、check-ci の argv 転写、maxTurns 計�
 workflow / subagent prompt から dev-flow 専用 script を呼ぶときは plugin root `bin/` の bare 名
 （`secfloor-classify` / `check-ci` / `journal` 等、拡張子なし）を**先頭トークン**にする。skills 配下の
 絶対パスも `bash ` 前置も書かない（plugin install 環境では skills が plugin root 配下に入り絶対パスが
-破綻する。`bin/` は plugin enable 中 Bash tool の PATH に載り、dotfiles 側 `sandbox.excludedCommands` は
-先頭トークン＝bare 名で登録される。片側だけ変えると dev-flow が止まる）。`bin/<name>` は本体へ
+破綻する。`bin/` は plugin enable 中 Bash tool の PATH に載る）。`bin/<name>` は本体へ
 `exec bash` する 3 行 wrapper（.py 本体は `exec python3`。dev-flow は `export GIT_OPTIONAL_LOCKS=0` を挟んだ 4 行）で、本体と隣接 `*.bats` は移動しない。
 登録名の集合は `tests/bin-wrappers.bats` と `_lib/bin-bare-name-routing.test.mjs` が pin する
 （core `journal` 1 本 + dev-flow 22 本 + playpark-skills 24 本。playpark-skills は
@@ -20,12 +19,24 @@ workflow / subagent prompt から dev-flow 専用 script を呼ぶときは plug
 `plugins/playpark-core/journal/scripts/journal.sh`（repo checkout / link mode 用）。
 いずれも無ければ `no-journal-sh` を log に残し pending を戻す（fail-open）。
 
-repo の任意コードを子として走らせる実行物 — deps install（依存の postinstall）の `ensure-worktree-deps` /
-`detect-and-install`、テストの `redgreen-verify` / `run-tests` — は excludedCommands に登録しない（blast-radius・永続）。
-excluded の実行物は子プロセスごと sandbox 外で走るので、postinstall・テストが `~/.ssh` や gh の資格情報を読める。
-excluded な実行物（`dev-flow-prerun` 等）の子からも呼ばない: deps install は wrapper が prerun と別の Bash 呼び出し
-（`ensure-worktree-deps --setup <worktree>/.devflow-tmp/prerun-setup.json`）で回す。これらが sandbox 内で動くよう、
-index を書く git（`checkout` 等）を使わない。dev-flow の `bin/` wrapper は exec の前に `GIT_OPTIONAL_LOCKS=0` を
+dev-flow の `bin/` はすべて sandbox 内で動かし、`sandbox.excludedCommands` に登録しない（blast-radius・永続）。
+git / gh は sandbox 内で認証される。excluded な実行物は子プロセスごと sandbox 外で走るので、子が走らせる repo の
+任意コード — deps install（依存の postinstall）、テスト、`pr-push` の push が起動する pre-push hook — が `~/.ssh` や
+gh の資格情報を読める。pre-push hook が sandbox 内で前提を満たせない処理（docker 等）は、その repo の hook 側で
+skip する（E2E は CI が回す）。deps install は wrapper が prerun と別の Bash 呼び出し
+（`ensure-worktree-deps --setup <worktree>/.devflow-tmp/prerun-setup.json`）で回す（prerun は repo の任意コードを実行しない）。
+
+起動元 repo の `.git/config`（worktree も共有）は sandbox 内から書けない（Claude Code 組み込みの保護で、設定では
+外せない）。config を書く git / gh を使わない:
+
+- push は `git push origin HEAD`（`-u` を付けない。remote と HEAD を明示すれば push.default に依らず同名 branch へ届く）
+- worktree は `git worktree add --no-track` で作る（upstream を書かない）。`dev-flow-prerun` は再利用 worktree の起点を
+  upstream ではなく branch の reflog の作成記録（`branch: Created from origin/<base>`）で判定する
+- PR の branch は `pr-iterate-prerun` / `dev-flow-prerun` が用意した worktree をそのまま使い、`gh pr checkout` しない
+- push 済みの判定は `@{u}` ではなく `origin/<branch>` と比べる
+
+テストを走らせる `redgreen-verify` / `run-tests` は index を書く git（`checkout` 等）を使わない。
+dev-flow の `bin/` wrapper は exec の前に `GIT_OPTIONAL_LOCKS=0` を
 export する（読み取り系 git の index 書き戻しが `.git/worktrees/*/index.lock` を取りに行かない。必須ロックの
 commit / worktree add 等には効かない）。sandbox が `.git` を書かせないのは skills の live checkout
 （`~/ghq/github.com/it-all-playpark/skills`）だけで、skills 向けの dev-flow は skills-dev（書ける）で動くので通常は踏まない。
@@ -44,17 +55,15 @@ plugin version を上げた直後の解決確認は、**update 後に起動し�
 
 > exec-proxy スクリプトは認証付き network I/O（gh・git push）を内部に持ってはならない（例外は
 > `.claude/rules/dev-flow.md` に列挙した `analyze-issue` と `pr-push` のみ。`pr-push` は PR phase の
-> `git push -u origin HEAD` を内部で 1 回だけ実行し、出力全文を `.devflow-tmp/push-output.log` に残して
+> `git push origin HEAD` を内部で 1 回だけ実行し、出力全文を `.devflow-tmp/push-output.log` に残して
 > 末尾行だけを `<<<PUSH_TAIL_BEGIN>>>` 〜 `<<<PUSH_TAIL_END>>>` で返す。pre-push hook の出力が tool 出力
-> 上限を超えると hook の最終行と `failed to push` 行が agent から見えず、pipe / リダイレクトで末尾を
-> 受ける形は下記の起動形と両立しないため）。GitHub I/O は
-> subagent の Bash で「先頭トークンが gh または git の bare 単文」（gh は --repo で cwd 非依存化。git は `-C` を付けず
-> cwd = worktree で実行する — `git -C <dir>` 形は excludedCommands に一致せず sandbox 内で走り、push / fetch は
-> credential helper、add / commit / merge は write deny 下の `.git` で失敗する。cd &&・bash・env 前置禁止）として実行し、出力を $TMPDIR の file に落とすか、呼び出し側 agent が
+> 上限を超えると hook の最終行と `failed to push` 行が agent から見えないため）。GitHub I/O は
+> subagent の Bash で「先頭トークンが gh または git の bare 単文」（gh は --repo で cwd 非依存化。git の add / commit /
+> push / fetch / merge は cwd = worktree で実行する。cd &&・bash・env 前置禁止）として実行し、出力を $TMPDIR の file に落とすか、呼び出し側 agent が
 > stdout/stderr を argv でスクリプトへ verbatim 転写して、スクリプトは file または argv 入力の
 > 純変換とする。prompt に sandbox / excludedCommands / 特定パス起動の理由を書いてはならない —
 > exec-proxy prompt は決定論スクリプトへの verbatim 転写契約であり、起動形の正しさは
-> excludedCommands という設定側の不変条件である。設定の正当化は本ファイルと AGENTS.md に一箇所だけ
+> 設定側（plugin `bin/` の PATH・isolation guard）の不変条件である。設定の正当化は本ファイルと AGENTS.md に一箇所だけ
 > 置き、per-prompt で再説明しない（prompt 内の再説明は転写契約に判断余地を持ち込み、下流の prompt へ
 > 引用・増幅される）。起動形と prompt の規範に**例外はない**。wall-clock polling を要するサイトも例外ではなく、
 > 1 spawn = 1 判定・ループは workflow script 側に置く: 1 回目の poll は `ci-check`（待機なし）、
@@ -137,7 +146,7 @@ missing_context 生成）は `dev-runner`（sonnet）が担う（issue の要件
 | structural-classify（difft による構造変化/フォーマットのみ分類。Security floor では secfloor-unified の struct フィールド経由 — danger-grep と同一の統合呼び出し） | `null` / `ok:false` / `available:false`（difft 未インストール） / schema 不一致 | fail-open（format_only 除外なし・全ファイル精査の現行動作。警告 log のみ） | advisory な diff 前処理の補助信号。失敗しても classifyShape の realized count 判定（count 欠損は complex floor）・danger-grep・宣言外検出の deterministic gate を一切緩めない |
 | vdelta-verdict（redgreen R1↔R2 の deny-only ラベル精度保護） | `verdict null / 不正 JSON / transitions 欠落` | fail-open（deny せず現行の deterministic 昇格判定のまま） | advisory な昇格ラベル精度の補助信号（INV-10: record_integrity=advisory 恒久）。失敗しても red&&green の決定論ゲート自体は緩めない。comparability≠exact は abstain（並列 stream 混入の誤 deny 防止） |
 | testsurf（`diff-risk-classify.sh` test-weakening クラス → TESTSURF seed） | danger-grep と同一（`ok:false` / schema 不一致 / 空出力） | 既存 TESTSURF item 据え置き・新規 seed なし（同一スクリプトの SEC fail-closed が全 SEC unchecked → HOLD を担保するため安全側は成立） | 検出は決定論 grep、解除は evaluator clearance（evidence 必須）のみ。hit は `source:'seed'` 常時 blocking で merge tier HOLD（軸A: 決定論 hit を policy で緩めない） |
-| pr-create（dev-flow PR phase `pr#<issue>` — `_lib/pr-artifacts.mjs` の `buildCommitMessage` / `buildPrBody` で state（req / plan / ledger / risk hits）から決定論生成した本文を dev-runner-haiku が `.devflow-tmp/commit-msg.txt` / `pr-body.md` へ verbatim 保存し、bare 単文 `git add -A` / `git commit -F` / `pr-push <WT>/.devflow-tmp/push-output.log`（内部で `git push -u origin HEAD`。Bash timeout 600 秒・再発行禁止・`--no-verify` 不使用）/ `gh pr create --draft --base <base> --head <branch> --body-file` を順に実行。git は `-C` を付けない（cwd は EnterWorktree 済みの worktree）: `git -C <WT>` 形は excludedCommands に一致せず sandbox 内で走り、push は credential helper が `~/.config/gh` / keychain を読めずに、add / commit は `.git` が write deny 下の repo（skills 等）で index.lock を作れずに失敗する（issue #700）。PR body は結論1行 / 変更 / 受入条件 / 設計判断（≤120 字×5）/ 検証 / Closes の上限付き 6 セクション構成（`PR_BODY_MAX_CHARS`）） | `null` / schema 不一致 / agent throw | abort（`need()` 包み — PR 作成失敗のまま継続しない） | commit message / PR body の材料（issue title・type・AC・plan.summary・architecture_decisions・task 一覧）は PR phase 時点で全て state にあり、LLM に diff を読み直させて本文を再生成させる理由がない。agent 側の要約・判断を含めない転写契約は post-comment / commit-ensure と同型（git-commit / git-pr skill は単体起動用に残し dev-flow からは呼ばない） |
+| pr-create（dev-flow PR phase `pr#<issue>` — `_lib/pr-artifacts.mjs` の `buildCommitMessage` / `buildPrBody` で state（req / plan / ledger / risk hits）から決定論生成した本文を dev-runner-haiku が `.devflow-tmp/commit-msg.txt` / `pr-body.md` へ verbatim 保存し、bare 単文 `git add -A` / `git commit -F` / `pr-push <WT>/.devflow-tmp/push-output.log`（内部で `git push origin HEAD`。Bash timeout 600 秒・再発行禁止・`--no-verify` 不使用）/ `gh pr create --draft --base <base> --head <branch> --body-file` を順に実行。git は cwd（EnterWorktree 済みの worktree）で実行し、手順 0 で cwd の branch を照合する（issue #700）。PR body は結論1行 / 変更 / 受入条件 / 設計判断（≤120 字×5）/ 検証 / Closes の上限付き 6 セクション構成（`PR_BODY_MAX_CHARS`）） | `null` / schema 不一致 / agent throw | abort（`need()` 包み — PR 作成失敗のまま継続しない） | commit message / PR body の材料（issue title・type・AC・plan.summary・architecture_decisions・task 一覧）は PR phase 時点で全て state にあり、LLM に diff を読み直させて本文を再生成させる理由がない。agent 側の要約・判断を含めない転写契約は post-comment / commit-ensure と同型（git-commit / git-pr skill は単体起動用に残し dev-flow からは呼ばない） |
 | pr-create の中断応答（`pr#<issue>` が手順 1〜4 のどこかで exit 非0 を踏み、`failed_step`（`commit` / `push` / `pr-create`）と `failure_reason`（失敗コマンドの stderr 末尾 1〜3 行 verbatim。push は `pr-push` が `<<<PUSH_TAIL_BEGIN>>>` 〜 `<<<PUSH_TAIL_END>>>` で返した出力末尾行（hook の最終行と git の `failed to push` 行を含む）の verbatim、両マーカーが揃って見えなければ固定文言 `push failed; output tail not available (tool output truncated)`、600 秒 timeout は固定文言 `push timed out after 600s; output tail not available` — マーカーの外の途中出力から理由を推測させない。作文された理由は人間を誤った調査へ向かわせる。push 失敗で `push_header`（pr-push の stdout 1 行目 `pr-push: exit=<rc> log=<path>` の verbatim）が無ければ、timeout 以外は workflow 側が reason を `pr-push not invoked` で始まる固定文言に置き換え push log を案内しない — pr-push を経ない push は log を残さない）を埋めて返した形。`_lib/pr-artifacts.mjs` の `prPhaseFailure` が判定） | `committed === false` / `pr_url` 空文字 / `Number(pr_number)` が正の整数でない、のいずれか | fail-closed（throw せず failure 終端: 返り値 `status` / `error_category` が `pr_phase_failed` で `failed_step` / `failure_reason` / `committed` / `head_sha`（取れた場合）/ `push_log` / `branch` / `phase_durations` / `shape` / `eval_verdict` / `recovery_commands` / `issue_comment` を載せ、journal は `outcome:'failure'` + `error_category:'pr_phase_failed'` + `error_phase:'PR'` + `error_msg` に `dev-flow: PR phase 失敗（step: <failed_step>、reason: <failure_reason>[、push 出力全文: <WT>/.devflow-tmp/push-output.log]）— proxy 応答 pr_url=… pr_number=… committed=…`。nested `workflow('dev-flow:pr-iterate-run')`・Merge tier・終端サマリへ進まない。回収コマンドの issue 投稿は wrapper が top-level の bare `gh issue comment` で行う。リトライ・push の再発行・別 worktree 退避・force push 等の fallback は持たない） | `need()` は null 判定のみで `{committed:false, pr_number:0, pr_url:""}` を通してしまい、closes-check が fail-open で 1 spawn 無駄に走った後 nested pr-iterate の引数検証（`pr: 正の整数が必要です`）で abort する。その abort は label `pr-iterate` を指し、proxy が踏んだ git / gh の失敗（`index.lock: Operation not permitted`・push 403・`gh pr create` 失敗）は agent transcript を掘らないと分からない。失敗の場所と理由を人間に見せて止めることだけが目的で、worktree の書き込み可否を prerun で判定する話は環境固有として repo 側で吸収しない |
 | closes（PR body の Closes 有無。merge-tier-facts の closes サブ結果 — subagent が `gh pr view --json body --jq '.body \| test("Closes #<ISSUE>(\\D\|$)")'` を bare 単文で実行し、stdout の `true` / `false` だけを `--closes-data` で script へ渡す。`_lib/merge-tier-facts.mjs` の `parseClosesFact` が判定） | closes サブ結果 `ok:false`（`--closes-data` 省略 / `true`・`false` 以外）/ schema 不一致 / merge-tier-facts 全体の throw | fail-open（`unverified`。警告のみ、再投入は行わない） | 取得失敗を「Closes 欠落」と混同しない。本文を haiku に転写させると転写のゆれ（二重 JSON 化・後半欠落）で Closes 行を見落とし偽の `pr_closes_missing` HOLD を出すため、本文は gh の `--jq` で真偽値に畳み argv にも prompt にも載せない |
 | closes-reinject（Merge tier で Closes 欠落を検出したとき、run が決定論で組んだ最新の本文（Final reconcile の ac-checkbox-sync が組み直したらそれ）を `.devflow-tmp/pr-body-reinject.md` へ Write し `gh pr edit --body-file` で再投入、同じ spawn で上記 `--jq` 判定を再取得） | `edited!==true` / `null` / schema 不一致 / agent throw / 再取得が `false` | fail-closed（`missing` → `classifyMergeTier` の HOLD 理由 `pr_closes_missing`）。再投入は通ったが再取得の stdout が無い / `true`・`false` 以外は `unverified`（fail-open） | Closes 欠落は merge 後に issue が自動 close されない実害であり、gh の `--jq` で決定論確定できるため fail-open にしない。再確認のための別 spawn は持たない |
@@ -151,7 +160,7 @@ missing_context 生成）は `dev-runner`（sonnet）が担う（issue の要件
 | head-tree-oid（`git -C <WT> rev-parse <headRefOid>^{tree}` — merge-tier-facts の head_tree サブ結果。script が pr.headRefOid から無条件に採り、JS は hash_mismatch かつ headRefOid 取得済みかつ mergeDiffHash 非 null のときのみ参照する、Merge tier phase） | head_tree サブ結果 `ok:false` / schema 不一致 / headRefOid 欠落 / mergeDiffHash null | fail-open（hash_mismatch 維持 → HOLD。3 条件成立時のみ hash_reconverged へ置換） | HOLD を外す方向にだけ決定論証拠（PR head tree = merge 対象 tree = 評価済み tree）を要求する。証拠が取れなければ既存どおり HOLD（軸A 不変） |
 | pr-meta（pr-iterate Iterate phase の url/head_ref/cwd/epoch 取得 probe。label 'pr-meta'。nested 起動では起動されない — dev-flow（`workflow('dev-flow:pr-iterate-run')`、`caller:'dev-flow'`）と `/pr-iterate` wrapper（`pr-iterate-prerun` の出力、`caller:'standalone'`）が `args.nested` で同値を供給する。nested 無しで Workflow を直接起動したときのみ実行） | null / schema 不一致 / throw | fail-open（cwd 欠落は isoWt='.' fallback + telemetry `save_failed`、epoch 欠落は isoToken が PR 番号へ fallback） | advisory な meta 取得。probe 失敗で run を落とさない |
 | issue-labels（`gh issue view --json labels` による empty-diff gate の cross-repo lazy ラベル probe。dhGate.empty===true 時のみ実行） | null / `ok:false` / schema 不一致 / throw | fail-safe（非 cross-repo 扱いで既存 empty-diff fail-closed 経路（差し戻し1回→再度空なら throw）を維持） | ラベル不明を人間の opt-in 成立と同一視しない。成果物は worktree/外部 repo に残存するため破壊的ではなく、throw メッセージにラベル付与のヒントを追記して人間の再実行を促す |
-| commit-ensure（subagent の bare git 単文シーケンス（`git status --porcelain` の porcelain 行有無判定（`: Operation not permitted` 等の警告行は数えない・exit 非0 は dirty）→ `git add -A` → `git commit` → `git push`（失敗時 `git push -u origin HEAD`）→ 再 `git status --porcelain` → `git rev-list "@{u}"..HEAD --count`）による決定論検証 — fix 適用直後の未コミット変更検証 + commit/push 回収。pr-iterate AC-3） | null / schema 不一致 / agent throw / dirty なのに committed・pushed が true でない | fail-safe（terminal='fix_failed' で人間へエスカレーション） | fix agent の self-report（applied:true）を commit 済みと同一視しない（incentive-structural: 完了宣言を当事者に self-judge させず決定論 git 検証で突合）。未コミット/未 push のまま次 iteration へ進むと再 review が stale な PR diff を見る |
+| commit-ensure（subagent の bare git 単文シーケンス（`git status --porcelain` の porcelain 行有無判定（`: Operation not permitted` 等の警告行は数えない・exit 非0 は dirty）→ `git add -A` → `git commit` → `git push origin HEAD`（再発行しない）→ 再 `git status --porcelain` → `git rev-list "origin/<head_ref>"..HEAD --count`）による決定論検証 — fix 適用直後の未コミット変更検証 + commit/push 回収。pr-iterate AC-3） | null / schema 不一致 / agent throw / dirty なのに committed・pushed が true でない | fail-safe（terminal='fix_failed' で人間へエスカレーション） | fix agent の self-report（applied:true）を commit 済みと同一視しない（incentive-structural: 完了宣言を当事者に self-judge させず決定論 git 検証で突合）。未コミット/未 push のまま次 iteration へ進むと再 review が stale な PR diff を見る |
 | worktree-dirty（subagent の bare `git status --porcelain` 単文 — pr-iterate 非 lgtm 終端時の作業ツリー dirty 検出。pr-iterate AC-2） | null / schema 不一致 / agent throw | fail-open（worktree_dirty='unknown' + 警告 log のみ。status・gate 判定へ影響しない） | advisory な終端観測（返り値 `worktree_dirty`。'dirty'/'clean'/'unknown' の 3 値）。probe 失敗で run を落とすと異常終端の素通しを再生産する |
 | isolation-cleanup（subagent の bare `git -C <worktree> clean -fdx -- <target>` 単文 — probe 直前の残置物除去。dev-flow は prerun（top-level Bash）が run 開始前に `.devflow-tmp` 全体を `git clean -fdx` 済みのため、subagent 呼び出し自体が無い。pr-iterate は nested 無しの直接起動時のみ canonical `_lib/isolation-probe.mjs` の exported 定数 `ISOLATION_PROBE_CLEANUP_GLOB`（`.devflow-tmp/.isolation-probe*` — probe の token 形・legacy 無 token 形の両方にマッチ）単体を対象に subagent 呼び出しで cleanup を実行する。nested 起動では pr-iterate 側の呼び出し自体を skip する — dev-flow からの起動は dev-flow 側の prerun cleanup が、`/pr-iterate` wrapper 経由の単体起動は `pr-iterate-prerun` が同じ glob の `git clean -fdx` を run 前に済ませているため） | `cleaned:false` / null / schema 不一致 / agent throw | fail-open（警告 log のみ。gate・merge tier・security floor へ影響しない） | probe 対象パスが run 毎に一意なため、除去に失敗しても probe は前 run の残置物と衝突せず成立する（cleanup 成功への依存を切った）。cleanup 自体を fail-closed にすると、除去対象が無い正常系（新規 worktree）と区別できない失敗で run を落とす |
 | cross-repo-artifacts（`_shared/scripts/cross-repo-artifacts.sh` による worktree 外 working tree の dirty 検証。cross-repo ラベル検出時のみ実行） | null / `ok:false` / schema 不一致 / found=0 | fail-safe（handoff 不成立で既存 empty-diff fail-closed 経路へフォールスルー。ラベルのみで gate を skip しない） | 決定論的証拠（dirty working tree）なしに gate を skip すると軸A invariant（決定論ゲートを LLM/ラベルで緩めない）に反する |

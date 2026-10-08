@@ -1211,22 +1211,27 @@ function ciFixGuidance({ pr, base }) {
 // push の実行規約（fix prompt と commit-ensure prompt で共有）。pre-push hook が Bash tool の既定 timeout
 // （120 秒）を超える repo では push が background に回され、push 再発行で hook が並走し、完了前の後続操作が
 // 未 push の head を前提に失敗する。timeout を明示し、background 化・再発行を禁じる。
-const PUSH_RULE = 'push（`git push` / `git push -u origin HEAD`）は Bash tool の `timeout: 600000` を指定して実行し、`run_in_background` は使わない（禁止）。'
+// push は `git push origin HEAD`: worktree は upstream 無しで作られ（起動元 repo の .git/config は sandbox 内から
+// 書けない）、remote と HEAD を明示すれば push.default に依らず同名 branch へ届き、upstream も書かない。
+const PUSH_RULE = 'push（`git push origin HEAD`）は Bash tool の `timeout: 600000` を指定して実行し、`run_in_background` は使わない（禁止）。'
   + 'push の結果が返るまで次の手順を実行しない。push を再発行しない（timeout・background 化した場合も含む）。'
   + '600 秒の timeout に達した場合もリトライしない。'
 
 // fix agent の prompt（review 指摘・CI 失敗の両経路）。必須 5 要素（Objective / Output format / Tools / Boundary /
 // Token cap）を揃える。Boundary は incentive-structural — fix agent は直せない指摘を前に worktree の外や
 // GitHub 上の状態を書き換える経路を自分で組み立てるため、禁止を prompt 側で明示する。
+// 作業ツリーは dev-flow / pr-iterate-prerun が PR head の branch で用意済みなので checkout させない
+// （`gh pr checkout` は branch の追跡設定を起動元 repo の .git/config に書き、sandbox 内では失敗する）。
 function fixPrompt({ objective, issuesHeading, issuesText, guidance = '' }) {
+  const headRef = prMeta?.head_ref || ''
   return `## Objective\n${objective}\n\n`
-    + `## Steps\n(1) \`gh pr checkout ${PR}\` で PR ブランチを checkout、(2) 下記の${issuesHeading}を修正、`
-    + `(3) Conventional Commits 形式で commit、(4) \`git push\` で push。\n`
+    + `## Steps\n作業ツリー（${isoWt}）は PR ブランチ${headRef ? `（\`${headRef}\`）` : ''}を checkout 済み。branch を切り替えずに、`
+    + `(1) 下記の${issuesHeading}を修正、(2) Conventional Commits 形式で commit、(3) \`git push origin HEAD\` で push。\n`
     + `${PUSH_RULE}timeout に達した場合はそこで中断し、applied:false とし、summary に timeout に達した旨と push の stderr 末尾を書く。\n\n`
     + `解消すべき${issuesHeading}:\n${issuesText}\n`
     + (guidance ? `\n${guidance}` : '')
     + `\n## Output format\n{ "applied": boolean, "files": string[], "summary": string }。applied は修正を commit・push まで終えたときだけ true。files は変更したファイルの repo 相対パス。JSON のみ返せ。\n`
-    + `\n## Tools\n使用可: Read, Edit, Write, Grep, Glob, Bash（git、\`gh pr checkout\` / \`gh pr checks\` / \`gh pr view\` / \`gh run view\`、テスト実行）。subagent の起動は禁止。\n`
+    + `\n## Tools\n使用可: Read, Edit, Write, Grep, Glob, Bash（git、\`gh pr checks\` / \`gh pr view\` / \`gh run view\`、テスト実行）。subagent の起動は禁止。\n`
     + `\n## Boundary\n`
     + `- 書き込みは worktree（${isoWt}）の中だけ。worktree の外のファイル・他 repo（別の clone や worktree を含む）を変更しない\n`
     + `- ブランチを作らない（\`git branch\` / \`git checkout -b\` / \`git switch -c\` / \`git worktree add\` を使わない）。commit・push は PR ブランチにだけ行う\n`
@@ -1397,18 +1402,16 @@ const PORCELAIN_DIRTY_RULE = '【dirty 判定基準】出力のうち porcelain 
 // （新規 agent spawn を増やさない）。shaPrev（この round の review 時点の head sha）が確定している
 // ときだけ shortstat 手順を含める。返り値 { ensured, headSha, deltaLines } の headSha / deltaLines は
 // 取得失敗で null（次 round は resolveReviewScope が full にフォールバックする）。
-// .git へ書き込む add / commit と network を伴う push は `git -C ${isoWt}` を付けない bare 形にする
-// : `git -C` 形は sandbox の excludedCommands に当たらず sandbox 内で走り、push は
-// credential helper が、add / commit は `.git` が write deny 下の repo で index.lock 作成が失敗する。
-// subagent の cwd は isoWt（agent 自身の pwd / nested は NESTED.cwd）なので -C を外しても対象は
-// 変わらない。読み取りのみの status / rev-list / rev-parse / diff は -C のまま。
+// add / commit / push は cwd（isoWt。agent 自身の pwd / nested は NESTED.cwd）で実行し、読み取りのみの
+// status / rev-list / rev-parse / diff は -C ${isoWt} を付ける。worktree は upstream を持たない（起動元 repo の
+// .git/config は sandbox 内から書けない）ので、push 済みの判定は `@{u}` ではなく origin/<head_ref> と比べる。
 // status の dirty 判定は PORCELAIN_DIRTY_RULE に従う。
 async function ensureFixCommitted(i, shaPrev) {
   const withDelta = isDeltaSha(shaPrev)
   let ensured = null
   try {
     ensured = await trackedAgent(
-      `## Objective\nfix#${i} 適用後の作業ツリーに未コミット変更が残っていないことを保証し（残っていれば commit + push で回収する）、commit 後の head sha${withDelta ? ' と fix delta の行数' : ''}を返す。\n\n## Steps\n以下を順に bare 単文（先頭トークンが git。cd 前置・bash 前置・env 代入前置・&& 連結禁止）で実行せよ:\n${PORCELAIN_DIRTY_RULE}\n1. \`git -C ${isoWt} status --porcelain\` を実行する。判定基準で clean（porcelain 行が 0 行）なら dirty:false, committed:false, pushed:false として手順 5 へ進む。\n2. 判定基準で dirty（porcelain 行が 1 行以上、または exit 非0）なら dirty:true とし、順に実行: \`git add -A\` → \`git commit -m "fix(pr-${PR}): commit leftover review fixes (iteration ${i})"\` → \`git push\`（push が timeout 以外で失敗（exit 非0）した場合のみ \`git push -u origin HEAD\` を 1 回実行。timeout に達した場合は再発行せず手順 3 へ進む）。${PUSH_RULE}\n3. \`git -C ${isoWt} status --porcelain\` を再実行し、手順 1 と同じ判定基準で判定する。clean（porcelain 行が 0 行）なら committed:true、dirty なら committed:false。\n4. \`git -C ${isoWt} rev-list "@{u}"..HEAD --count\` を実行する。警告行を除いた出力が 0 なら pushed:true。コマンド失敗または非数値出力なら pushed:false。dirty:true とする。\n5. \`git -C ${isoWt} rev-parse HEAD\` を実行し、stdout の 40 桁 hex をそのまま head_sha とする（失敗時は空文字）。\n${withDelta ? `6. \`git -C ${isoWt} diff --shortstat ${shaPrev.trim()}..HEAD\` を実行し、stdout の 1 行を一字一句そのまま delta_shortstat とする（stdout が空なら空文字。失敗時はキーを省略）。\n7. { "dirty": <1の結果>, "committed": <3の結果>, "pushed": <4の結果>, "head_sha": <5の結果>, "delta_shortstat": <6の結果> } を返す。` : `6. { "dirty": <1の結果>, "committed": <3の結果>, "pushed": <4の結果>, "head_sha": <5の結果> } を返す。`}\n\n## Output format\n{ "dirty": boolean, "committed": boolean, "pushed": boolean, "head_sha": string${withDelta ? ', "delta_shortstat": string' : ''} }\nprose 禁止。JSON のみ返せ。\n\n## Tools\n使用可: Bash, Read\n\n## Boundary\n上記 git コマンド以外のファイル変更・git 操作禁止。\n\n## Token cap\nJSON のみ。1 行以内。`,
+      `## Objective\nfix#${i} 適用後の作業ツリーに未コミット変更が残っていないことを保証し（残っていれば commit + push で回収する）、commit 後の head sha${withDelta ? ' と fix delta の行数' : ''}を返す。\n\n## Steps\n以下を順に bare 単文（先頭トークンが git。cd 前置・bash 前置・env 代入前置・&& 連結禁止）で実行せよ:\n${PORCELAIN_DIRTY_RULE}\n1. \`git -C ${isoWt} status --porcelain\` を実行する。判定基準で clean（porcelain 行が 0 行）なら dirty:false, committed:false, pushed:false として手順 5 へ進む。\n2. 判定基準で dirty（porcelain 行が 1 行以上、または exit 非0）なら dirty:true とし、順に実行: \`git add -A\` → \`git commit -m "fix(pr-${PR}): commit leftover review fixes (iteration ${i})"\` → \`git push origin HEAD\`（失敗・timeout でも再発行せず手順 3 へ進む）。${PUSH_RULE}\n3. \`git -C ${isoWt} status --porcelain\` を再実行し、手順 1 と同じ判定基準で判定する。clean（porcelain 行が 0 行）なら committed:true、dirty なら committed:false。\n4. \`git -C ${isoWt} rev-list "origin/${prMeta?.head_ref || ''}"..HEAD --count\` を実行する。警告行を除いた出力が 0 なら pushed:true。コマンド失敗または非数値出力なら pushed:false。dirty:true とする。\n5. \`git -C ${isoWt} rev-parse HEAD\` を実行し、stdout の 40 桁 hex をそのまま head_sha とする（失敗時は空文字）。\n${withDelta ? `6. \`git -C ${isoWt} diff --shortstat ${shaPrev.trim()}..HEAD\` を実行し、stdout の 1 行を一字一句そのまま delta_shortstat とする（stdout が空なら空文字。失敗時はキーを省略）。\n7. { "dirty": <1の結果>, "committed": <3の結果>, "pushed": <4の結果>, "head_sha": <5の結果>, "delta_shortstat": <6の結果> } を返す。` : `6. { "dirty": <1の結果>, "committed": <3の結果>, "pushed": <4の結果>, "head_sha": <5の結果> } を返す。`}\n\n## Output format\n{ "dirty": boolean, "committed": boolean, "pushed": boolean, "head_sha": string${withDelta ? ', "delta_shortstat": string' : ''} }\nprose 禁止。JSON のみ返せ。\n\n## Tools\n使用可: Bash, Read\n\n## Boundary\n上記 git コマンド以外のファイル変更・git 操作禁止。\n\n## Token cap\nJSON のみ。1 行以内。`,
       { agentType: 'dev-runner-haiku', schema: COMMIT_ENSURE, label: `commit-ensure#${i}`, phase: 'Iterate' },
     )
   } catch (e) {

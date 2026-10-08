@@ -5085,7 +5085,7 @@ function prPhasePrompt({ wt, base, branch, repo, issue, commitMessage, prBody, l
   const title = str(commitMessage).split('\n')[0].replace(/"/g, '\\"');
   const repoArg = repo ? ` --repo ${repo}` : '';
   const labelArg = prLabelArg(label);
-  const bare = '（cd 前置・`bash` 前置・環境変数代入前置・&& 連結・パイプ・リダイレクト禁止。cwd は worktree（EnterWorktree 済み）なので git には -C も cd も付けない）';
+  const bare = '（cd 前置・`bash` 前置・環境変数代入前置・&& 連結・パイプ・リダイレクト禁止。cwd は worktree（EnterWorktree 済み））';
   return `## Objective\nissue #${issue} の変更を commit + push し draft PR を作成して、PR URL と番号を返す。\n\n`
     + `## 本文の保存\n`
     + `**Write tool** を使い、下記 2 つの delimiter 内の本文を **一字一句そのまま**（要約・整形・追記・改変・shell 経由の書き出し禁止）保存せよ。\n`
@@ -5159,7 +5159,7 @@ function prPhaseRecoveryCommands({ committed, failedStep, base, branch, repo, co
   const title = str(commitMessage).split('\n')[0].replace(/"/g, '\\"');
   const cmds = [];
   if (committed !== true) cmds.push('git add -A', 'git commit -F .devflow-tmp/commit-msg.txt');
-  if (committed !== true || failedStep !== 'pr-create') cmds.push('git push -u origin HEAD');
+  if (committed !== true || failedStep !== 'pr-create') cmds.push('git push origin HEAD');
   cmds.push(`gh pr create --draft --body-file .devflow-tmp/pr-body.md${repoArg} --base ${base} --head ${branch} --title "${title}"${prLabelArg(label)}`);
   cmds.push('/pr-iterate <N>');
   return cmds;
@@ -7599,9 +7599,7 @@ let finalCi = null   // finalCiVerdict の結果。finalReconcile が unavailabl
 let finalRecheckTargets = []   // pr-iterate fix が触ったファイルに言及する解消済み item（Final AC reconcile で再検証）
 if ((iterate?.fixes_applied ?? 0) > 0) {
   // Step1 sync（fail-safe）
-  // fetch / merge は `git -C` も `cd` 前置も付けない bare 単文（cwd は WT）。どちらの形も sandbox の
-  // excludedCommands に当たらず、fetch は credential helper、merge は write deny 下の `.git` で失敗する。
-  // -C を外した以上 fetch/merge の対象は subagent の cwd のみで決まる。resume・直接起動等で cwd が
+  // fetch / merge は cwd（WT）で実行する bare 単文。対象は subagent の cwd で決まる。resume・直接起動等で cwd が
   // 共有 checkout のままだと無関係な worktree を書き換えるため、手順 0 で `git rev-parse --abbrev-ref
   // HEAD` を branch と照合し、不一致なら fetch/merge を実行せず ok:false で中断する
   const sync = await trackedAgent(

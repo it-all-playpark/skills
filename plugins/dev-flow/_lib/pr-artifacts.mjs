@@ -512,14 +512,10 @@ export function prBodyEditPrompt({ wt, pr, repo, prBody, fileName }) {
 // 手順 1〜4 のどれかが失敗したらそこで中断し、`failed_step`（commit / push / pr-create）と
 // `failure_reason`（失敗コマンドの stderr 末尾 1〜3 行 verbatim）を埋めて返す — どこで何に失敗したかは
 // proxy しか観測できず、workflow 側はこの 2 値を failure 終端の返り値と journal に載せて人間に見せる（prPhaseFailure）。
-// git は `-C <wt>` を付けない bare 形にする（issue #700）: `git -C` 形は sandbox の excludedCommands に
-// 当たらず sandbox 内で走り、push は credential helper が `~/.config/gh` / keychain を読めずに、
-// add / commit は `.git` が sandbox の write deny 下にある repo（skills 等）で index.lock を作れずに失敗する。
-// subagent の cwd は worktree（EnterWorktree 済み）なので -C を外しても対象 worktree は変わらない。
-// -C を外した以上、add -A / commit / push の対象は subagent の cwd のみで決まる。dev-flow-run は
-// cwd がその worktree であることを検証しない（isolation probe は worktree 絶対パスへの Write 可否
-// しか見ない）ため、resume や直接起動で cwd が共有 checkout のまま渡ってくると無関係な変更を
-// commit・push しうる（issue #700）。よって手順 0 として `git rev-parse --abbrev-ref HEAD` を
+// git は cwd（EnterWorktree 済みの worktree）で実行するので、add -A / commit / push の対象は subagent の
+// cwd で決まる。dev-flow-run は cwd がその worktree であることを検証しない（isolation probe は worktree
+// 絶対パスへの Write 可否しか見ない）ため、resume や直接起動で cwd が共有 checkout のまま渡ってくると
+// 無関係な変更を commit・push しうる（issue #700）。よって手順 0 として `git rev-parse --abbrev-ref HEAD` を
 // branch と照合し、不一致なら git add 等を実行せず failed_step:"commit" で中断する。
 // push は pre-push hook が Bash tool の既定 timeout（120 秒）を超える repo がある。timeout 未指定だと
 // push が background に回され、push 完了前の gh pr create（head sha 未着で失敗）や push 再発行
@@ -527,7 +523,7 @@ export function prBodyEditPrompt({ wt, pr, repo, prBody, fileName }) {
 // timeout 到達はリトライせず failed_step:"push" で中断させる（--no-verify は hook の検査を捨てるので使わない）。
 // push は bare `git push` ではなく `pr-push <log>`（plugin bin/）で実行する: pre-push hook の出力は
 // Bash tool の出力上限を超えると途中で切れ、hook の最終行と git の `failed to push` 行が agent から
-// 見えない。pipe / リダイレクトを付けた git push は sandbox 除外に一致しない。pr-push は出力全文を
+// 見えない。pr-push は push を `git push origin HEAD`（upstream を `.git/config` に書かない）で行い、出力全文を
 // `.devflow-tmp/push-output.log` に残し、末尾行だけを PUSH_TAIL マーカーで挟んで返す。マーカーが
 // 揃って見えないときは出力の途中から理由を推測させず、固定文言（PR_PUSH_TAIL_UNAVAILABLE）を返させる
 // — 作文された理由は人間を誤った調査へ向かわせる。
@@ -561,7 +557,7 @@ export function prPhasePrompt({ wt, base, branch, repo, issue, commitMessage, pr
   const title = str(commitMessage).split('\n')[0].replace(/"/g, '\\"');
   const repoArg = repo ? ` --repo ${repo}` : '';
   const labelArg = prLabelArg(label);
-  const bare = '（cd 前置・`bash` 前置・環境変数代入前置・&& 連結・パイプ・リダイレクト禁止。cwd は worktree（EnterWorktree 済み）なので git には -C も cd も付けない）';
+  const bare = '（cd 前置・`bash` 前置・環境変数代入前置・&& 連結・パイプ・リダイレクト禁止。cwd は worktree（EnterWorktree 済み））';
   return `## Objective\nissue #${issue} の変更を commit + push し draft PR を作成して、PR URL と番号を返す。\n\n`
     + `## 本文の保存\n`
     + `**Write tool** を使い、下記 2 つの delimiter 内の本文を **一字一句そのまま**（要約・整形・追記・改変・shell 経由の書き出し禁止）保存せよ。\n`
@@ -650,13 +646,15 @@ export function prPhaseFailure(pr, { pushLog } = {}) {
 // `.devflow-tmp/` に保存済みのものを使う — 再生成すると run が決定論で組んだ本文（Closes 行・AC・設計判断）と
 // 食い違う。commit 未了なら add + commit から、pr-create で落ちた run は push 済みなので PR 作成から始める。
 // それ以外（push / unknown）は push から — 再 push は up-to-date で終わるので、段が不明でも飛ばさない。
+// push は remote と HEAD を明示する: upstream を `.git/config` に書かず（sandbox 内の Claude からも実行できる）、
+// push.default に依らず同名 branch へ届く（人間の端末でも同じ形で通る）。
 // `<N>` は gh pr create が出力した PR 番号。
 export function prPhaseRecoveryCommands({ committed, failedStep, base, branch, repo, commitMessage, label = null }) {
   const repoArg = repo ? ` --repo ${repo}` : '';
   const title = str(commitMessage).split('\n')[0].replace(/"/g, '\\"');
   const cmds = [];
   if (committed !== true) cmds.push('git add -A', 'git commit -F .devflow-tmp/commit-msg.txt');
-  if (committed !== true || failedStep !== 'pr-create') cmds.push('git push -u origin HEAD');
+  if (committed !== true || failedStep !== 'pr-create') cmds.push('git push origin HEAD');
   cmds.push(`gh pr create --draft --body-file .devflow-tmp/pr-body.md${repoArg} --base ${base} --head ${branch} --title "${title}"${prLabelArg(label)}`);
   cmds.push('/pr-iterate <N>');
   return cmds;

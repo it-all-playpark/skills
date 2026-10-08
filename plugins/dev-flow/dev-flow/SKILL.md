@@ -77,8 +77,8 @@ worktree を作り `EnterWorktree` しておくことで probe が成立する�
    `ensure-worktree-deps --setup <prerun 出力の worktree>/.devflow-tmp/prerun-setup.json` を 1 回実行する
    （前置形は使わない。手順2 のコマンドに `&&` / `;` / パイプで繋がない）。stdout の JSON 1 行が prerun の出力に
    `deps`（`{ok, note}`）と `epoch_end`（install 完了後の時刻）を足した **setup** で、手順4 にこれを渡す。
-   install は依存の postinstall（対象 repo の任意コード）を走らせるので、sandbox 外で起動される
-   `dev-flow-prerun` の子にせず、この呼び出しで回す。`deps.ok:false` は advisory なので停止しない
+   install は依存の postinstall（対象 repo の任意コード）を走らせるので、`dev-flow-prerun`（repo の
+   任意コードを実行しない）の子にせず、この呼び出しで回す。`deps.ok:false` は advisory なので停止しない
    （run 内で implementer への警告になる）。exit 2（stdout 空）は setup ファイルが読めない場合で、
    stderr を verbatim で人間に報告して停止する。
 
@@ -122,7 +122,7 @@ pr-push を経ずに push した場合は載らず、`failure_reason` が `pr-pu
    を実行する（`repo` が null なら `--repo` を省く。`cd X &&` / env 前置 / `bash` 前置は付けない）
 
 `issue_comment` の回収コマンドは `committed` と `failed_step` から決まる。commit 未了なら `git add -A` →
-`git commit -F .devflow-tmp/commit-msg.txt` から、push で止まった run は `git push -u origin HEAD` から、
+`git commit -F .devflow-tmp/commit-msg.txt` から、push で止まった run は `git push origin HEAD` から、
 pr-create で止まった run は `gh pr create --draft --body-file .devflow-tmp/pr-body.md ...` から始まり、最後は
 `/pr-iterate <N>`。commit message と PR body は run が `.devflow-tmp/` に保存済みのものを使い、再生成しない
 （run が決定論で組んだ Closes 行・AC・設計判断と食い違うため）。wrapper は回収コマンドを自分で実行しない —
@@ -190,8 +190,7 @@ worktree → in_flight / それ以外 → ready。ready は番号の昇順に貪
   `go.sum` / `flake.lock` / `uv.lock` / `poetry.lock` は repo 内のどこにあっても互いに重なりとみなす（依存追加は
   別 issue でも同じ lockfile を書き換え、merge 時に必ず衝突するため）。依存を足す issue は lockfile を申告に含める
 - **読み取り失敗は ok:false**: gh の読み取りに失敗すると `{"ok":false,"error":...}` で非 0 終了する（失敗した
-  issue を ready に倒さない）。`dev-flow-ready-set` が sandbox の `excludedCommands` に登録されていない環境では
-  gh の資格情報が読めず、常にこの経路で止まる
+  issue を ready に倒さない）
 
 ## needs_clarification の扱い
 

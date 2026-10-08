@@ -176,7 +176,7 @@ extract_paths_block() {
 @test "(13) SKILL.md Phase 7 は起票した agent issue に dev-flow-ready-set を bare 名先頭で実行し、dry-run と ok:false では launch を出さない" {
     phase7="$(extract_section "$SKILL_MD" "### Phase 7")"
     [ -n "$phase7" ]
-    # 起動形は bare 名が先頭トークン（excludedCommands の先頭トークン一致）
+    # 起動形は bare 名が先頭トークン（plugin bin/ の PATH 解決）
     printf '%s\n' "$phase7" | grep -q '^dev-flow-ready-set \[--repo owner/repo\] --with-in-flight <M1> <M2> \.\.\.$'
     [[ "$phase7" == *"human issue は渡さない"* ]]
     [[ "$phase7" == *'`--dry-run` では issue 番号が無いので実行しない'* ]]

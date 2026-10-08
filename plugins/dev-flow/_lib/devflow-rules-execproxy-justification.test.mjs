@@ -2,7 +2,7 @@
 // `.claude/rules/dev-flow.md` の exec-proxy 規範（「prompt に sandbox / excludedCommands /
 // 特定パス起動の理由を書いてはならない」）の正当化を、外形的理由（「分類器に検知されるから」）
 // から実体的理由（exec-proxy prompt は決定論スクリプトへの verbatim 転写契約であり、起動形の
-// 正しさは excludedCommands という設定側の不変条件であること）へ書き換えたことを source-pin する
+// 正しさは設定側の不変条件であること）へ書き換えたことを source-pin する
 // 静的テスト。
 //
 // implementer-guard-blocked-contract.test.mjs の source-pin 方式を踏襲する。

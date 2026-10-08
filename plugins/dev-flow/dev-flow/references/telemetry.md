@@ -52,8 +52,8 @@ nested pr-iterate を起動した dev-flow run は pr-iterate と dev-flow の e
   `ensure-worktree-deps --setup` の deps install 完了時）から、残りの mark は phase 境界に隣接する既存 exec-proxy / agent 応答の optional epoch から給電する
   （fail-open）。**給電元応答の完了タイミング依存の skew を含むため、絶対値ではなく相対比較・分布用途で解釈すること。
   start〜setup_end（deps install 等の prerun 決定論処理 + wrapper turn）はどの phase にも属さない残差
-  （duration_seconds − Σphase_durations）。deps install は sandbox 内で回すため prerun（excluded）の子から外して
-  別呼び出しにした（issue #868）ので、analyze 段と deps install は並列ではなく直列になり、この残差はその分長い。Final reconcile skip 時（fixes_applied=0）は final キー自体が欠落する**。
+  （duration_seconds − Σphase_durations）。deps install は prerun（repo の任意コードを実行しない）の子にせず
+  別呼び出しで回す（issue #868）ので、analyze 段と deps install は並列ではなく直列になり、この残差はその分長い。Final reconcile skip 時（fixes_applied=0）は final キー自体が欠落する**。
   PR phase 失敗の run は pr_end と end を PR phase proxy（`pr#<issue>`）応答の epoch から給電し、iterate / final キーを持たない。
   mark 取得失敗は当該 duration キーの欠落（全滅時は両キーとも出ない）。
 - `eval_model_config` / `review_model_config` / `impl_model_config`: 3 agent とも override を渡さず frontmatter

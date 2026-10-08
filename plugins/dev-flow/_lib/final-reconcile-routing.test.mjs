@@ -193,15 +193,13 @@ test('[final-reconcile] (b) fixes=1 + test green → reverified + final_test_gre
   assert.ok(result !== null, '(b) workflow は return object を返すべきだが null だった');
 
   assert.ok(calls.some((c) => c.label === 'reconcile-sync'), "(b) 'reconcile-sync' が呼ばれるはず");
-  // issue #700: fetch / merge は `git -C` 形だと sandbox 除外に当たらず、fetch は credential helper、
-  // merge は write deny 下の .git で失敗する。cwd は WT なので bare 形で指示する
+  // fetch / merge は cwd（WT）で実行する bare 単文
   assert.ok(syncPrompt?.includes('git fetch origin ') && syncPrompt?.includes('git merge --ff-only FETCH_HEAD'),
     `(b) reconcile-sync の prompt は bare の git fetch / git merge を含むべき: ${syncPrompt}`);
-  assert.ok(!/git -C /.test(syncPrompt ?? ''), `(b) reconcile-sync の prompt に git -C 形が含まれてはならない: ${syncPrompt?.match(/git -C [^\n]*/)?.[0]}`);
   // cd 前置の複合形（`cd <WT> && git fetch …`）へ誘導しない: 「cd <WT> で作業」を置かず bare 単文と cd 前置禁止を明示する
   assert.ok(!/cd \S+ で作業/.test(syncPrompt ?? ''), `(b) reconcile-sync の prompt は「cd <WT> で作業」を含んではならない: ${syncPrompt?.slice(0, 200)}`);
   assert.ok(syncPrompt?.includes('bare 単文') && syncPrompt?.includes('cd 前置'), `(b) reconcile-sync の prompt は bare 単文・cd 前置禁止を指示すべき: ${syncPrompt?.slice(0, 200)}`);
-  // issue #700: -C を外した fetch/merge は cwd のみで対象が決まる。手順 0 で cwd の branch を
+  // issue #700: fetch/merge は cwd のみで対象が決まる。手順 0 で cwd の branch を
   // 照合し、不一致なら fetch/merge を実行せず ok:false で中断する指示を持つべき
   assert.ok(syncPrompt?.includes('git rev-parse --abbrev-ref HEAD'), `(b) reconcile-sync の prompt は手順 0 の branch 確認コマンドを含むべき: ${syncPrompt}`);
   assert.ok(syncPrompt?.includes('cwd branch mismatch'), `(b) reconcile-sync の prompt は cwd branch mismatch での中断を指示すべき: ${syncPrompt}`);
