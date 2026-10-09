@@ -20,6 +20,8 @@ mirrors the site layout the analyzer expects (`<root>/content/blog/*.mdx` and
 from __future__ import annotations
 
 import os
+import re
+import subprocess
 import sys
 import tempfile
 import textwrap
@@ -340,6 +342,46 @@ class ContentOverlapAnalysisTest(unittest.TestCase):
         self.assertEqual(out["clusters"][0]["coverage_count"], 1)
         matched_on = out["clusters"][0]["coverage_articles"][0]["matched_on"]
         self.assertIn("keywords", matched_on)
+
+
+class SkillDocCommandTest(unittest.TestCase):
+    """SKILL.md に書かれた `strategy_analyzer.py` の起動コマンドが argparse を通る
+    （`--help` に無い引数を渡すと `unrecognized arguments` で終了する）。Issue #892."""
+
+    SCRIPT = Path(__file__).resolve().parent / "strategy_analyzer.py"
+    SKILL_MD = Path(__file__).resolve().parent.parent / "SKILL.md"
+    FLAG_RE = re.compile(r"(?<![\w-])--[a-z][a-z0-9-]*")
+
+    def _documented_commands(self) -> list[str]:
+        text = self.SKILL_MD.read_text(encoding="utf-8")
+        # `scripts/strategy_analyzer.py` から行末 `\` の継続行までを 1 コマンドとして取る
+        return re.findall(
+            r"scripts/strategy_analyzer\.py(?:[^\n]*\\\n)*[^\n]*", text
+        )
+
+    def _help_flags(self) -> set[str]:
+        out = subprocess.run(
+            [sys.executable, str(self.SCRIPT), "--help"],
+            capture_output=True,
+            text=True,
+            check=True,
+            # Python 3.14+ の argparse は help を ANSI 色付けし、flag 名が分断される
+            env={**os.environ, "PYTHON_COLORS": "0", "NO_COLOR": "1"},
+        ).stdout
+        return set(self.FLAG_RE.findall(out))
+
+    def test_documented_flags_are_accepted_by_argparse(self) -> None:
+        commands = self._documented_commands()
+        self.assertTrue(commands, "SKILL.md に strategy_analyzer.py の起動コマンドが無い")
+        help_flags = self._help_flags()
+        for cmd in commands:
+            flags = set(self.FLAG_RE.findall(cmd))
+            self.assertTrue(flags, f"起動コマンドから引数を抽出できない: {cmd}")
+            self.assertEqual(
+                flags - help_flags,
+                set(),
+                f"SKILL.md の引数が --help に無い: {cmd}",
+            )
 
 
 if __name__ == "__main__":

@@ -87,9 +87,9 @@ GA4 + GSC + Trends を統合分析し、**3専門家の並列分析 + 悪魔の�
    - `/gsc` で GSC データ取得（**pages + queries を分離取得**）
    - `/trends-analyzer` で Trends データ取得
 3. **多期間データ収集**: 施策効果評価のため、複数期間の GA4 データを取得
-   - 直近30日 + 前30日（月次比較）
-   - 直近7日 + 前7日（週次トレンド）
-   - GA4レポートは4つ生成: `ga_30d.json`, `ga_prev30d.json`, `ga_7d.json`, `ga_prev7d.json`
+   - 直近30日（月次）
+   - 直近7日（週次トレンド）
+   - GA4レポートは2つ生成: `ga_30d.json`, `ga_7d.json`
 
 3b. **GSC データ分離取得**: KPI精度と記事マッチングのため、GSCは **pages-only** と **queries-only** を個別取得し統合する
 
@@ -127,7 +127,6 @@ GA4 + GSC + Trends を統合分析し、**3専門家の並列分析 + 悪魔の�
    ```bash
    python ${CLAUDE_PLUGIN_ROOT}/seo-strategy/scripts/strategy_analyzer.py \
      --ga-report <GA_PATH> --gsc-report <GSC_COMBINED_PATH> --trends-report <TRENDS_PATH> \
-     --ga-prev-report <PREV_GA_PATH> \
      --blog-dir content/blog \
      --project-dir . --output claudedocs/seo-strategy-analysis.json
    ```
