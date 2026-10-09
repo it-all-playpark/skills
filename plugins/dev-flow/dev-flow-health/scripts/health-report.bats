@@ -4,6 +4,7 @@
 # Focus 1: signature 化（パス・数値・PR 番号・hash の <*> 化）と new / ongoing / resolved / regressed の判定
 #          — tests/fixtures/lifecycle.jsonl（plugin_commit は架空の hex）を journal に展開して確かめる。
 # Focus 2: 候補 commit の列挙 — 一時 git repo を作り、その commit を plugin_commit に持つ journal で確かめる。
+# Focus 3: 起票先（issue_repo）の解決と、SKILL.md の起票手順がそれだけを使うこと。
 
 bats_require_minimum_version 1.5.0
 
@@ -309,6 +310,52 @@ write_run() {
     run report --repo "$REPO"
     [ "$status" -eq 0 ]
     [ "$(sig_field 'verdict missing' .candidates.error)" = "git_log_failed" ]
+}
+
+# --- 起票先（issue_repo） ----------------------------------------------------------
+
+@test "issue_repo は --repo の checkout の origin（https / ssh の GitHub URL）から OWNER/NAME で解決する" {
+    make_repo
+    git -C "$REPO" remote add origin https://github.com/someone/fork-of-skills.git
+    run report --repo "$REPO"
+    [ "$status" -eq 0 ]
+    [ "$(printf '%s' "$output" | jq -r '.issue_repo')" = "someone/fork-of-skills" ]
+
+    git -C "$REPO" remote set-url origin git@github.com:other-org/skills
+    run report --repo "$REPO"
+    [ "$status" -eq 0 ]
+    [ "$(printf '%s' "$output" | jq -r '.issue_repo')" = "other-org/skills" ]
+}
+
+@test "origin が無い・GitHub でない・checkout が無いときは issue_repo を null にする" {
+    make_repo
+    run report --repo "$REPO"
+    [ "$status" -eq 0 ]
+    [ "$(printf '%s' "$output" | jq '.issue_repo')" = "null" ]
+
+    git -C "$REPO" remote add origin https://gitlab.com/someone/skills.git
+    run report --repo "$REPO"
+    [ "$status" -eq 0 ]
+    [ "$(printf '%s' "$output" | jq '.issue_repo')" = "null" ]
+
+    run report --repo "$BATS_TEST_TMPDIR/no-repo"
+    [ "$status" -eq 0 ]
+    [ "$(printf '%s' "$output" | jq '.issue_repo')" = "null" ]
+}
+
+@test "SKILL.md の gh issue 手順は起票先をレポートの issue_repo から取り、null なら起票せずに止まる" {
+    local skill_md="$SKILL_DIR/SKILL.md"
+    # 手順中の gh issue list / create はすべて --repo <issue_repo>（固定の OWNER/NAME を書かない）
+    run grep -c 'gh issue \(list\|create\)' "$skill_md"
+    [ "$output" -ge 2 ]
+    run grep -c 'gh issue \(list\|create\) --repo <issue_repo> ' "$skill_md"
+    [ "$output" = "$(grep -c 'gh issue \(list\|create\)' "$skill_md")" ]
+    # 参照するキーを script が実際に出す
+    make_repo
+    run report --repo "$REPO"
+    [ "$(printf '%s' "$output" | jq 'has("issue_repo")')" = "true" ]
+    # null のときは起票せずに終える手順がある
+    grep -q '`issue_repo` が `null` なら、重複確認・起票をせずに' "$skill_md"
 }
 
 @test "LLM を呼ばない（claude を PATH に置いても起動しない）" {

@@ -23,6 +23,9 @@
 #      別の失敗で止まった run は、その signature の手前まで進んだ証拠にならないので「正常」に数えない。
 #      列挙できないときは candidates.error に理由を入れる（first_bad_commit_unknown / no_prior_good_run /
 #      repo_unavailable / git_log_failed）。
+#   4. issue_repo（self-improve issue の起票先 OWNER/NAME）を --repo の checkout の origin から解決する。
+#      origin が GitHub の URL でない・checkout が無いときは null。起票先は固定値にしない — plugin を
+#      install した第三者の失敗を別の repo に起票しないため。null のとき SKILL.md の手順は起票せずに止まる。
 #
 # Usage:
 #   health-report.sh [--journal-dir DIR] [--repo DIR] [--now ISO8601] [--since ISO8601]
@@ -31,8 +34,9 @@
 #   --journal-dir    既定 $CLAUDE_JOURNAL_DIR、なければ ~/.claude/journal
 #   --repo           候補 commit を引く skills repo。既定は本スクリプトを含む git checkout
 #                    （plugin cache の install は git ではないので repo_unavailable になる。日次ジョブは
-#                    install-schedule.sh --repo で登録した checkout を daily.sh 経由で渡す）
-#   --now            基準時刻（UTC, YYYY-MM-DDTHH:MM:SSZ）。既定は現在時刻
+#                    install-schedule.sh --repo で登録した checkout を daily.sh 経由で渡す）。
+#                    issue_repo もこの checkout の origin から解決する
+#   --now           基準時刻（UTC, YYYY-MM-DDTHH:MM:SSZ）。既定は現在時刻
 #   --since          new / regressed とみなす窓の始点。既定は --now から --window-hours 前
 #   --window-hours   既定 24
 #   --resolve-after  resolved とみなす再発なし run 数 N。既定 5
@@ -87,6 +91,15 @@ if [[ -z "$REPO" ]]; then
     REPO="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || true)"
 elif ! REPO="$(git -C "$REPO" rev-parse --show-toplevel 2>/dev/null)"; then
     REPO=""
+fi
+
+# 起票先。origin の GitHub URL（https / ssh）から OWNER/NAME を取り出す。取れなければ空（出力は null）
+ISSUE_REPO=""
+if [[ -n "$REPO" ]]; then
+    origin="$(git -C "$REPO" remote get-url origin 2>/dev/null || true)"
+    if [[ "$origin" =~ ^(https://|ssh://git@|git@)github\.com[:/]([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)$ ]]; then
+        ISSUE_REPO="${BASH_REMATCH[2]}/${BASH_REMATCH[3]%.git}"
+    fi
 fi
 
 # --- journal の読み込み -------------------------------------------------------
@@ -279,4 +292,6 @@ while [[ "$i" -lt "$COUNT" ]]; do
     i=$((i + 1))
 done
 
-printf '%s\n' "$REPORT" | jq '{generated_at, window, resolve_after_runs, runs, summary, needs_llm, signatures}'
+printf '%s\n' "$REPORT" | jq --arg issue_repo "$ISSUE_REPO" \
+    '{generated_at, window, resolve_after_runs, runs, summary, needs_llm,
+      issue_repo: (if $issue_repo == "" then null else $issue_repo end), signatures}'
