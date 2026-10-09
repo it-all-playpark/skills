@@ -64,5 +64,5 @@ Step 1 → Step 2 → Step 3
 
 ## References
 
-- [Repo Conventions](references/repo-conventions.md) - 当リポジトリ固有規約のサマリ
-- [Skill Creation Guide](../docs/skill-creation-guide.md) - canonical source
+- [Repo Conventions](../skill-creator/references/repo-conventions.md) - 当リポジトリ固有規約のサマリ
+- [Skill Creation Guide](../../../docs/skill-creation-guide.md) - canonical source
