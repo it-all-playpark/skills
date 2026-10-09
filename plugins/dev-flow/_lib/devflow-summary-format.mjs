@@ -168,9 +168,6 @@ function resolvedCell(v) {
  * @param {{status:string, command:string, label?:string, reason?:string, exit_code?:number|null, log_path?:string|null, reimpl_count?:number}|null|undefined} [opts.localVerify] -
  *   local-verify（ci の AC を pg-broker の DB でローカル実行。issue #863）の結果。「参考」に 1 行出す（unavailable / error / skipped は
  *   CI の check 待ちに回した理由）。passed なら「あなたがやること」に merge 前の CI 確認を足す（run は check の結果を待っていない）。表示専用
- * @param {{note:number, decision:number, change_bullet:number, sections_over_chars:number}|null|undefined} [opts.prBodyClips] -
- *   pr-artifacts の prBodyClipReport。PR 本文で末尾を切った要約行の件数と pr_sections の合計上限超過字数。
- *   1 つでも非 0 なら「PR 本文で切れた項目」節に出す（表示専用。null / 全 0 なら 1 行も足さない）
  * @param {Array<{iteration:number, status:string, reason?:string, files?:Array<{path:string,type:string}>, merge_sha?:string|null}>|null|undefined} [opts.conflictAutoresolve] -
  *   pr-iterate の返り値 conflict_autoresolve（base との conflict の自動解消の試行。issue #916）。自動解消した試行は「参考」に型とファイルを、
  *   解消しなかった試行は mergeable_conflicting の HOLD 理由の「現状」に止めたファイルと型を出す（表示専用）
@@ -216,7 +213,6 @@ export function buildDevflowSummaryBody({
   unsatisfiedAcByActor,
   ciVerify,
   localVerify,
-  prBodyClips,
   conflictAutoresolve,
 }) {
   const EVAL_STALENESS_VALUES = ['none', 'hash_mismatch', 'hash_reconverged', 'iterate_incomplete', 'iterate_fixed'];
@@ -947,22 +943,6 @@ export function buildDevflowSummaryBody({
     lines.push('### この PR に含めなかったもの');
     lines.push('');
     for (const s of outOfScopeItems) lines.push(`- ${mdCell(s)}`);
-  }
-
-  // 6e. PR 本文で切れた項目（issue #815）。builder が要約行を「…」で切った件数と、pr_sections の合計上限超過を
-  // 黙らせずに出す。null / 全 0 なら 1 行も追加しない。
-  const clipCount = (k) => (prBodyClips != null && Number.isInteger(prBodyClips[k]) && prBodyClips[k] > 0 ? prBodyClips[k] : 0);
-  const clippedLines = clipCount('note') + clipCount('decision') + clipCount('change_bullet');
-  const sectionsOver = clipCount('sections_over_chars');
-  if (clippedLines > 0 || sectionsOver > 0) {
-    lines.push('');
-    lines.push(clippedLines > 0 ? `### ✂️ PR 本文で切れた項目 ${clippedLines} 件` : '### ✂️ PR 本文の長文欄が上限超過');
-    lines.push('');
-    if (clipCount('note') > 0) lines.push(`- 検証（pr_notes）: ${clipCount('note')} 件`);
-    if (clipCount('decision') > 0) lines.push(`- 設計判断: ${clipCount('decision')} 件`);
-    if (clipCount('change_bullet') > 0) lines.push(`- 変更: ${clipCount('change_bullet')} 件`);
-    if (clippedLines > 0) lines.push('- 末尾が「…」の行は全文が本文に無い。表・長文は pr_sections で返せば切られずに載る');
-    if (sectionsOver > 0) lines.push(`- 長文欄（pr_sections）が合計上限を ${sectionsOver} 字超過（切らずに載せた）— PR 本文の後半（Closes 行）が落ちていないか確認する`);
   }
 
   // 8. 空状態の常時可視行
