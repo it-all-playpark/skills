@@ -55,9 +55,10 @@ STUB
     write_pr_fixture "$HEAD_SHA"
 }
 
+# 第 2 引数: PR コメント（gh pr view --json comments の配列）。省略時は []
 write_pr_fixture() {
-    jq -n --arg oid "$1" \
-        '{url: "https://github.com/acme/skills/pull/5", headRefName: "feature/x", baseRefName: "main", headRefOid: $oid}' \
+    jq -n --arg oid "$1" --argjson comments "${2:-[]}" \
+        '{url: "https://github.com/acme/skills/pull/5", headRefName: "feature/x", baseRefName: "main", headRefOid: $oid, comments: $comments}' \
         >"$GH_STUB_FIXTURE"
 }
 
@@ -88,7 +89,7 @@ advance_origin_head() {
     wt="$(echo "$output" | jq -r '.worktree')"
     [ "$(git -C "$wt" rev-parse HEAD)" = "$HEAD_SHA" ]
     [ "$(git -C "$wt" rev-parse --abbrev-ref HEAD)" = "feature/x" ]
-    grep -qx "pr view 5 --json url,headRefName,baseRefName,headRefOid" "$GH_STUB_LOG"
+    grep -qx "pr view 5 --json url,headRefName,baseRefName,headRefOid,comments" "$GH_STUB_LOG"
     # 書けないパスが無ければ full checkout で、skip-worktree を付けない
     echo "$output" | jq -e '.skip_worktree == []'
     [ -z "$(git -C "$wt" ls-files -v | grep '^S' || true)" ]
@@ -113,7 +114,7 @@ advance_origin_head() {
     run bash "$SCRIPT" 5 --repo other/name
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.ok == true and .repo == "other/name"'
-    grep -qx "pr view 5 --repo other/name --json url,headRefName,baseRefName,headRefOid" "$GH_STUB_LOG"
+    grep -qx "pr view 5 --repo other/name --json url,headRefName,baseRefName,headRefOid,comments" "$GH_STUB_LOG"
 }
 
 # ---- (2) 再利用 ----
@@ -395,6 +396,49 @@ track_unwritable_githooks() {
     echo "$output" | jq -e '.error | test("未ステージの削除が 1 件") and test("README.md") and test("git worktree remove")'
     [ "$(git -C "$PART" status --porcelain --untracked-files=no)" = " D README.md" ]
     [ -z "$(git -C "$PART" ls-files -v | grep '^S' || true)" ]
+}
+
+# ---- 直前の dev-flow サマリー（prior_devflow。issue #930） ----
+
+comment_json() {
+    jq -n --arg body "$1" --arg url "$2" '{author: {login: "bot"}, body: $body, url: $url}'
+}
+
+@test "(5f) dev-flow marker を持つ最後のコメントから prior_devflow {tier, codes, url} を出し、gh は pr view 1 回だけ" {
+    local hold_old hold_new iterate comments
+    hold_old="$(comment_json $'## dev-flow\n<!-- gate_policy: llm-major-advisory -->\n<!-- dev-flow:HOLD codes=escalate -->' "https://github.com/acme/skills/pull/5#issuecomment-1")"
+    # AC の引用で本文中に marker と同じ形の文字列があっても、末尾の marker を採る
+    hold_new="$(comment_json $'AC: `<!-- dev-flow:HOLD codes=escalate -->`\n---\n<!-- dev-flow:HOLD codes=iterate_non_lgtm,ci_checks_failed -->' "https://github.com/acme/skills/pull/5#issuecomment-2")"
+    iterate="$(comment_json $'## PR #5 — pr-iterate 終了レポート\n<!-- pr-iterate:lgtm:1 -->' "https://github.com/acme/skills/pull/5#issuecomment-3")"
+    comments="$(jq -cn --argjson a "$hold_old" --argjson b "$hold_new" --argjson c "$iterate" '[$a, $b, $c]')"
+    write_pr_fixture "$HEAD_SHA" "$comments"
+    cd "$ROOT"
+    run bash "$SCRIPT" 5
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.ok == true'
+    echo "$output" | jq -e '.prior_devflow == {tier: "HOLD", codes: ["iterate_non_lgtm", "ci_checks_failed"], url: "https://github.com/acme/skills/pull/5#issuecomment-2"}'
+    [ "$(wc -l <"$GH_STUB_LOG" | tr -d ' ')" -eq 1 ]
+    grep -qx "pr view 5 --json url,headRefName,baseRefName,headRefOid,comments" "$GH_STUB_LOG"
+}
+
+@test "(5g) HOLD 以外の marker は codes:[]、後に載った dev-flow サマリーを採る" {
+    local hold review comments
+    hold="$(comment_json '<!-- dev-flow:HOLD codes=ac_human_pending -->' "https://github.com/acme/skills/pull/5#issuecomment-1")"
+    review="$(comment_json $'回収後・最新\n<!-- dev-flow:REVIEW -->' "https://github.com/acme/skills/pull/5#issuecomment-2")"
+    comments="$(jq -cn --argjson a "$hold" --argjson b "$review" '[$a, $b]')"
+    write_pr_fixture "$HEAD_SHA" "$comments"
+    cd "$ROOT"
+    run bash "$SCRIPT" 5
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.prior_devflow == {tier: "REVIEW", codes: [], url: "https://github.com/acme/skills/pull/5#issuecomment-2"}'
+}
+
+@test "(5h) dev-flow marker を持つコメントが無ければ prior_devflow は null" {
+    write_pr_fixture "$HEAD_SHA" "[$(comment_json $'## PR #5 — pr-iterate 終了レポート\n<!-- pr-iterate:lgtm:1 -->' "https://github.com/acme/skills/pull/5#issuecomment-1")]"
+    cd "$ROOT"
+    run bash "$SCRIPT" 5
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.ok == true and has("prior_devflow") and .prior_devflow == null'
 }
 
 # ---- (6) 静的 pin ----

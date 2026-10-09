@@ -3,12 +3,13 @@
 #
 # top-level Bash が bare 名 launcher (bin/pr-iterate-prerun) 経由でこのスクリプトを実行し、wrapper skill
 # (pr-iterate/SKILL.md) が stdout の JSON 1 行を EnterWorktree の path と
-# `Workflow({ name: 'dev-flow:pr-iterate-run', args: { pr, nested } })` の nested へ渡す。
+# `Workflow({ name: 'dev-flow:pr-iterate-run', args: { pr, nested, prior_devflow } })` の nested・prior_devflow へ渡す。
 # workflow 側は NESTED 分岐で pr-meta（haiku の gh pr view 転写）と isolation-cleanup を起動しない。
 #
 # Usage: pr-iterate-prerun <PR> [--repo owner/name]
 #
-# 行う処理: gh pr view で url / headRefName / baseRefName / headRefOid を取得 → git fetch origin →
+# 行う処理: gh pr view で url / headRefName / baseRefName / headRefOid / comments を取得（comments からは直前の
+# dev-flow サマリーの marker を読む）→ git fetch origin →
 # origin/<head> が PR の headRefOid と一致することを検証 → PR head の worktree を用意（既存なら再利用、
 # 無ければ origin/<head> から作成。作成時は取り出せないパスに skip-worktree を付け、再利用時は未ステージの
 # 削除が残っていれば fail-closed — worktree-checkout.sh）→ worktree の HEAD を PR head に合わせる（遅れていて未コミット変更が
@@ -24,9 +25,11 @@
 # 再利用した worktree が書けない場合は退避しない（branch がそこで checkout 済み）— ok:false で人間に返す。
 #
 # Output (stdout, JSON 1 行):
-#   {ok, pr, worktree, head_ref, base_ref, head_sha, repo, epoch, worktree_status, worktree_removed, skip_worktree, error?}
+#   {ok, pr, worktree, head_ref, base_ref, head_sha, repo, epoch, worktree_status, worktree_removed, skip_worktree, prior_devflow, error?}
 #   worktree_status: created / reused / unwritable / error / skipped
 #   skip_worktree: 作成時に取り出せず skip-worktree を付けたパス（worktree-checkout.sh。full checkout できれば []）
+#   prior_devflow: PR コメントのうち `<!-- dev-flow:<tier>[ codes=<code>,...] -->` marker を持つ最後のもの
+#     {tier, codes, url}（codes は HOLD 理由の code。HOLD 以外は []）。marker を持つコメントが無ければ null
 #   不明な値は null。ok:false でも exit 0（引数不正のみ exit 2、stdout 空）。
 #
 # GitHub I/O は `gh pr view`（読み取り）のみ。push / comment / worktree の削除（この呼び出しで作った
@@ -89,6 +92,7 @@ head_sha=""
 WT=""
 worktree_status="skipped"
 worktree_removed=false
+prior_devflow="null"
 error=""
 
 emit() {
@@ -105,12 +109,14 @@ emit() {
         --arg worktree_status "$worktree_status" \
         --argjson worktree_removed "$worktree_removed" \
         --argjson skip_worktree "$(skip_worktree_json)" \
+        --argjson prior_devflow "$prior_devflow" \
         --arg error "$error" \
         '
         def nz: if . == "" then null else . end;
         {ok: $ok, pr: $pr, worktree: ($worktree | nz), head_ref: ($head_ref | nz), base_ref: ($base_ref | nz),
          head_sha: ($head_sha | nz), repo: ($repo | nz), epoch: $epoch,
-         worktree_status: $worktree_status, worktree_removed: $worktree_removed, skip_worktree: $skip_worktree}
+         worktree_status: $worktree_status, worktree_removed: $worktree_removed, skip_worktree: $skip_worktree,
+         prior_devflow: $prior_devflow}
         + (if $error == "" then {} else {error: $error} end)
         '
     exit 0
@@ -127,7 +133,7 @@ fail() {
 
 GH_ARGS=(pr view "$PR")
 [[ -n "$REPO_ARG" ]] && GH_ARGS+=(--repo "$REPO_ARG")
-GH_ARGS+=(--json url,headRefName,baseRefName,headRefOid)
+GH_ARGS+=(--json url,headRefName,baseRefName,headRefOid,comments)
 
 if ! VIEW_RAW="$(gh "${GH_ARGS[@]}" 2>&1)"; then
     fail "gh pr view ${PR} failed: ${VIEW_RAW}"
@@ -139,6 +145,17 @@ url="$(printf '%s' "$VIEW_RAW" | jq -r '.url // "" | strings')"
 head_ref="$(printf '%s' "$VIEW_RAW" | jq -r '.headRefName // "" | strings')"
 base_ref="$(printf '%s' "$VIEW_RAW" | jq -r '.baseRefName // "" | strings')"
 PR_HEAD_OID="$(printf '%s' "$VIEW_RAW" | jq -r '.headRefOid // "" | strings')"
+# 直前の dev-flow サマリー: marker を持つ最後のコメントの、本文中で最後の marker（AC の引用等で本文に同じ形の
+# 文字列が出ても、dev-flow が末尾に置く marker を採る）
+prior_devflow="$(printf '%s' "$VIEW_RAW" | jq -c '
+    [(.comments // [])[]
+     | . as $c
+     | ([(($c.body // "") | match("<!-- dev-flow:([A-Za-z_]+)(?: codes=([a-z_,]*))? -->"; "g"))] | last) as $m
+     | select($m != null)
+     | {tier: $m.captures[0].string,
+        codes: (($m.captures[1].string // "") | split(",") | map(select(. != ""))),
+        url: ($c.url // null)}]
+    | last')"
 
 if [[ -z "$repo" && "$url" =~ ^https://github\.com/([^/]+)/([^/]+)/pull/[0-9]+$ ]]; then
     repo="${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"

@@ -44,6 +44,12 @@ test('[priterate-skill-wrapper] Workflow の nested に prerun の値（cwd, hea
   }
 });
 
+test('[priterate-skill-wrapper] Workflow の args に prerun の prior_devflow を渡す（issue #930）', () => {
+  const launch = steps.slice(steps.indexOf("Workflow({ name: 'dev-flow:pr-iterate-run'"));
+  const args = launch.slice(0, launch.indexOf('} })'));
+  assert.ok(args.includes('prior_devflow: <prior_devflow>'), `Workflow の args に prior_devflow が無い: ${args}`);
+});
+
 test('[priterate-skill-wrapper] 旧名 pr-iterate での Workflow 起動・自前の git worktree add・前回 prerun 出力の使い回しを書かない', () => {
   assert.doesNotMatch(src, /Workflow\(\{ name: '(dev-flow:)?pr-iterate'/, '旧名 pr-iterate での起動記述が残っている（alias は作らない）');
   assert.ok(!src.includes('git worktree add'), 'worktree 作成は pr-iterate-prerun に一本化する');

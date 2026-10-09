@@ -288,6 +288,26 @@ test('[isolation-wiring][standalone] caller:standalone は終端サマリーを�
   assert.equal(devflow.calls.filter((c) => c.label === 'post-summary').length, 0, 'dev-flow からの起動は終端サマリーを投稿しない（dev-flow が投稿する）');
 });
 
+test('[isolation-wiring][standalone] args.prior_devflow が HOLD なら投稿する終端サマリーに回収状況が載り、不正形は agent 起動前に throw する（issue #930）', async () => {
+  const prior = { tier: 'HOLD', codes: ['ac_human_pending'], url: 'https://github.com/acme/skills/pull/5#issuecomment-1' };
+  const { ctx, calls } = makeSandbox({ isolationProbeResult: { written: true }, args: { ...standaloneArgs(), prior_devflow: prior } });
+  const { result, error } = await runPrIterateCapture(src, ctx);
+  assert.equal(error, null, `prior_devflow 付きの単体起動: ${error?.message}`);
+  assert.equal(result?.status, 'lgtm');
+  const post = calls.find((c) => c.label === 'post-summary');
+  assert.ok(post, '終端サマリーを投稿するべき');
+  assert.ok(post.prompt.includes('### dev-flow の HOLD 理由の回収状況'), `回収状況の節が無い: ${post.prompt.slice(0, 1500)}`);
+  assert.ok(post.prompt.includes(prior.url), '元の dev-flow サマリーへのリンクが無い');
+  assert.ok(!post.prompt.includes('🎉 LGTM'), 'ac_human_pending が未解消なのに 🎉 LGTM 見出しになっている');
+
+  for (const bad of ['HOLD', { tier: 'HOLD', codes: 'x', url: null }, { tier: '', codes: [], url: null }, { tier: 'HOLD', codes: [], url: 1 }]) {
+    const s = makeSandbox({ isolationProbeResult: { written: true }, args: { ...standaloneArgs(), prior_devflow: bad } });
+    const r = await runPrIterateCapture(src, s.ctx);
+    assert.ok(r.error != null && /args\.prior_devflow が不正形/.test(r.error.message), `不正な prior_devflow ${JSON.stringify(bad)} で throw していない: ${r.error?.message}`);
+    assert.equal(s.calls.length, 0, 'prior_devflow 検証の throw は agent 起動前');
+  }
+});
+
 test('[isolation-wiring][standalone] caller:standalone でも written:false は fail-closed で throw し、review に進まない', async () => {
   const { ctx, getReviewerCallCount, getFixCallCount } = makeSandbox({
     isolationProbeResult: { written: false, error: 'Write denied by bg-isolation guard' },
