@@ -734,7 +734,8 @@ function isDocsOrTestOnly(files) {
   if (!Array.isArray(files) || files.length === 0) return false;
   return files.every((f) =>
     /\.(md|mdx|txt)$/i.test(f) || /(^|\/)docs\//i.test(f)
-    || /(^|\/|\.)(test|spec)([./]|$)/i.test(f) || /\.bats$/i.test(f));
+    || /(^|\/|\.)(test|spec)([./]|$)/i.test(f) || /\.bats$/i.test(f)
+    || /_(test|spec)\.rb$/.test(f) || /Test\.php$/.test(f));
 }
 
 const FINAL_RECONCILE_VALUES = ['skipped', 'reverified', 'unavailable', 'ci_verified'];
@@ -1711,12 +1712,15 @@ function isShapeDocPath(path) {
 }
 
 function isShapeTestPath(path) {
-  return /\.(test|spec)\.[^/]+$/.test(path) || /(^|\/)__tests__\//.test(path) || /\.bats$/.test(path);
+  return /\.(test|spec)\.[^/]+$/.test(path) || /(^|\/)__tests__\//.test(path) || /\.bats$/.test(path)
+    || /_(test|spec)\.rb$/.test(path) || /Test\.php$/.test(path);
 }
 
 function shapeStem(path) {
   const base = path.split('/').pop();
   if (/\.(test|spec)\.[^.]+$/.test(base)) return base.replace(/\.(test|spec)\.[^.]+$/, '');
+  if (/_(test|spec)\.rb$/.test(base)) return base.replace(/_(test|spec)\.rb$/, '');
+  if (/Test\.php$/.test(base)) return base.replace(/Test\.php$/, '');
   return base.replace(/\.[^.]+$/, '');
 }
 

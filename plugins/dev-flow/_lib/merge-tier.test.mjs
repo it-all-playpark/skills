@@ -205,7 +205,11 @@ test('reconcileDanger: risk.ok:false と risk.ok:true(hit) の evidence 語彙�
 test('isDocsOrTestOnly: md/test/bats のみ → true', () => {
   assert.equal(isDocsOrTestOnly(['docs/a.md', 'README.md']), true);
   assert.equal(isDocsOrTestOnly(['_lib/foo.test.mjs', 'x/foo.bats']), true);
+  for (const f of ['models/foo_spec.rb', 'models/foo_test.rb', 'Unit/FooTest.php']) {
+    assert.equal(isDocsOrTestOnly([f]), true, f);
+  }
   assert.equal(isDocsOrTestOnly(['src/foo.ts']), false);
+  assert.equal(isDocsOrTestOnly(['app/foo.rb', 'app/Latest.php']), false);
   assert.equal(isDocsOrTestOnly([]), false);
 });
 

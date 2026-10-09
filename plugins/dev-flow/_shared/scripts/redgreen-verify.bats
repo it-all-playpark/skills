@@ -841,17 +841,21 @@ EOF
 }
 
 # -----------------------------------------------------------------------
-# L: JS / bats 以外のランナー(issue #880)。repo の既存設定(pytest 設定 / go.mod / Cargo.toml)から
-# detect-test-runner.sh が判定したコマンドで red→green を実行する。runner は PATH 上の stub で、
-# 呼び出し argv を calls.log に記録し、impl があるときだけ pass する。
+# L: JS / bats 以外のランナー(issue #880 / #883)。repo の既存設定(pytest 設定 / go.mod / Cargo.toml /
+# Gemfile.lock・bin/rails / composer.json)から detect-test-runner.sh が判定したコマンドで red→green を実行する。
+# runner は PATH 上・repo 内(bin/rails / vendor/bin)の stub で、呼び出し argv を calls.log に記録し、
+# impl があるときだけ pass する。
 # -----------------------------------------------------------------------
 
-# make_stub_runner <name> <impl の REPO 相対パス>
-make_stub_runner() {
-  mkdir -p "$REPO/mockbin"
-  printf '#!/usr/bin/env bash\necho "%s $*" >> "%s/calls.log"\n[ -f "%s/%s" ]\n' "$1" "$REPO" "$REPO" "$2" > "$REPO/mockbin/$1"
-  chmod +x "$REPO/mockbin/$1"
+# make_stub_at <stub の REPO 相対パス> <calls.log に残す名前> <impl の REPO 相対パス>
+make_stub_at() {
+  mkdir -p "$(dirname "$REPO/$1")"
+  printf '#!/usr/bin/env bash\necho "%s $*" >> "%s/calls.log"\n[ -f "%s/%s" ]\n' "$2" "$REPO" "$REPO" "$3" > "$REPO/$1"
+  chmod +x "$REPO/$1"
 }
+
+# make_stub_runner <name> <impl の REPO 相対パス>: PATH 上(mockbin/)のランナー
+make_stub_runner() { make_stub_at "mockbin/$1" "$1" "$2"; }
 
 @test "L1: pytest 設定のある repo の test_foo.py を pytest で red→green 判定する" {
   printf '[pytest]\n' > "$REPO/pytest.ini"
@@ -912,4 +916,60 @@ make_stub_runner() {
   [ "$(printf '%s' "$output" | jq -r '.results[1].reason')" = "non-test file declared (ランナー未検出): src/lib.rs" ]
   [ ! -f "$REPO/calls.log" ]
   grep -q "OK = True" "$REPO/foo.py"
+}
+
+@test "L5: Gemfile.lock に rspec-core のある repo の spec/foo_spec.rb を bundle exec rspec で red→green 判定する" {
+  printf 'GEM\n  specs:\n    rspec-core (3.13.0)\n' > "$REPO/Gemfile.lock"
+  git -C "$REPO" add Gemfile.lock && git -C "$REPO" commit -q -m rspec
+  mkdir -p "$REPO/lib" "$REPO/spec"
+  echo "OK = true" > "$REPO/lib/foo.rb"
+  echo "require 'foo'" > "$REPO/spec/foo_spec.rb"
+  make_stub_runner bundle lib/foo.rb
+
+  run env PATH="$REPO/mockbin:$PATH" bash "$SCRIPT" "$REPO" "spec/foo_spec.rb" "lib/foo.rb"
+  [ "$status" -eq 0 ]
+  [ "$(printf '%s' "$output" | jq -r '.results[0].red and .results[0].green')" = "true" ]
+  [ "$(cat "$REPO/calls.log")" = "$(printf 'bundle exec rspec spec/foo_spec.rb\nbundle exec rspec spec/foo_spec.rb')" ]
+  grep -q "OK = true" "$REPO/lib/foo.rb"
+}
+
+@test "L6: bin/rails のある repo の test/foo_test.rb を bin/rails test で red→green 判定する" {
+  make_stub_at bin/rails bin/rails app/models/foo.rb
+  git -C "$REPO" add bin/rails && git -C "$REPO" commit -q -m rails
+  mkdir -p "$REPO/app/models" "$REPO/test"
+  echo "class Foo; end" > "$REPO/app/models/foo.rb"
+  echo "require 'test_helper'" > "$REPO/test/foo_test.rb"
+
+  run bash "$SCRIPT" "$REPO" "test/foo_test.rb" "app/models/foo.rb"
+  [ "$status" -eq 0 ]
+  [ "$(printf '%s' "$output" | jq -r '.results[0].red and .results[0].green')" = "true" ]
+  [ "$(cat "$REPO/calls.log")" = "$(printf 'bin/rails test test/foo_test.rb\nbin/rails test test/foo_test.rb')" ]
+}
+
+@test "L7: composer.json に pestphp/pest のある repo の tests/Unit/FooTest.php を vendor/bin/pest で red→green 判定する" {
+  echo '{"require-dev":{"pestphp/pest":"^3.0"}}' > "$REPO/composer.json"
+  git -C "$REPO" add composer.json && git -C "$REPO" commit -q -m pest
+  mkdir -p "$REPO/src" "$REPO/tests/Unit"
+  echo "<?php class Foo {}" > "$REPO/src/Foo.php"
+  echo "<?php test('foo', fn () => expect(new Foo)->toBeObject());" > "$REPO/tests/Unit/FooTest.php"
+  make_stub_at vendor/bin/pest vendor/bin/pest src/Foo.php
+
+  run bash "$SCRIPT" "$REPO" "tests/Unit/FooTest.php" "src/Foo.php"
+  [ "$status" -eq 0 ]
+  [ "$(printf '%s' "$output" | jq -r '.results[0].red and .results[0].green')" = "true" ]
+  [ "$(cat "$REPO/calls.log")" = "$(printf 'vendor/bin/pest tests/Unit/FooTest.php\nvendor/bin/pest tests/Unit/FooTest.php')" ]
+}
+
+@test "L8: composer.json に phpunit/phpunit のある repo の tests/Unit/FooTest.php を vendor/bin/phpunit で red→green 判定する" {
+  echo '{"require-dev":{"phpunit/phpunit":"^11.0"}}' > "$REPO/composer.json"
+  git -C "$REPO" add composer.json && git -C "$REPO" commit -q -m phpunit
+  mkdir -p "$REPO/src" "$REPO/tests/Unit"
+  echo "<?php class Foo {}" > "$REPO/src/Foo.php"
+  echo "<?php class FooTest extends PHPUnit\\Framework\\TestCase {}" > "$REPO/tests/Unit/FooTest.php"
+  make_stub_at vendor/bin/phpunit vendor/bin/phpunit src/Foo.php
+
+  run bash "$SCRIPT" "$REPO" "tests/Unit/FooTest.php" "src/Foo.php"
+  [ "$status" -eq 0 ]
+  [ "$(printf '%s' "$output" | jq -r '.results[0].red and .results[0].green')" = "true" ]
+  [ "$(cat "$REPO/calls.log")" = "$(printf 'vendor/bin/phpunit tests/Unit/FooTest.php\nvendor/bin/phpunit tests/Unit/FooTest.php')" ]
 }

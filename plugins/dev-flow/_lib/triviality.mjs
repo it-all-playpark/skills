@@ -38,13 +38,17 @@ function isShapeDocPath(path) {
 }
 
 function isShapeTestPath(path) {
-  return /\.(test|spec)\.[^/]+$/.test(path) || /(^|\/)__tests__\//.test(path) || /\.bats$/.test(path);
+  return /\.(test|spec)\.[^/]+$/.test(path) || /(^|\/)__tests__\//.test(path) || /\.bats$/.test(path)
+    || /_(test|spec)\.rb$/.test(path) || /Test\.php$/.test(path);
 }
 
-// テストと本番ファイルの対応付けに使う basename の stem（foo.test.ts / __tests__/foo.ts / foo.bats / foo.ts → foo）
+// テストと本番ファイルの対応付けに使う basename の stem
+// （foo.test.ts / __tests__/foo.ts / foo.bats / foo_spec.rb / foo_test.rb / foo.ts → foo、FooTest.php / Foo.php → Foo）
 function shapeStem(path) {
   const base = path.split('/').pop();
   if (/\.(test|spec)\.[^.]+$/.test(base)) return base.replace(/\.(test|spec)\.[^.]+$/, '');
+  if (/_(test|spec)\.rb$/.test(base)) return base.replace(/_(test|spec)\.rb$/, '');
+  if (/Test\.php$/.test(base)) return base.replace(/Test\.php$/, '');
   return base.replace(/\.[^.]+$/, '');
 }
 

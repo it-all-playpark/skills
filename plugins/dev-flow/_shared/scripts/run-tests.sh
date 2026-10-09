@@ -31,7 +31,8 @@
 #   2. <WT>/tests/run-*.sh のうち実行ビットを持つ通常ファイルを全本、名前順に絶対パスの bare 形で直列実行する
 #      （1 本だけ選ぶと残りのランナーの回帰が CI まで検出されない。並列化しない — repo によっては共有資源を使う）。
 #   3. tests/run-*.sh が 1 本も無いときだけ、検出したフォールバック（pnpm / yarn / npm test・cargo test・
-#      go test・pytest）を <WT> で全部実行する。何も無ければ tests "no_tests"。
+#      go test・pytest・bundle exec rspec / bin/rails test・vendor/bin/pest / vendor/bin/phpunit）を <WT> で
+#      全部実行する。何も無ければ tests "no_tests"。
 #   リトライ・環境の自動修復はしない（起動失敗は環境要因で、同じ操作の繰り返しや store / ロックの操作では直らない）。
 #
 # status は全 script の exit code だけで決まる: 起動失敗（exit 126 / 127）が 1 本でもあれば "error"、
@@ -188,10 +189,24 @@ if [[ ${#TARGETS[@]} -eq 0 ]]; then
         || grep -qs '^\[pytest\]' "$WT/tox.ini"; then
         TARGETS+=("pytest"); COMMANDS+=("pytest")
     fi
+    # Ruby / PHP は detect-test-runner.sh と同じ判定（rspec-core > bin/rails、pestphp/pest > phpunit/phpunit）
+    if grep -qsE '^[[:space:]]+rspec-core([[:space:]]|$)' "$WT/Gemfile.lock"; then
+        TARGETS+=("bundle exec rspec"); COMMANDS+=("bundle exec rspec")
+    elif [[ -f "$WT/bin/rails" ]]; then
+        TARGETS+=("bin/rails test"); COMMANDS+=("bin/rails test")
+    fi
+    if [[ -f "$WT/composer.json" ]]; then
+        php_deps=$(jq -r '((.require // {}) + (."require-dev" // {})) | keys[]' "$WT/composer.json" 2>/dev/null)
+        if grep -qx 'pestphp/pest' <<< "$php_deps"; then
+            TARGETS+=("vendor/bin/pest"); COMMANDS+=("vendor/bin/pest")
+        elif grep -qx 'phpunit/phpunit' <<< "$php_deps"; then
+            TARGETS+=("vendor/bin/phpunit"); COMMANDS+=("vendor/bin/phpunit")
+        fi
+    fi
 fi
 
 if [[ ${#TARGETS[@]} -eq 0 ]]; then
-    emit passed no_tests false "no tests/run-*.sh and no fallback test runner (package.json scripts.test / Cargo.toml / go.mod / pytest config)" '[]' '[]'
+    emit passed no_tests false "no tests/run-*.sh and no fallback test runner (package.json scripts.test / Cargo.toml / go.mod / pytest config / Gemfile.lock rspec-core / bin/rails / composer.json pest・phpunit)" '[]' '[]'
     exit 0
 fi
 
