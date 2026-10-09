@@ -34,8 +34,8 @@ script 変数に持つ。
 
 ```mermaid
 flowchart TD
-    U["/dev-flow ISSUE"] --> PF["wrapper preflight<br/>dev-flow-prerun（base → worktree → clean → deps ‖ analyze → stack）<br/>→ EnterWorktree"]
-    PF --> W["Workflow: dev-flow-run<br/>args.setup = prerun の JSON"]
+    U["/dev-flow ISSUE"] --> PF["wrapper preflight<br/>dev-flow-prerun（base → worktree → clean → analyze ‖ stack）<br/>→ ensure-worktree-deps --setup（deps install）<br/>→ EnterWorktree"]
+    PF --> W["Workflow: dev-flow-run<br/>args.setup = ensure-worktree-deps の JSON<br/>（prerun の出力 + deps / epoch_end）"]
     W --> S["1. Setup"]
     S --> I["2. Implement"]
     I --> V["3. Validate"]
@@ -61,15 +61,17 @@ flowchart TD
 
 決定論処理（base 解決・worktree 作成/再利用と起点検証・`.devflow-tmp` clean・
 issue analyze・stack 検出）は run 前に wrapper skill が top-level の Bash 1 コマンド
-`dev-flow-prerun` で済ませ、deps install は別の Bash 呼び出し `ensure-worktree-deps --setup` で行って
-（postinstall を sandbox 外の prerun の子にしない）、その stdout JSON を `args.setup` として渡す。analyze 段
-（`prerun-analyze.sh`: `analyze-issue --contract` の決定論 parse + Jev 有界判定）は stack 検出と
-並列に走る。Setup phase の spawn は末尾の analyze ゲート判定後の 1 本だけ（通常経路は isolation probe、
-ゲートが引いたときは analyze-clarify）。
+`dev-flow-prerun` で済ませる。prerun は deps install をしない。install は依存の postinstall（対象 repo の
+任意コード）を走らせるので、repo の任意コードを実行しない prerun の子にせず、wrapper が別の Bash 呼び出し
+`ensure-worktree-deps --setup <worktree>/.devflow-tmp/prerun-setup.json` で回す。その stdout JSON（prerun の出力に
+`deps` / `epoch_end` を足したもの）を `args.setup` として渡す。analyze 段（`prerun-analyze.sh`:
+`analyze-issue --contract` の決定論 parse + Jev 有界判定）は stack 検出（detect-stack）と並列に走る。
+Setup phase の spawn は末尾の analyze ゲート判定後だけ: ゲートが引いたときは `analyze-clarify#N` 1 本で終端し、
+通過したときは観測型判定が prerun で確定しない AC があれば `ac-observational#N` を 1 本、続けて isolation probe を 1 本。
 
 ```mermaid
 flowchart TD
-    PR["wrapper: dev-flow-prerun<br/>base → worktree → clean → deps ‖ analyze → stack<br/>JSON 1 行を args.setup へ"] --> IN["Workflow 起動"]
+    PR["wrapper: dev-flow-prerun<br/>base → worktree → clean → analyze ‖ stack<br/>→ 別の Bash 呼び出しで ensure-worktree-deps --setup（deps install）<br/>JSON 1 行を args.setup へ"] --> IN["Workflow 起動"]
     IN --> S1["validatePrerunSetup(args.setup)<br/>純関数・spawn なし"]
     S1 --> OUT["Setup 末尾の analyze ゲートへ（下図）"]
 
@@ -78,8 +80,10 @@ flowchart TD
 ```
 
 `dev-flow-prerun` の各段は独立に `ok:false` を報告し後続段を巻き込まない。base は明示指定なら
-origin に存在するか検証、未指定なら `origin/dev` → `origin/HEAD` の順。既存 worktree は upstream が
-`origin/BASE` と一致するか検証する。`args.setup` が無い・`ok:false`・必須キー欠落は workflow が
+origin に存在するか検証、未指定なら `origin/dev` → `origin/HEAD` の順。worktree は `--no-track` で作る
+（upstream を持たない）。既存 worktree を再利用するときは、branch の reflog の作成記録
+（`branch: Created from <ref>`）が `origin/BASE`（または pr-iterate-prerun が作った `origin/feature/issue-N`）かで
+起点を検証する。`args.setup` が無い・`ok:false`・必須キー欠落は workflow が
 即 throw し、workflow 内 proxy への fallback は置かない（後方互換 scaffolding 禁止）。
 worktree は repo 内 `.claude/worktrees/df-N` を優先し、書き込めない
 （`worktree_status:"unwritable"`）場合のみ wrapper が repo 外 `repo-wt/df-N` で prerun を再実行する。
@@ -90,20 +94,23 @@ top-level の Bash では意味が変わる。
 
 ```mermaid
 flowchart TD
-    PA["prerun（deps と並列）: prerun-analyze.sh<br/>analyze-issue --contract → 決定論 parse<br/>breaking keyword hit → Jev noul<br/>comments present → comment ごとに Jev choice"] --> IN["args.setup.analyze"]
+    PA["prerun（stack 検出と並列）: prerun-analyze.sh<br/>analyze-issue --contract → 決定論 parse<br/>breaking keyword hit → Jev noul<br/>comments present → comment ごとに Jev choice"] --> IN["args.setup.analyze"]
     IN --> A0{"analyze.ok ?"}
     A0 -->|no| NC["needs_clarification<br/>source=analyze_prerun<br/>spawn 0"]
     A0 -->|yes| A1["buildReqFromContract<br/>whitelist 検証 → REQ"]
     A1 -->|"不合格"| AB["throw（prerun 出力の契約違反）"]
-    A1 --> A2{"AC 空 / comment_conflicts 非空 /<br/>uncertain 非空 ?"}
+    A1 --> A2{"AC 空 / comment_conflicts 非空 /<br/>uncertain 非空 / repo 内外が混ざった AC ?"}
     A2 -->|yes| A3["analyze-clarify（dev-runner）1 spawn<br/>人間向け missing_context を生成"]
     A3 --> NC2["needs_clarification<br/>source=analyze<br/>isolation-probe / 実装 agent は spawn しない"]
-    A2 -->|no| A4["isolation probe<br/>Write tool で書けるか<br/>token = setup.epoch"]
+    A2 -->|no| AO{"ac_observational に<br/>null（prerun で未確定）?"}
+    AO -->|yes| AOA["ac-observational（dev-runner）1 spawn<br/>AC の文面だけで観測型を判定<br/>失敗・判定不能は観測型"]
+    AOA --> A4
+    AO -->|no| A4["isolation probe<br/>Write tool で書けるか<br/>token = setup.epoch"]
     A4 -->|"written:false"| AB
     A4 --> OUT["Implement へ"]
 ```
 
-analyze ゲートは Workflow 内では純関数の検証と 3 条件ゲートだけで、ゲート自体の spawn は 0。
+analyze ゲートは Workflow 内では純関数の検証と上図のゲート判定だけで、ゲート自体の spawn は 0。
 issue を LLM が転写する工程が無いので provenance 突合・comment_count 突合・scope 切断時の
 再実行も無い。決定論で解けない 2 理由だけを prerun が Jev（有界判定モデル、`_shared/scripts/jev-classify.sh`）に回す:
 breaking keyword hit は noul 2 問（後方互換を保たない API / 形式の変更か・既存データの変換を要するか。
@@ -115,7 +122,9 @@ override だが権限なし / conflict / 低確信 → `comment_conflicts`、本
 `DEVFLOW_JEV_DISABLE=1` は `uncertain` に倒す（fail-closed。応答なしは jev-classify の `--reason-file` が返す
 原因 — jev-broker に接続できない / jev-broker 経由の失敗 / 鍵なし / Keychain に届かない / Keychain 読み取り失敗 /
 タイムアウト / 通信失敗 / 応答不正 — を文言に載せる）。ゲートが引いたときだけ sonnet を
-1 spawn して人間向けの質問文を作る。telemetry の `analyze_path` は `contract` / `jev` /
+1 spawn（`analyze-clarify#N`）して人間向けの質問文を作る。ゲートを通過した run でも、観測型 AC の判定が prerun で
+確定しない（`ac_observational` が null — Jev 低確信・Jev に届かない）AC があれば、AC の文面と issue タイトルだけを読む
+`ac-observational#N`（dev-runner）を 1 spawn する（失敗・判定不能の AC は観測型として扱う）。telemetry の `analyze_path` は `contract` / `jev` /
 `sonnet`（ゲート後のみ）の 3 値。
 
 ### 1.3 Implement
@@ -215,7 +224,7 @@ Evaluate 時点から tree が変わったことによる `eval_staleness=hash_m
 flowchart TD
     IN["Evaluate 完了 / micro path"] --> R1["diff-hash 比較<br/>不一致なら stale-eval"]
     R1 --> R2["pr-artifacts で commit message / PR body 確定<br/>haiku が verbatim 転写 + git commit / push / gh pr create"]
-    R2 --> R4{"LITE ?<br/>micro かつ runEval=false<br/>かつ danger clean"}
+    R2 --> R4{"LITE ?<br/>micro かつ runEval=false<br/>かつ danger clean<br/>かつ ci の AC なし"}
     R4 -->|yes| LITE["lite route<br/>pr-reviewer 1-pass → ci-check"]
     R4 -->|no| FULL["workflow: pr-iterate"]
     LITE -->|"clean かつ CI green"| OUT["Final reconcile へ"]
@@ -302,7 +311,8 @@ flowchart TD
 | `standard` | 同上 | 1 パスのみ。差し戻しなし。未解消 critical は merge tier HOLD で担保。agent AC の未達だけは `AGENT_AC_REIMPL_MAX` 回まで延長して差し戻す | `REVIEW` |
 | `complex` | 同上 | 差し戻し loop（`EVAL_MAX` 上限、design 差し戻しは `DESIGN_REPLAN_MAX` まで。差し戻し先は同じ `dev-implementer`） | `REVIEW` / `HOLD`（danger・breaking 検出時） |
 
-micro のうち `runEval=false` かつ danger clean のものだけが PR phase で **lite route** に入り、
+micro のうち `runEval=false` かつ danger clean かつ ci の AC（`ci_verify` の check で判定する AC。
+`CI_AC_INDEXES`）を持たないものだけが PR phase で **lite route** に入り、
 pr-reviewer 1-pass と CI green だけで終端する。blocking finding か CI 非 green を検出した時点で
 通常の pr-iterate へ自動昇格する。
 
@@ -321,13 +331,14 @@ flowchart TD
     IN["pr-iterate PR 番号<br/>MAX / REVIEW_STUCK<br/>nested 起動時（dev-flow / /pr-iterate wrapper）は<br/>pr-meta / isolation-cleanup を skip<br/>（isolation probe 本体は不変で実行）"] --> LOOP["iteration i"]
     LOOP --> REV["pr-reviewer が実 diff を宣言意図に照合<br/>issue の acceptance criteria も判定に含める"]
     REV --> D{"decision"}
+    REV -.->|"結果を返さない /<br/>approve と blocking の矛盾が<br/>1 回の再 review 後も再発"| RCE["status: review_contract_error"]
 
     D -->|approve| CI["ci-check 1 spawn = 1 判定<br/>gh pr checks → check-ci.sh<br/>pending なら script 側 ci-wait ループ（上限 CI_WAIT_CEILING_SECONDS）"]
     D -->|"request_changes / comment"| BL{"blocking findings あり ?"}
 
     CI --> CS{"status"}
     CS -->|"passed / no_checks"| LGTM["status: lgtm"]
-    CS -->|error| ERR["status: ci_error<br/>gh API 失敗（auth / network）"]
+    CS -->|error| ERR["status: ci_error<br/>CI 状態を確定できない<br/>（proxy が結果を返さない / gh 取得失敗 /<br/>status と件数の食い違い）"]
     CS -->|pending| PEND["status: ci_pending<br/>ceiling 到達・never auto-approve"]
     CS -->|failed| CIF["CI failure を findings 化"]
 
@@ -357,8 +368,9 @@ flowchart TD
 | `stuck` | 同一 topic が反復（review / CI failure） | merge tier `HOLD` |
 | `fix_failed` | fix 未適用、または commit / push の保証に失敗 | merge tier `HOLD` |
 | `max_reached` | `MAX` iteration で収束せず | merge tier `HOLD` |
-| `ci_error` | gh API 失敗（auth / network） | merge tier `HOLD` |
+| `ci_error` | CI 状態を確定できない（ci-check の proxy が結果を返さない / check-ci の gh 取得失敗 / proxy の status と件数の食い違い）。`gh pr checks` で実状態を確認する | merge tier `HOLD` |
 | `ci_pending` | checks 未完了。自動承認しない | merge tier `HOLD` |
+| `review_contract_error` | pr-reviewer が schema-retry 後も結果を返さない、または decision=approve と blocking の矛盾が 1 回の再 review 後も再発 | merge tier `HOLD` |
 
 ---
 
@@ -370,7 +382,7 @@ AUTO は micro かつ docs/test-only かつすべての HOLD 条件が不成立�
 
 ```mermaid
 flowchart TD
-    IN["classifyMergeTier の入力<br/>ledger / danger / AC / iterate status / mergeable ほか"] --> H{"HOLD 理由が<br/>1 つでも成立 ?<br/>（下表 10 条件）"}
+    IN["classifyMergeTier の入力<br/>ledger / danger / AC / iterate status / mergeable ほか"] --> H{"HOLD 理由が<br/>1 つでも成立 ?<br/>（下表）"}
 
     H -->|"1 つでも成立"| HOLD["HOLD<br/>人間 review 必須"]
     H -->|"すべて不成立"| A{"shape が micro かつ<br/>docs / test-only ?"}
@@ -385,18 +397,28 @@ flowchart TD
 
 ### HOLD 理由（1 つでも成立すれば HOLD）
 
-| # | 条件 | 備考 |
+`_lib/merge-tier.mjs` の `HOLD_REASON_CODES` と 1 対 1 に対応する（`_lib/devflow-docs-counts.test.mjs` が照合する）。
+
+| code | 条件 | 備考 |
 | --- | --- | --- |
-| 1 | ledger 未収束（未 checked の blocking item が残る） | |
-| 2 | danger-grep hit 未解消 / 実行不能 | 実行不能は fail-closed |
-| 3 | `breaking_change=true`（構造化判定） | keyword 単独 hit は不採用 |
-| 4 | ESCALATE-TO-HUMAN 項目あり | |
-| 5 | AC 未達 / Final AC reconcile 判定不能 | AC 未達は `ac_agent_unsatisfied`（差し戻し後も残った取りこぼし）と `ac_human_pending`（人手 AC 待ち）に分ける |
-| 6 | Final reconcile 再検証不能 / final test red | |
-| 7 | pr-iterate が `lgtm` 以外で終端 | |
-| 8 | `eval_staleness = hash_mismatch` | 評価済み tree と merge 対象 tree の乖離 |
-| 9 | test-weakening 未クリア | |
-| 10 | base branch と conflict（`CONFLICTING` / `DIRTY`） | `UNKNOWN` は fail-open |
+| `ledger_unconverged` | ledger 未収束（未 checked の blocking item が残る） | |
+| `danger_unresolved` | danger-grep hit 未解消 | |
+| `breaking_structured` | `breaking_change=true`（構造化判定） | keyword 単独 hit は不採用 |
+| `escalate` | ESCALATE-TO-HUMAN 項目あり | |
+| `ac_agent_unsatisfied` | agent AC が差し戻し上限後も未達（取りこぼし） | |
+| `ac_human_pending` | 人手 AC 待ち（worktree 外作業・実行環境に届かない検証を要する AC が未達） | |
+| `ac_ci_pending` | ci の AC が pr-iterate の LGTM 後の待ちで success にならない（CI 判定待ち） | |
+| `merge_facts_dropped` | merge-tier-facts の応答から danger-grep の結果（`risk.value`）が落ちた | danger-grep 自体は実行済みの可能性あり。security 未検証として扱う |
+| `danger_fail_closed` | danger-grep 実行不能 | fail-closed |
+| `final_reconcile_unavailable` | Final reconcile 再検証不能（CI 委譲も不成立） | |
+| `final_test_red` | final test red | 落ちたファイルだけの 1 回の再実行で green なら flake として HOLD にしない |
+| `final_ac_unavailable` | Final AC reconcile 判定不能 | |
+| `iterate_non_lgtm` | pr-iterate が `lgtm` 以外で終端 | |
+| `hash_mismatch` | `eval_staleness = hash_mismatch` | 評価済み tree と merge 対象 tree の乖離 |
+| `testsurf_uncleared` | test-weakening 未クリア | |
+| `mergeable_conflicting` | base branch と conflict（`CONFLICTING` / `DIRTY`） | `UNKNOWN` は fail-open |
+| `pr_closes_missing` | PR body に `Closes #<issue>` 行が無く、本文の再投入も失敗 | 決定論再チェックで解消しうる |
+| `ci_checks_failed` | PR head の CI checks が red（bucket が fail / cancel / 未知値） | pending・取得不能は HOLD にせず開示行だけ |
 
 ### gate_policy に依らず常に blocking
 
@@ -451,7 +473,7 @@ pr-iterate の `MAX`（review ⇄ fix 反復、既定 10）は `args.max_iterati
 | `dev-implementer` | plan+impl 統合実装（全 shape の唯一の実装 agent。Implement・BLOCKED 再実装・green-fix・evaluator 差し戻しを担う） | opus / high |
 | `evaluator` | 実装品質ゲート | opus / medium |
 | `pr-reviewer` | PR レビュー | opus / high |
-| `dev-runner` | Skill 呼び出し（analyze ゲート（Setup 末尾）後の missing_context 生成のみ。通常経路では起動しない） | frontmatter / high |
+| `dev-runner` | Setup 末尾の analyze ゲート後の `analyze-clarify#N`（missing_context 生成）と `ac-observational#N`（観測型 AC の分類）、pr-iterate の fix。通常経路の Setup では起動しない | frontmatter / high |
 | `dev-runner-haiku` | 書き込み・Skill 呼び出しを伴う exec-proxy | haiku / low |
 | `dev-runner-haiku-ro` | read-only exec-proxy | haiku / low |
 | `dev-runner-haiku-wo` | isolation probe 専任（Write のみ） | haiku / low |

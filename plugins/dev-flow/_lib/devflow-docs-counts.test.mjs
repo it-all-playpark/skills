@@ -108,6 +108,115 @@ test("dev-runner.md: 役割記述が agentType: 'dev-runner' の実呼び出し�
   }
 });
 
+// issue #897: atlas / pipeline / rules / SKILL.md / AGENTS.md の記述を実装に合わせて pin する。
+// 期待値は実装ソース（prerun.sh・merge-tier.mjs・dev-flow.js・pr-iterate.js・agents/）から導出する。
+const atlasSrc = readFileSync(join(repoRoot, 'docs/dev-flow-atlas.md'), 'utf8');
+const pipelineMd = readFileSync(join(pluginRoot, 'dev-flow/references/pipeline.md'), 'utf8');
+const prerunSh = readFileSync(join(pluginRoot, 'dev-flow/scripts/prerun.sh'), 'utf8');
+const prerunCode = prerunSh.split('\n').filter((l) => !/^\s*#/.test(l)).join('\n');
+const sectionOf = (src, heading) => {
+  const start = src.indexOf(heading);
+  assert.notEqual(start, -1, `見出し ${heading} が無い`);
+  const next = src.slice(start + heading.length).search(/^#{2,3} /m);
+  return next === -1 ? src.slice(start) : src.slice(start, start + heading.length + next);
+};
+
+test('atlas: prerun の段列は prerun.sh と同じく deps install を含まず analyze ‖ stack を並列に描き、deps は ensure-worktree-deps が回す', () => {
+  // 実装: prerun は deps install をせず、analyze をバックグラウンドで起動して detect-stack の後に join する
+  assert.ok(!/ensure-worktree-deps|pnpm install|npm (ci|install)/.test(prerunCode), 'prerun.sh が deps install を行っている — atlas の段列を見直す');
+  const launched = prerunCode.indexOf('ANALYZE_PID=$!');
+  const stack = prerunCode.indexOf('detect-stack.sh');
+  const joined = prerunCode.indexOf('wait "$ANALYZE_PID"');
+  assert.ok(launched !== -1 && launched < stack && stack < joined, 'prerun.sh で analyze と detect-stack が並列になっていない — atlas の段列を見直す');
+
+  const chains = atlasSrc.split('\n').filter((l) => l.includes('base → worktree → clean'));
+  assert.ok(chains.length > 0, 'atlas に prerun の段列が無い');
+  for (const line of chains) {
+    assert.ok(line.includes('analyze ‖ stack'), `prerun の段列が analyze ‖ stack になっていない: ${line}`);
+    assert.ok(line.includes('ensure-worktree-deps --setup'), `deps install を ensure-worktree-deps に描いていない: ${line}`);
+    const prerunPart = line.slice(line.indexOf('base → worktree → clean'), line.indexOf('ensure-worktree-deps'));
+    assert.ok(!/deps/.test(prerunPart), `prerun の段列に deps が入っている: ${line}`);
+  }
+});
+
+test('atlas: 再利用 worktree の起点検証は実装と同じく --no-track 作成 + reflog の作成記録で書く', () => {
+  const checkout = readFileSync(join(pluginRoot, '_shared/scripts/worktree-checkout.sh'), 'utf8');
+  assert.match(checkout, /^\s*[^#\n]*worktree add --no-track/m, 'worktree-checkout.sh が --no-track で worktree を作っていない — atlas を見直す');
+  assert.ok(prerunCode.includes('branch: Created from '), 'prerun.sh が reflog の作成記録で起点を判定していない — atlas を見直す');
+  const setup = sectionOf(atlasSrc, '### 1.2 Setup');
+  assert.ok(setup.includes('`--no-track`'), 'atlas Setup に --no-track 作成が無い');
+  assert.ok(setup.includes('`branch: Created from <ref>`'), 'atlas Setup に reflog の作成記録による起点検証が無い');
+});
+
+test('atlas: HOLD 理由表の code が merge-tier.mjs の pushBlocking の code と一致し、件数を書かない', () => {
+  const mergeTierSrc = readFileSync(join(pluginRoot, '_lib/merge-tier.mjs'), 'utf8');
+  const impl = [...new Set([...mergeTierSrc.matchAll(/pushBlocking\(\s*'([a-z_]+)'/g)].map((m) => m[1]))].sort();
+  assert.ok(impl.includes('hash_mismatch') && impl.length > 1, `pushBlocking の code が読めない: ${impl.join(', ')}`);
+  const table = sectionOf(atlasSrc, '### HOLD 理由');
+  const documented = [...table.matchAll(/^\| `([a-z_]+)` \|/gm)].map((m) => m[1]);
+  assert.deepEqual([...documented].sort(), impl, 'atlas の HOLD 理由表が merge-tier.mjs の HOLD code とずれている');
+  assert.equal(new Set(documented).size, documented.length, 'HOLD 理由表に code の重複がある');
+  const merge = sectionOf(atlasSrc, '## 4. merge tier 判定');
+  assert.ok(!/\d+\s*(条件|種)/.test(merge), 'merge tier 判定の節に HOLD 条件の件数が書かれている（表を正とする）');
+});
+
+test('atlas: pr-iterate の終端 status 表が pr-iterate.js の STATUS_HEADLINE と一致する', () => {
+  const prIterateSrc = readFileSync(join(pluginRoot, '.claude/workflows/pr-iterate.js'), 'utf8');
+  const start = prIterateSrc.indexOf('const STATUS_HEADLINE = {');
+  assert.notEqual(start, -1, 'pr-iterate.js に STATUS_HEADLINE が無い');
+  const body = prIterateSrc.slice(start, prIterateSrc.indexOf('\n};', start));
+  const impl = [...body.matchAll(/^\s*'([a-z_]+)':/gm)].map((m) => m[1]).sort();
+  assert.ok(impl.length > 0, 'STATUS_HEADLINE の key が読めない');
+  const table = sectionOf(atlasSrc, '### 終端 status');
+  const documented = [...table.matchAll(/^\| `([a-z_]+)` \|/gm)].map((m) => m[1]).sort();
+  assert.deepEqual(documented, impl, 'atlas の終端 status 表が STATUS_HEADLINE とずれている');
+});
+
+test('atlas / pipeline.md: LITE 条件が dev-flow.js の const LITE と一致する（ci の AC を持つ run は lite に入らない）', () => {
+  const m = devFlowSrc.match(/^const LITE = (.+)$/m);
+  assert.ok(m, 'dev-flow.js に const LITE が無い');
+  const expr = m[1].trim();
+  assert.ok(pipelineMd.includes(`\`${expr}\``), `pipeline.md の micro lite route 条件が dev-flow.js と一致しない: ${expr}`);
+  assert.ok(expr.includes('CI_AC_INDEXES.length === 0'), 'LITE 条件から ci の AC が外れた — atlas の LITE ノードを見直す');
+  const lite = atlasSrc.split('\n').find((l) => l.includes('R4{"LITE ?'));
+  assert.ok(lite, 'atlas に LITE 判定ノードが無い');
+  for (const cond of ['micro', 'runEval=false', 'danger clean', 'ci の AC なし']) {
+    assert.ok(lite.includes(cond), `atlas の LITE 判定ノードに「${cond}」が無い: ${lite}`);
+  }
+});
+
+test('atlas / rules / SKILL.md: Setup で起動する dev-runner の label をすべて挙げる', () => {
+  const labels = [...devFlowSrc.matchAll(/agentType: 'dev-runner', schema: \w+, label: `([a-z-]+)#\$\{ISSUE\}`, phase: 'Setup'/g)].map((x) => x[1]);
+  assert.deepEqual([...labels].sort(), ['ac-observational', 'analyze-clarify'], `dev-flow.js の Setup の dev-runner 呼び出しが変わった: ${labels.join(', ')}`);
+  const docs = [
+    ['docs/dev-flow-atlas.md', atlasSrc],
+    ['.claude/rules/dev-flow.md', readFileSync(join(repoRoot, '.claude/rules/dev-flow.md'), 'utf8')],
+    ['plugins/dev-flow/dev-flow/SKILL.md', readFileSync(join(pluginRoot, 'dev-flow/SKILL.md'), 'utf8')],
+  ];
+  for (const [name, src] of docs) {
+    for (const label of labels) {
+      assert.ok(src.includes(`${label}#N`), `${name} に Setup の spawn ${label}#N が無い`);
+    }
+  }
+});
+
+test('pipeline.md: 判断系 leaf の subagent 一覧が agents/ の実体と一致する', () => {
+  const m = pipelineMd.match(/\*\*判断系 leaf は subagent\*\* \(`\.claude\/agents\/\{([^}]+)\}\.md`\)/);
+  assert.ok(m, 'pipeline.md に判断系 leaf の一覧が無い');
+  const documented = m[1].split(',').map((s) => s.trim()).sort();
+  const actual = readdirSync(join(pluginRoot, 'agents')).filter((f) => f.endsWith('.md')).map((f) => f.replace(/\.md$/, '')).sort();
+  assert.deepEqual(documented, actual);
+});
+
+test('AGENTS.md: 日次 launchd は install-schedule.sh --install の手動登録が前提であると書く', () => {
+  const installer = readFileSync(join(pluginRoot, 'dev-flow-health/scripts/install-schedule.sh'), 'utf8');
+  assert.match(installer, /--install\)/, 'install-schedule.sh に --install が無い — AGENTS.md を見直す');
+  const agentsMd = readFileSync(join(repoRoot, 'AGENTS.md'), 'utf8');
+  const block = agentsMd.slice(agentsMd.indexOf('日次 launchd'), agentsMd.indexOf('```', agentsMd.indexOf('日次 launchd')));
+  assert.ok(block.includes('macOS のみ'), `AGENTS.md の日次 launchd 行に macOS 限定が無い:\n${block}`);
+  assert.ok(block.includes('install-schedule.sh --install'), `AGENTS.md の日次 launchd 行に有効化手順が無い:\n${block}`);
+});
+
 test('evaluator.md: concern_resolutions の boolean キー不受理を現行仕様として書く', () => {
   const md = readFileSync(join(pluginRoot, 'agents/evaluator.md'), 'utf8');
   assert.ok(md.includes('boolean キーは受理しない（error）'));
