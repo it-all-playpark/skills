@@ -218,6 +218,9 @@ advance_origin_head() {
 @test "(3d) PR head と一致する再利用 worktree の未コミット変更は残したまま ok:true（fix_failed 回収）" {
     cd "$ROOT"
     run bash "$SCRIPT" 5
+    # 1 回目が失敗すると wt が空になり wip.txt を / に書く別の失敗に化けるので、ここで原因を出して止める
+    [ "$status" -eq 0 ] || { echo "1 回目の prerun が失敗: $output" >&2; return 1; }
+    echo "$output" | jq -e '.ok == true' >/dev/null || { echo "1 回目の prerun が ok:false: $output" >&2; return 1; }
     wt="$(echo "$output" | jq -r '.worktree')"
     echo "wip" > "$wt/wip.txt"
 

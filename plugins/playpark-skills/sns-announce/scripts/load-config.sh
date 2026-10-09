@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # load-config.sh - Load sns-announce configuration
-# Usage: load-config.sh [project-root]
+# Usage: load-config.sh
 #
-# Searches skill-config.json (sns-announce section) in project root
+# Searches skill-config.json (sns-announce section) in the git root of the CWD
 # Output: JSON config or default config if not found
 
 set -euo pipefail
@@ -11,11 +11,6 @@ set -euo pipefail
 # _lib/common.sh は playpark-core plugin にある。core の bin/journal（PATH）を起点に解決する（plugin 境界を ../ で跨がない）
 _CORE_BIN="$(command -v journal)" || { echo "playpark-core plugin (bin/journal) not on PATH" >&2; exit 127; }
 source "$(dirname "$_CORE_BIN")/../_lib/common.sh"
-
-PROJECT_ROOT="${1:-.}"
-
-# Resolve to absolute path
-PROJECT_ROOT=$(cd "$PROJECT_ROOT" 2>/dev/null && pwd || echo "$PROJECT_ROOT")
 
 # Default configuration
 DEFAULT_CONFIG='{
