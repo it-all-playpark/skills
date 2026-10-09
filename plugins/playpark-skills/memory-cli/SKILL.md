@@ -107,10 +107,10 @@ Deterministic put wrapper. Handles target resolution, auto-creation of project.m
 
 ```bash
 # Save to global memory
-./scripts/memvid-save.sh --target global --title "Title" --content "Content" --type feedback --tags "team=frontend" --uri "feedback/2026-03-16/slug"
+${CLAUDE_PLUGIN_ROOT}/memory-cli/scripts/memvid-save.sh --target global --title "Title" --content "Content" --type feedback --tags "team=frontend" --uri "feedback/2026-03-16/slug"
 
 # Save to project memory (auto-creates project.mv2 if missing)
-./scripts/memvid-save.sh --target project --title "Title" --content "Content" --type project
+${CLAUDE_PLUGIN_ROOT}/memory-cli/scripts/memvid-save.sh --target project --title "Title" --content "Content" --type project
 ```
 
 Output: `{"status": "saved", "target": "<path>", "title": "<title>", "type": "<type>"}`

@@ -34,7 +34,7 @@ PDF → text → script: Claude extracts transaction lines from the PDF into a t
 2. **Parse transactions** → Extract structured data from text using the parsing logic below
 3. **Detect year** → Infer start/end year from PDF filename pattern `_YYYYMMDD_YYYYMMDDHHMMSS` or ask user (the temp file name carries no date, so the years must be passed explicitly)
 4. **Write temp text file** → Save parsed transaction lines (one per line) to a temp file
-5. **Run converter** → `python3 scripts/suica_to_csv.py <temp-file> --start-year YYYY --end-year YYYY [-o output.csv]` (forward `-o` only when the user gave it)
+5. **Run converter** → `python3 ${CLAUDE_PLUGIN_ROOT}/suica-to-csv/scripts/suica_to_csv.py <temp-file> --start-year YYYY --end-year YYYY [-o output.csv]` (forward `-o` only when the user gave it)
 6. **Report results** → Show summary (row count, total amount, operator breakdown)
 7. **Cleanup** → Remove temp file
 
@@ -121,7 +121,7 @@ UTF-8 with BOM. Columns:
 Converter script: `scripts/suica_to_csv.py`
 
 ```bash
-python3 scripts/suica_to_csv.py <text-file> [--start-year YYYY] [--end-year YYYY] [-o output.csv]
+python3 ${CLAUDE_PLUGIN_ROOT}/suica-to-csv/scripts/suica_to_csv.py <text-file> [--start-year YYYY] [--end-year YYYY] [-o output.csv]
 ```
 
 The script takes the text file (one transaction per line, from Workflow step 4), not the PDF. It writes the CSV to `-o` (default: `suica_transactions.csv` in CWD). Unknown arguments exit non-zero.

@@ -14,10 +14,8 @@ effort: low
 Calculate next publish date from skill-config.json.
 
 ```bash
-bash scripts/get_next_date.sh
+bash ${CLAUDE_PLUGIN_ROOT}/get-publish-date/scripts/get_next_date.sh
 ```
-
-パスは本 skill ディレクトリ基準。実行時は本 SKILL.md のロード元ディレクトリを前置した絶対パスに解決して呼ぶこと。
 
 Output: `YYYY-MM-DD`
 

@@ -40,10 +40,8 @@ Init → [Select] → [Confirm Target] → Convert → Publish(並列) → Compl
 ## Init
 
 ```bash
-bash scripts/list-articles.sh --recent 10
+bash ${CLAUDE_PLUGIN_ROOT}/cross-post-publish/scripts/list-articles.sh --recent 10
 ```
-
-パスは本 skill ディレクトリ基準。実行時は本 SKILL.md のロード元ディレクトリを前置した絶対パスに解決して呼ぶこと。
 
 **出力に含まれる情報:**
 

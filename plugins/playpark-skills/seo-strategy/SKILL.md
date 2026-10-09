@@ -123,9 +123,9 @@ GA4 + GSC + Trends を統合分析し、**3専門家の並列分析 + 悪魔の�
    combined レポートから算出すると pages + queries の二重カウントになるため、
    `strategy_analyzer.py` の `extract_gsc_kpi` は pages セクションのみを使用する。
 
-4. **データ分析**: `scripts/strategy_analyzer.py` を実行
+4. **データ分析**: `strategy_analyzer.py` を実行
    ```bash
-   python scripts/strategy_analyzer.py \
+   python ${CLAUDE_PLUGIN_ROOT}/seo-strategy/scripts/strategy_analyzer.py \
      --ga-report <GA_PATH> --gsc-report <GSC_COMBINED_PATH> --trends-report <TRENDS_PATH> \
      --ga-prev-report <PREV_GA_PATH> \
      --blog-dir content/blog \

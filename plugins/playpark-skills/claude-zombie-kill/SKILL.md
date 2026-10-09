@@ -17,7 +17,7 @@ Detect and kill zombie Claude Code CLI sessions from previous days.
 
 ## Workflow
 
-1. Run `scripts/zombie-kill.sh` from skill directory
+1. Run `${CLAUDE_PLUGIN_ROOT}/claude-zombie-kill/scripts/zombie-kill.sh`
 2. Script lists processes started before today as zombies
 3. User confirms before kill (unless `--force`)
 4. Stubborn processes get SIGKILL after 1s grace period
@@ -26,10 +26,10 @@ Detect and kill zombie Claude Code CLI sessions from previous days.
 
 ```bash
 # Interactive (confirm before kill)
-bash SKILL_DIR/scripts/zombie-kill.sh
+bash ${CLAUDE_PLUGIN_ROOT}/claude-zombie-kill/scripts/zombie-kill.sh
 
 # Auto-kill without confirmation
-bash SKILL_DIR/scripts/zombie-kill.sh --force
+bash ${CLAUDE_PLUGIN_ROOT}/claude-zombie-kill/scripts/zombie-kill.sh --force
 ```
 
 ## Detection Logic

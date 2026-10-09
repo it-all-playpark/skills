@@ -83,14 +83,14 @@ user-invocable: true
     - **Tables must be HTML** (see snippets/table.html)
     - Add speaker notes with timing
 
-[6] Validate → Run: scripts/validate.sh <output.md>
+[6] Validate → Run: ${CLAUDE_PLUGIN_ROOT}/marp-slide/scripts/validate.sh <output.md>
 
 [7] Logo Injection (if theme uses logo)
-    - Run: scripts/inject-logo.sh <output.md>
+    - Run: ${CLAUDE_PLUGIN_ROOT}/marp-slide/scripts/inject-logo.sh <output.md>
     - Replaces {{LOGO_BASE64}} with Base64-encoded logo
 
 [8] Export (if format != md)
-    - Run: scripts/export.sh <output.md> --format <format>
+    - Run: ${CLAUDE_PLUGIN_ROOT}/marp-slide/scripts/export.sh <output.md> --format <format>
 ```
 
 ## Output Format
