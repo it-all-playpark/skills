@@ -99,7 +99,7 @@ bash ${CLAUDE_PLUGIN_ROOT}/cross-post-publish/scripts/list-articles.sh --recent 
 
 **実装メモ:**
 - `--skip-qiita` / `--skip-zenn` 指定時は確認画面に「Zenn のみ公開」「Qiita のみ公開」と公開先を明示
-- 公開先 URL（例: `https://www.playpark.co.jp/blog/<slug>`）も併記する
+- 元記事 URL（`blog-cross-post-resolve-source <slug>` の `original_url`）も併記する
 
 ### Phase 2: Convert → 完了後すぐPhase 3へ
 
@@ -141,7 +141,7 @@ Source: content/blog/YYYY-MM-DD-<slug>.mdx
 Category: tech-tips
 Zenn: クリップボード + ブラウザ
 Qiita: 限定共有で投稿済み
-URL: https://www.playpark.co.jp/blog/<slug>
+URL: <original_url>
 ```
 
 ## Error Cases

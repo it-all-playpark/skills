@@ -75,7 +75,14 @@
 | `{DEPTH_2}` | 元記事の知見セクション | 公式版のみの内容 |
 | `{DEPTH_3}` | 元記事の比較・検証 | 公式版のみの内容 |
 | `{ORIGINAL_URL}` | Init結果 | `original_url` |
+| `{BASE_URL}` | Init結果 | `base_url` |
+| `{BLOG_URL}` | Init結果 | `blog_url` |
+| `{COMPANY_NAME}` | Init結果 | `company_name` |
+| `{CONTACT_URL}` | Init結果 | `contact_url` |
 | `{ARTICLE_TITLE}` | 元記事frontmatter | `title` |
+
+Init結果の値は `skill-config.json` の `blog-cross-post` セクション（`base_url` / `blog_path_prefix` /
+`company_name` / `contact_url`）から来る。会社名・URL を出力に直書きしない。
 
 ## 深掘り導線の書き方（共通）
 
@@ -110,10 +117,10 @@
 
 | 対象 | Before | After |
 |------|--------|-------|
-| 画像 | `/blog/image.webp` | `https://www.playpark.co.jp/blog/image.webp` |
-| 記事リンク (Zenn) | `/blog/{slug}` or `{ORIGINAL_URL}` | `https://www.playpark.co.jp/blog/{slug}?utm_source=zenn&utm_medium=crosspost&utm_campaign={slug}` |
-| 記事リンク (Qiita) | `/blog/{slug}` or `{ORIGINAL_URL}` | `https://www.playpark.co.jp/blog/{slug}?utm_source=qiita&utm_medium=crosspost&utm_campaign={slug}` |
-| 内部リンク | `/contact` | `https://www.playpark.co.jp/contact` |
+| 画像 | `/blog/image.webp` | `{BASE_URL}/blog/image.webp` |
+| 記事リンク (Zenn) | `/blog/{slug}` or `{ORIGINAL_URL}` | `{BLOG_URL}{slug}?utm_source=zenn&utm_medium=crosspost&utm_campaign={slug}` |
+| 記事リンク (Qiita) | `/blog/{slug}` or `{ORIGINAL_URL}` | `{BLOG_URL}{slug}?utm_source=qiita&utm_medium=crosspost&utm_campaign={slug}` |
+| 内部リンク | `/contact` | `{BASE_URL}/contact` |
 | アンカー | `#section` | そのまま |
 
 > **Note**: UTMパラメータは記事単位のトラッキング用。お問い合わせ・ブログ一覧など非記事ページのリンクにはUTMを付与しない。詳細は `claudedocs/ref/utm-rules.md` を参照。
