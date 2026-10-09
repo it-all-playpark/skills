@@ -38,9 +38,8 @@ skip する（E2E は CI が回す）。deps install は wrapper が prerun と�
 テストを走らせる `redgreen-verify` / `run-tests` は index を書く git（`checkout` 等）を使わない。
 dev-flow の `bin/` wrapper は exec の前に `GIT_OPTIONAL_LOCKS=0` を
 export する（読み取り系 git の index 書き戻しが `.git/worktrees/*/index.lock` を取りに行かない。必須ロックの
-commit / worktree add 等には効かない）。sandbox が `.git` を書かせないのは skills の live checkout
-（`~/ghq/github.com/it-all-playpark/skills`）だけで、skills 向けの dev-flow は skills-dev（書ける）で動くので通常は踏まない。
-live checkout で起動された場合の保険として残す。
+commit / worktree add 等には効かない）。これが効くのは、起動元 checkout の `.git` が sandbox から書けない
+場合（組み込み保護や sandbox 設定が checkout を write deny している等）で、`.git` が書ける checkout では踏まない。
 
 plugin version を上げた直後の解決確認は、**update 後に起動し直した Claude Code セッション内**で
 `command -v <bare 名>` を実行する。PATH には

@@ -19,7 +19,9 @@ setup() {
     SKILLS_REPO="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd)"
     SCRIPT="$SKILLS_REPO/dev-issue-analyze/scripts/analyze-issue.sh"
 
-    FIXTURE_DIR="$BATS_TMPDIR/fixtures"
+    # テストごとの private dir。$BATS_TMPDIR は同時に走る他の bats run と共有で、
+    # 同名 fixture を互いに上書きして "comments array field missing" を起こす。
+    FIXTURE_DIR="$BATS_TEST_TMPDIR/fixtures"
     mkdir -p "$FIXTURE_DIR"
 
     # gh stub: one log record per invocation ("<arg1> <arg2> ... <argN>"), then

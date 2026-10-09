@@ -122,8 +122,8 @@ restore_saved() {
 }
 
 # tracked impl 1 件を HEAD の内容と実行ビットに戻す。git checkout HEAD -- は index も書き換える(index.lock を
-# 取る)ので使わない — テストを sandbox 内で回すこのスクリプトからは、.git を書かせない repo(skills の live checkout。
-# 通常 dev-flow は skills-dev で動くので踏まない)で .git/worktrees/*/index.lock が書けない。blob の読み出し(filter 適用済み)と ls-tree は index に触れない。通常ファイル以外(symlink 等)は失敗扱い。
+# 取る)ので使わない — テストを sandbox 内で回すこのスクリプトからは、checkout の .git が sandbox から書けない
+# 場合に .git/worktrees/*/index.lock が書けない。blob の読み出し(filter 適用済み)と ls-tree は index に触れない。通常ファイル以外(symlink 等)は失敗扱い。
 write_head_blob() {
   local f="$1" mode
   mode="$(git ls-tree HEAD -- "$f" 2>/dev/null | awk '{print $1}')"

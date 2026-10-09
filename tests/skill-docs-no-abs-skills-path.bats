@@ -12,11 +12,14 @@ setup() {
 
 # skills の clone（~/ghq/.../skills/）の絶対パスも書かない。clone は sandbox から書けるので
 # excludedCommands に入らず、そこを指す実行例は sandbox 内に落ちる（除外されるのは plugin cache だけ）。
-@test "全skillのSKILL.md/referencesに~/.claude/skills/とskills cloneの絶対パス記述が残っていない" {
+# 作者の clone のパスと作者環境の checkout 名（skills-dev）も同じ理由で書かない — 第三者の環境には無いので、
+# 前提は「checkout が sandbox から書けない場合」のような条件として書く。
+@test "全skillのSKILL.md/referencesに~/.claude/skills/とskills cloneのパス・作者環境名の記述が残っていない" {
     run git -C "$REPO_ROOT" grep -nIF \
         -e '~/.claude/skills/' \
         -e '$HOME/.claude/skills/' \
-        -e 'ghq/github.com/it-all-playpark/skills/' \
+        -e 'ghq/github.com/it-all-playpark/skills' \
+        -e 'skills-dev' \
         -- '*SKILL.md' '*skill.md' '*references/*.md' \
         ':(exclude).claude/'
     echo "$output"
@@ -58,6 +61,15 @@ setup() {
         -e '$HOME/.claude/skills/' \
         -e '${HOME}/.claude/skills/' \
         -e 'Path.home() / ".claude/skills' \
+        -- '*.sh' '*.py' ':(exclude)tests/'
+    echo "$output"
+    [ "$status" -ne 0 ]
+}
+
+@test "skill script(*.sh/*.py)にskills cloneのパス・作者環境名(skills-dev)の記述が残っていない" {
+    run git -C "$REPO_ROOT" grep -nIF \
+        -e 'ghq/github.com/it-all-playpark/skills' \
+        -e 'skills-dev' \
         -- '*.sh' '*.py' ':(exclude)tests/'
     echo "$output"
     [ "$status" -ne 0 ]
