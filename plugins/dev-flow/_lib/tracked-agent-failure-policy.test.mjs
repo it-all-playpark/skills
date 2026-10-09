@@ -430,6 +430,14 @@ const PR_B7 = {
   },
 };
 
+// B8: LGTM 前の mergeable が CONFLICTING → conflict-resolve#1（自動解消できず merge 前に戻す）→ lgtm（issue #916）。
+const PR_B8 = {
+  overrides: {
+    'mergeable-check#1': { mergeable: 'CONFLICTING', mergeStateStatus: 'DIRTY' },
+    'conflict-resolve#1': { fetched: true, pushed: false, result: { status: 'aborted', reason: 'unsupported_conflict', files: [{ path: 'a.txt', type: 'content' }] } },
+  },
+};
+
 async function runPrIterateBaseline(config) {
   const { ctx, calls } = makePrIterateSandbox({ args: '5', overrides: config.overrides });
   const { result, error } = await runWorkflowCapture(prIterateSrc, ctx, '.claude/workflows/pr-iterate.js');
@@ -465,6 +473,10 @@ const EXPECTED_PR_ITERATE = {
   'ci-wait-check#1.2': { config: PR_B6, policy: 'continue', reason: 'failOpenAgent経由。待機+再判定 proxy の throw/null は slept:true 不成立として積算せず ci_pending 終端へ流す（run は abort しない）' },
   // ── issue #806: review と並列に取った ci-check を採れなかった round の直列再取得 ──
   'ci-check#1-serial': { config: PR_B7, policy: 'continue', reason: 'failOpenAgent経由。throw/nullはstatus:errorに合成しci_errorへ流す（ci-check#1 と同じ fail-open）' },
+  // ── issue #916: LGTM 前の base conflict の確認と自動解消 ──
+  'mergeable-check#1': { config: PR_B1, policy: 'continue', reason: 'failOpenAgent経由。throw/nullはconflict不明として自動解消を試みずlgtmへ進むfail-open' },
+  'mergeable-check#2': { config: PR_B2, policy: 'continue', reason: 'failOpenAgent経由。throw/nullはconflict不明として自動解消を試みずlgtmへ進むfail-open' },
+  'conflict-resolve#1': { config: PR_B8, policy: 'continue', reason: 'failOpenAgent経由。throw/nullはproxy_failedとして記録し自動解消せずlgtmへ（Merge tierがconflictをHOLD）' },
 };
 
 for (const [label, spec] of Object.entries(EXPECTED_PR_ITERATE)) {
@@ -478,7 +490,7 @@ for (const [label, spec] of Object.entries(EXPECTED_PR_ITERATE)) {
 }
 
 test('pr-iterate.js: 全 baseline で観測される label は EXPECTED_PR_ITERATE に登録されている', async () => {
-  const configs = [PR_B1, PR_B2, PR_B3, PR_B4, PR_B5, PR_B6, PR_B7];
+  const configs = [PR_B1, PR_B2, PR_B3, PR_B4, PR_B5, PR_B6, PR_B7, PR_B8];
   const observed = new Set();
   for (const config of configs) {
     const { calls } = await runPrIterateBaseline(config);

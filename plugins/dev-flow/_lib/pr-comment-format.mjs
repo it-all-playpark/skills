@@ -78,6 +78,27 @@ function formatCiLastStatusLine(ciLastStatus, ciLastFailedChecks, pr) {
 }
 
 /**
+ * base との conflict の自動解消の試行を 1 試行 1 行の箇条書きにする（試行が無ければ空配列）。
+ * 自動解消した試行は型とファイル、しなかった試行は止めたファイル（型 A / B 以外）とその型を出す。
+ * @param {Array<{iteration:number, status:string, reason?:string, files?:Array<{path:string,type:string}>, merge_sha?:string|null}>} list
+ * @returns {string[]}
+ */
+function formatConflictAutoresolveLines(list) {
+  const fileCell = (f) => `\`${mdCell(f.path)}\`（${f.type === 'A' || f.type === 'B' ? `型 ${f.type}` : mdCell(f.type)}）`;
+  return (list || []).filter((r) => r != null).map((r) => {
+    const files = Array.isArray(r.files) ? r.files : [];
+    if (r.status === 'resolved') {
+      const sha = r.merge_sha ? `merge commit \`${String(r.merge_sha).slice(0, 7)}\` を push — ` : '';
+      return `- 反復 ${r.iteration}: ✅ 自動解消した（${sha}${files.map(fileCell).join(' / ') || '—'}）`;
+    }
+    const stopped = files.filter((f) => f.type !== 'A' && f.type !== 'B');
+    const shown = stopped.length > 0 ? stopped : files;
+    const reason = r.reason ? `${mdCell(r.reason)}` : mdCell(r.status);
+    return `- 反復 ${r.iteration}: ⚠️ 自動解消しなかった（${reason}${shown.length ? ` — 止めたファイル: ${shown.map(fileCell).join(' / ')}` : ''}）`;
+  });
+}
+
+/**
  * 終端サマリー markdown を生成する。
  * @param {object} opts
  * @param {number|string} opts.pr - PR 番号
@@ -92,9 +113,10 @@ function formatCiLastStatusLine(ciLastStatus, ciLastFailedChecks, pr) {
  * @param {string|null} [opts.ciLastStatus] - 最後に観測した CI 状態 'passed' | 'failed' | 'pending' | 'no_checks' | 'error' | null（未観測）
  * @param {string[]} [opts.ciLastFailedChecks] - ciLastStatus が failed のとき列挙する check 名
  * @param {Array} [opts.humanFollowups] - worktree の外を指すとして fix から外した blocking finding（severity, file, line, description, suggestion, iter）
+ * @param {Array} [opts.conflictAutoresolve] - base との conflict の自動解消の試行（_lib/conflict-autoresolve.mjs の conflictAutoresolveRecord の配列）
  * @returns {string}
  */
-export function buildTerminalSummaryBody({ pr, status, iterations, lastDecision, lastSummary, lastVerificationEvidence, history, ciWaitSeconds, ciPollAttempts, ciLastStatus = null, ciLastFailedChecks = [], humanFollowups = [] }) {
+export function buildTerminalSummaryBody({ pr, status, iterations, lastDecision, lastSummary, lastVerificationEvidence, history, ciWaitSeconds, ciPollAttempts, ciLastStatus = null, ciLastFailedChecks = [], humanFollowups = [], conflictAutoresolve = [] }) {
   const DECISION_EMOJI = { 'approve': '✅', 'request-changes': '🔴', 'comment': '💬' };
   const lines = [];
 
@@ -165,6 +187,15 @@ export function buildTerminalSummaryBody({ pr, status, iterations, lastDecision,
     lines.push(`### 👤 人間側 follow-up（worktree の外を指す指摘 — 自動修正の対象外・${followups.length} 件）`);
     lines.push('');
     lines.push(...formatFindingsList(followups, { withIter: followups.every((f) => f.iter != null) }));
+  }
+
+  // base との conflict の自動解消（issue #916）。試行が無ければ 1 行も足さない。
+  const conflictLines = formatConflictAutoresolveLines(conflictAutoresolve);
+  if (conflictLines.length > 0) {
+    lines.push('');
+    lines.push('### 🔀 base との conflict の自動解消');
+    lines.push('');
+    lines.push(...conflictLines);
   }
 
   const allMinor = histList.flatMap((r) => (r.minor ?? []).map((f) => ({ iter: r.iteration, ...f })));

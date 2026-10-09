@@ -65,6 +65,28 @@ function localVerifyLine(lv) {
   return `${mdCell(lv.reason ?? '実行できなかった')} — ci の AC は CI の check の結果で判定した`;
 }
 
+// base との conflict の自動解消（issue #916）の表示。conflictAutoresolve は pr-iterate の返り値 conflict_autoresolve
+// （_lib/conflict-autoresolve.mjs の conflictAutoresolveRecord の配列）。自動解消した試行は「参考」に型とファイルを出し、
+// 解消しなかった試行は mergeable_conflicting の HOLD 理由の「現状」に止めたファイル（型 A / B 以外）と型を添える。
+function conflictFileCell(f) {
+  return `\`${mdCell(f.path)}\`（${f.type === 'A' || f.type === 'B' ? `型 ${f.type}` : mdCell(f.type)}）`;
+}
+function conflictResolvedLines(conflictAutoresolve) {
+  return (Array.isArray(conflictAutoresolve) ? conflictAutoresolve : [])
+    .filter((r) => r != null && r.status === 'resolved')
+    .map((r) => `- base との conflict を自動解消した（pr-iterate 反復 ${r.iteration}${r.merge_sha ? `・merge commit \`${String(r.merge_sha).slice(0, 7)}\`` : ''}）: `
+      + `${(Array.isArray(r.files) ? r.files : []).map(conflictFileCell).join(' / ') || '—'}`);
+}
+function conflictStoppedNote(conflictAutoresolve) {
+  const list = (Array.isArray(conflictAutoresolve) ? conflictAutoresolve : []).filter((r) => r != null && r.status !== 'resolved');
+  if (list.length === 0) return '';
+  const last = list[list.length - 1];
+  const files = Array.isArray(last.files) ? last.files : [];
+  const stopped = files.filter((f) => f.type !== 'A' && f.type !== 'B');
+  const shown = stopped.length > 0 ? stopped : files;
+  return `（自動解消せず: ${mdCell(last.reason || last.status)}${shown.length ? ` — ${shown.map(conflictFileCell).join(' / ')}` : ''}）`;
+}
+
 function resolvedCell(v) {
   if (v == null) return '';
   const chars = Array.from(String(v).replace(/\s+/g, ' ').trim());
@@ -149,6 +171,9 @@ function resolvedCell(v) {
  * @param {{note:number, decision:number, change_bullet:number, sections_over_chars:number}|null|undefined} [opts.prBodyClips] -
  *   pr-artifacts の prBodyClipReport。PR 本文で末尾を切った要約行の件数と pr_sections の合計上限超過字数。
  *   1 つでも非 0 なら「PR 本文で切れた項目」節に出す（表示専用。null / 全 0 なら 1 行も足さない）
+ * @param {Array<{iteration:number, status:string, reason?:string, files?:Array<{path:string,type:string}>, merge_sha?:string|null}>|null|undefined} [opts.conflictAutoresolve] -
+ *   pr-iterate の返り値 conflict_autoresolve（base との conflict の自動解消の試行。issue #916）。自動解消した試行は「参考」に型とファイルを、
+ *   解消しなかった試行は mergeable_conflicting の HOLD 理由の「現状」に止めたファイルと型を出す（表示専用）
  * @returns {string}
  */
 export function buildDevflowSummaryBody({
@@ -192,6 +217,7 @@ export function buildDevflowSummaryBody({
   ciVerify,
   localVerify,
   prBodyClips,
+  conflictAutoresolve,
 }) {
   const EVAL_STALENESS_VALUES = ['none', 'hash_mismatch', 'hash_reconverged', 'iterate_incomplete', 'iterate_fixed'];
   if (evalStaleness != null && !EVAL_STALENESS_VALUES.includes(evalStaleness)) {
@@ -665,6 +691,7 @@ export function buildDevflowSummaryBody({
         observationalAcGaps: observationalGaps,
         unreachableAcGaps: unreachableGaps,
         ciVerify,
+        conflictAutoresolve,
       });
       lines.push(`| ${mdCell(hr && hr.reason)} | ${current} | ${action} |`);
     }
@@ -1039,6 +1066,7 @@ export function buildDevflowSummaryBody({
   if (localVerify != null) {
     referenceLines.push(`- ローカル検証 (local_verify): ${localVerifyLine(localVerify)}`);
   }
+  referenceLines.push(...conflictResolvedLines(conflictAutoresolve));
   if (finalReconcile != null && finalReconcile !== 'skipped') {
     const t = finalReconcile === 'ci_verified' ? '✅ CI 委譲（PR head sha 一致・check 全 success）' : finalFlaky ? FLAKY_CELL : finalTestGreen === true ? '✅ green' : finalTestGreen === false ? '❌ red' : '不明';
     referenceLines.push(`- Final reconcile (pr-iterate fix 後の最終 tree 再検証): ${finalReconcile} — final test: ${t}` + (finalAcReconcile != null ? `, final AC: ${finalAcReconcile}` : ''));
@@ -1147,7 +1175,7 @@ function holdReasonDisplay(code, kind, ctx) {
     case 'testsurf_uncleared':
       return { current: 'test-weakening 未クリア', action: '該当テスト変更の正当性を確認する' };
     case 'mergeable_conflicting':
-      return { current: 'base branch と conflict', action: 'conflict を解消して push する' };
+      return { current: `base branch と conflict${conflictStoppedNote(ctx.conflictAutoresolve)}`, action: 'conflict を解消して push する' };
     case 'pr_closes_missing':
       return {
         current: 'PR body に Closes 行が無い（merge しても issue が自動 close されない）',
