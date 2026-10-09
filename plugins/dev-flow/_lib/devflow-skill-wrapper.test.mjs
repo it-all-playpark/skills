@@ -136,6 +136,25 @@ test('[devflow-skill-wrapper] deps install は手順2b の別 Bash 呼び出し�
   assert.ok(section.includes('ensure-worktree-deps --setup'), 'needs_clarification 節の再起動手順に deps 段（手順2b）が無い');
 });
 
+// (n) issue #898: Jev の要否・効かないときの挙動・設定方法を、作者環境（jev-broker / Keychain）に依らず書く。
+//     設定は jev-classify.sh の経路選択順（AI_GATEWAY_API_KEY → JEV_BROKER_SOCKET → Keychain service）に揃え、
+//     AI_GATEWAY_API_KEY を第一の方法に、jev-broker は任意と明記する。
+test('[devflow-skill-wrapper] Jev 節に要否・効かないときの needs_clarification・AI_GATEWAY_API_KEY 第一の設定方法を書く', () => {
+  const start = src.indexOf('## Jev');
+  assert.ok(start >= 0, 'dev-flow/SKILL.md に `## Jev` 節が無い');
+  const section = src.slice(start, src.indexOf('\n## ', start + 1));
+  for (const s of ['必須ではない', 'needs_clarification', 'DEVFLOW_JEV_DISABLE=1', 'jev-broker（**任意**）']) {
+    assert.ok(section.includes(s), `dev-flow/SKILL.md「Jev」節に '${s}' が無い`);
+  }
+  const order = ['AI_GATEWAY_API_KEY', 'JEV_BROKER_SOCKET', 'vercel-ai-gateway'].map((s) => section.indexOf(s));
+  assert.ok(order.every((i) => i >= 0), `dev-flow/SKILL.md「Jev」節に設定経路の名前が欠けている: ${JSON.stringify(order)}`);
+  assert.ok(order[0] < order[1] && order[1] < order[2], 'dev-flow/SKILL.md「Jev」節の設定方法が AI_GATEWAY_API_KEY → broker → Keychain の順になっていない');
+  const jevSrc = readFileSync(join(repoRoot, '_shared/scripts/jev-classify.sh'), 'utf8');
+  for (const s of ['AI_GATEWAY_API_KEY', 'JEV_BROKER_SOCKET', 'JEV_KEYCHAIN_SERVICE:-vercel-ai-gateway']) {
+    assert.ok(jevSrc.includes(s), `jev-classify.sh に '${s}' が無い（SKILL.md の Jev 節と実装がずれている）`);
+  }
+});
+
 // (j) args.base を渡す旧形式が残存していない（base は dev-flow-prerun が解決する）
 test('[devflow-skill-wrapper] Workflow args に旧形式 base を渡さない', () => {
   assert.ok(

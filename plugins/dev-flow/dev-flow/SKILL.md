@@ -49,13 +49,11 @@ worktree を作り `EnterWorktree` しておくことで probe が成立する�
    `analyze.ok:false` + `reason` を返し、`dev-flow-run` が needs_clarification（source=analyze_prerun）で
    人間へ返す。private repo 等で issue 本文を Jev（外部 API）に送りたくない場合は
    `DEVFLOW_JEV_DISABLE=1` を prerun の環境に置く（Jev 判定が要る issue は uncertain として
-   needs_clarification に倒れる）。Jev は jev-broker（dotfiles の gui ドメイン LaunchAgent。
-   `~/.local/state/jev-broker/jev.sock`）経由で呼ぶ。broker が無い環境では macOS Keychain から鍵を読むが、
-   Keychain の解除は監査セッションごとに効くので、sandbox 内の Bash と bg job からは解除済みでも届かない。
+   needs_clarification に倒れる）。Jev の要否と設定方法は「Jev（issue analyze の意味判定）」節。
    Jev 判定が行われないと該当判定は uncertain になり、その文言には原因（jev-broker に接続できない /
    jev-broker 経由の失敗 / Keychain に届かない / Keychain から API 鍵を読めない / API 鍵が無い /
    タイムアウト / 通信失敗 / 応答不正）と exit code が載る。wrapper は鍵の取得経路を探さず、
-   needs_clarification をそのまま人間へ返す（broker の起動や実行環境の調整は人間が判断する。
+   needs_clarification をそのまま人間へ返す（鍵の設定や実行環境の調整は人間が判断する。
    「Keychain に届かない」を見て Keychain のロック解除を試しても直らない）。
 
    結果に応じて分岐する:
@@ -93,6 +91,28 @@ worktree を作り `EnterWorktree` しておくことで probe が成立する�
    prerun 出力は `deps` / `epoch_end` を持たないので、渡すと `dev-flow-run` が即 throw する）。
    `args.base` は渡さない（base は `dev-flow-prerun` が解決済みで、渡すと `dev-flow-run` が
    即 throw する）。
+
+## Jev（issue analyze の意味判定）
+
+prerun の analyze は、正規表現では決められない判定を Jev（Vercel AI Gateway 経由の判定専用モデル。
+`_shared/scripts/jev-classify.sh`）に聞く。
+
+- **要否**: 必須ではない。Jev を呼ぶのは、title / body に breaking 系キーワードがある issue、comment が付いた
+  issue、観測型に見える AC を持つ issue だけで、どれにも当たらない issue は Jev が無くても同じ結果になる
+- **効かないときの挙動**: 鍵が無い・届かない・タイムアウト・低確信のとき、breaking と comment の判定は
+  uncertain に積まれ、run は Setup 末尾の analyze ゲートで**必ず needs_clarification で止まる**（実装に進まない）。
+  観測型 AC の判定だけは止まらず、分類 agent の 1 spawn に回る。`DEVFLOW_JEV_DISABLE=1` で切ったときも同じ
+- **設定方法**（`jev-classify.sh` は上から順に試す）:
+  1. 環境変数 `AI_GATEWAY_API_KEY`（Vercel AI Gateway の API key `vck_…`）— 第一の方法。`dev-flow-prerun` を
+     実行する Claude Code セッションの環境に置く（起動前のシェルで export する、または settings.json の `env`）。
+     鍵は Bash ツールの環境から見える。sandbox 下では network の許可に `ai-gateway.vercel.sh` が要る
+  2. jev-broker（**任意**）: 鍵を Bash の環境に出さずに中継する Unix socket。`JEV_BROKER_SOCKET`（既定
+     `$HOME/.local/state/jev-broker/jev.sock`）に socket があれば経由する。sandbox 下では socket のパスを
+     `sandbox.network.allowUnixSockets` に足す。broker が無くても 1 か 3 で動く
+  3. macOS Keychain の service `vercel-ai-gateway`（`JEV_KEYCHAIN_SERVICE` で変更可）の generic password。
+     登録は `security add-generic-password -s vercel-ai-gateway -a <任意のアカウント名> -w 'vck_…'`。
+     Keychain の解除は監査セッションごとに効くので、sandbox 内の Bash と bg job からは解除済みでも届かない
+     （exit 36）。その環境では 1 か 2 を使う
 
 ## 完了後の返り値の読み方
 
