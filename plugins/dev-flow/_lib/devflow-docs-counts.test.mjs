@@ -50,16 +50,9 @@ test('atlas: 概観図の phase ノード番号・1.x 節見出し・phase 数�
   assert.ok(!/\bAnalyze\b/.test(atlas), 'atlas に撤去済み Analyze phase の表記が残っている（Setup 末尾の analyze ゲートと書く）');
 });
 
-test('README: dev-flow plugin の agent 数（plugin 行・agents/ 行）が agents/ の実体数と一致する', () => {
-  const actual = readdirSync(join(pluginRoot, 'agents')).filter((n) => n.endsWith('.md')).length;
-  const pluginLine = readme.match(/dev-flow\/\s+# issue-to-LGTM ワークフロー plugin（\d+ skills, (\d+) agents）/);
-  const agentsLine = readme.match(/agents\/\s+# (\d+) dev-flow agent 実体/);
-  assert.ok(pluginLine && agentsLine, 'README の plugin 構成図に agent 数の記述が無い');
-  assert.equal(Number(pluginLine[1]), actual);
-  assert.equal(Number(agentsLine[1]), actual);
-});
-
-test('README / plugin.json / marketplace.json: dev-flow の skill 数・bin 数が実体と一致し、撤去した doctor / improve を載せない', () => {
+// README は skill / agent / bin wrapper の件数を書かない（tests/readme-facts.bats が pin）。
+// agent 数は plugin-manifest.bats が manifest の description と実体を照合する。
+test('README / plugin.json / marketplace.json: dev-flow の skill 数が実体と一致し、撤去した doctor / improve を載せない', () => {
   const skills = readdirSync(pluginRoot, { withFileTypes: true })
     .filter((d) => d.isDirectory() && existsSync(join(pluginRoot, d.name, 'SKILL.md')))
     .map((d) => d.name);
@@ -70,13 +63,6 @@ test('README / plugin.json / marketplace.json: dev-flow の skill 数・bin 数�
   assert.ok(!existsSync(join(pluginRoot, '.claude/workflows/dev-improve.js')), 'dev-improve.js が残っている');
   assert.ok(!existsSync(join(pluginRoot, 'agents/improve-miner.md')), 'improve-miner.md が残っている');
 
-  const pluginLine = readme.match(/dev-flow\/\s+# issue-to-LGTM ワークフロー plugin（(\d+) skills, \d+ agents）/);
-  const skillMdLine = readme.match(/（SKILL\.md (\d+)本）/);
-  const binLine = readme.match(/bin\/\s+# dev-flow bare 名 wrapper（(\d+)本）/);
-  assert.ok(pluginLine && skillMdLine && binLine, 'README の plugin 構成図に skill 数 / bin 数の記述が無い');
-  assert.equal(Number(pluginLine[1]), skills.length);
-  assert.equal(Number(skillMdLine[1]), skills.length);
-  assert.equal(Number(binLine[1]), readdirSync(join(pluginRoot, 'bin')).length);
   assert.ok(!/dev-flow-doctor|dev-flow-improve/.test(readme), 'README に撤去した doctor / improve が残っている');
 
   const manifests = [
