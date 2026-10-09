@@ -19,8 +19,8 @@ Requires `ZERNIO_API_KEY` environment variable (global).
 ## Scripts
 
 ```bash
-# Load config
-sns-announce-load-config [project-root]
+# Load config (reads skill-config.json from the git root of the CWD)
+sns-announce-load-config
 
 # Extract metadata (for file input)
 sns-announce-extract-metadata <file> --base-url URL
