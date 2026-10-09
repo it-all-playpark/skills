@@ -1,21 +1,32 @@
 #!/usr/bin/env bash
 # zombie-kill.sh - Detect and kill zombie Claude Code sessions
-# Usage: zombie-kill.sh [--force] [--min-hours N]
+# Usage: zombie-kill.sh [--force] [--min-hours N] [--hook]
 #   --force:      Skip confirmation and kill immediately
 #   --min-hours N: Only target processes older than N hours (implies --force)
+#   --hook:       SessionStart hook mode. Kills only when ZOMBIE_KILL_AUTO=1 is set;
+#                 otherwise reports the detected processes and exits without killing.
+#                 Overrides --force / --min-hours because the hook runs on every startup
+#                 for anyone who installs the plugin, so killing must be an explicit opt-in.
 
 set -euo pipefail
 
 FORCE=false
 MIN_HOURS=0
+HOOK=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --force) FORCE=true; shift ;;
     --min-hours) MIN_HOURS="$2"; FORCE=true; shift 2 ;;
+    --hook) HOOK=true; shift ;;
     *) shift ;;
   esac
 done
+
+if [[ "$HOOK" == true ]]; then
+  FORCE=false
+  [[ "${ZOMBIE_KILL_AUTO:-0}" == "1" ]] && FORCE=true
+fi
 
 # Parse etime string (mm:ss, hh:mm:ss, dd-hh:mm:ss) to total hours
 etime_to_hours() {
@@ -110,6 +121,9 @@ echo ""
 
 if [[ "$FORCE" == true ]]; then
   echo "Force mode: killing all zombies..."
+elif [[ "$HOOK" == true ]]; then
+  echo "Not killed: auto-kill is opt-in (set ZOMBIE_KILL_AUTO=1 to enable). Run /claude-zombie-kill to review and kill."
+  exit 0
 else
   read -p "Kill these processes? [y/N] " -n 1 -r
   echo ""

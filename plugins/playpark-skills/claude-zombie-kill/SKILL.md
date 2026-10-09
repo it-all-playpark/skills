@@ -32,6 +32,12 @@ bash ${CLAUDE_PLUGIN_ROOT}/claude-zombie-kill/scripts/zombie-kill.sh
 bash ${CLAUDE_PLUGIN_ROOT}/claude-zombie-kill/scripts/zombie-kill.sh --force
 ```
 
+## SessionStart Hook
+
+`hooks/hooks.json` runs `zombie-kill.sh --hook --min-hours 48` on every startup.
+By default it only reports processes older than 48 hours. It kills them (without confirmation)
+only when `ZOMBIE_KILL_AUTO=1` is set.
+
 ## Detection Logic
 
 - **macOS `ps` format**: Today's processes show `HH:MMAM/PM` (e.g. `10:15AM`), older ones show `DayHHAM` (e.g. `Thu06AM`)
