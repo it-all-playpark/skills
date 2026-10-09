@@ -427,6 +427,7 @@ config = load_skill_config("ga-analyzer")
 | `skill-creator` | 新規スキル作成ガイド（当リポジトリ規約版） |
 | `find-skills` | スキル検索・インストール支援 🔗 |
 | `claude-zombie-kill` | ゾンビClaude Codeセッション検出・終了 |
+| `sandbox-tune` | transcript から sandbox 拒否・permission 拒否・人間への実行依頼を型ごとに集計し、設定 repo の git log と突き合わせて settings 修正の候補を根拠付きで出す（issue 化は `--issue` のときだけ） |
 | `suica-to-csv` | モバイルSuica明細PDFをマネーフォワード経費CSVに変換 |
 | `agent-browser` | ブラウザ自動操作（ページ操作/スクレイピング/テスト） 🔗 |
 
