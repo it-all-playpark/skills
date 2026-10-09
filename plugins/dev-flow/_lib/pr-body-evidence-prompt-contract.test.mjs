@@ -1,8 +1,9 @@
 // _lib/pr-body-evidence-prompt-contract.test.mjs
 // 「PR 本文に書く」型の AC を evaluator が本文テキストで判定するための prompt 契約を VM 実行で pin する（issue #815）。
 //   (a) Evaluate（eval#1）の prompt は buildPrBody の出力（PR 作成前のプレビュー）を含み、plan の本文材料
-//       （pr_notes / architecture_decisions / pr_sections / out_of_scope）の生 JSON を含まない。プレビューは
-//       PR phase が作る本文と AC checkbox 以外で一致する
+//       （pr_notes / architecture_decisions / pr_sections / out_of_scope / behavior_changes / review_points）の生 JSON を
+//       含まない。プレビューは PR phase と同じ builder で組まれ、PR phase が作る本文と AC checkbox 以外で一致する
+//       （見える部分の要約と <details> の判定材料という構成も同じ。issue #928）
 //   (b) final-ac-reconcile の prompt は PR に載せた本文（pr#1 の PR body）そのものを含み、plan.pr_notes の生 JSON を含まない
 
 import { test } from 'vitest';
@@ -20,14 +21,18 @@ const NOTE = '512Mi で worker 4 本: app 全体の RSS 合計 380Mi（ローカ
 const DECISION = 'worker 上限は 4';
 const TABLE = ['| # | 項目 | 状態 |', '|---|---|---|', ...Array.from({ length: 40 }, (_, i) => `| ${i + 1} | item-${i + 1} | 移植済み |`)].join('\n');
 const OOS = 'dotfiles の excludedCommands 更新（worktree 外）';
+const CHANGE = 'worker の同時実行数が 4 本までになる';
+const REVIEW = '512Mi 以外のノードでは未計測';
 const impl = () => ({
   status: 'DONE', task_id: 'issue-1', files: [...STANDARD], summary: 's', concerns: [],
+  behavior_changes: [CHANGE],
+  review_points: [REVIEW],
   pr_notes: [{ section: 'measurement', text: NOTE }],
   design_decisions: [{ title: DECISION, rationale: '512Mi に収まる最大数' }],
   pr_sections: [{ heading: '落とした項目が無いことの対応表', markdown: TABLE }],
   out_of_scope: [OOS],
 });
-const RAW_KEYS = ['"pr_notes"', '"architecture_decisions"', '"pr_sections"', '"out_of_scope"'];
+const RAW_KEYS = ['"pr_notes"', '"architecture_decisions"', '"pr_sections"', '"out_of_scope"', '"behavior_changes"', '"review_points"'];
 
 function between(text, begin, end) {
   const i = text.indexOf(begin);
@@ -50,8 +55,9 @@ test('[pr-body-evidence] (a) eval#1 の prompt は buildPrBody のプレビュ�
   assert.ok(ev, 'eval#1 が走っていない');
   const preview = previewOf(ev.prompt);
   assert.equal(uncheck(preview), uncheck(prBodyOf(calls)), 'プレビューは PR phase の本文と AC checkbox 以外で一致する');
-  assert.ok(preview.includes(`- 計測: ${NOTE}`));
-  assert.ok(preview.includes(`- ${DECISION} — 512Mi に収まる最大数`));
+  assert.ok(preview.includes(`\n\n## 何が変わるか\n- ${CHANGE}\n\n## 人間に見てほしい点\n- ${REVIEW}\n\n## この PR に含めなかったもの\n- ${OOS}\n\n<details><summary>受入条件</summary>\n`), `見える部分の要約が <details> の前に並ぶ: ${preview}`);
+  assert.ok(preview.includes(`<details><summary>設計判断</summary>\n\n- ${DECISION} — 512Mi に収まる最大数\n\n</details>`), preview);
+  assert.ok(preview.includes(`- 計測: ${NOTE}\n\n</details>`), '検証の <details> に pr_notes が載る');
   assert.ok(preview.includes(`\n\n${TABLE}\n\n</details>`), '対応表が改行を保ってプレビューに載る');
   assert.ok(preview.trimEnd().endsWith('Closes #1'));
   assert.match(ev.prompt, /「PR 本文に書く」型の AC は、この本文テキストに該当内容があるかで判定せよ/);

@@ -67,6 +67,11 @@ issue の受入条件（AC）をすべて満たす変更を worktree に残し�
   - `~/.claude` 配下や runtime の状態（pending / log）の確認・操作を要するもの
   - `gh` / network / 外部 PR の取得を要するもの
 - **PR 本文に書く内容は JSON で返す。** PR 本文はパイプラインが返却 JSON から組み立てる。
+  見える部分（人間が最初に読む要約）は `behavior_changes` と `review_points` から作る。`behavior_changes` は
+  「何が変わるか」— この PR で誰の何がどう変わるかを振る舞いとして 1 項目 1 行で最大 3 項目（ファイル名の羅列は
+  書かない。変更ファイルは diff で分かる）。`review_points` は「人間に見てほしい点」— merge 前に人間が判断・確認
+  すべきこと（任意。無ければ空配列）。字数は schema の上限で、`behavior_changes` は 1 項目 100 字・3 項目まで、
+  `review_points` は 1 項目 120 字・3 項目までに収める。受入条件・設計判断・検証・`pr_sections` は折りたたみ（`<details>`）に入る。
   「ローカルで測って PR 本文に書く」型の AC の計測値・検証結果は `pr_notes`（`section` は
   `measurement` / `verification`）、issue が決めることを求めている設計判断（上限値・超過時の挙動等）は
   `design_decisions` に入れる。コードのコメントや `summary` に書いただけでは PR 本文に載らず、AC は未達になる。
@@ -129,6 +134,8 @@ status は正直に付ける。動かないものを `DONE` にしない。曖�
   "files": ["変更・追加したファイルの相対パス"],
   "summary": "何をどう実装したか 1-2 文 + 曖昧だった点をどう解釈したか（1 項目 1 文）+ 走らせたテストと結果（コマンドと pass/fail 件数）",
   "concerns": ["自信のない箇所 / AC-<n> 未実施（worktree 外）: 理由 / 未検証の点"],
+  "behavior_changes": ["PR 本文「何が変わるか」に載せる振る舞いの変化（1 項目 1 行・100 字以内・最大 3 項目）"],
+  "review_points": ["PR 本文「人間に見てほしい点」に載せる、merge 前に人間が確かめること（120 字以内・最大 3 項目）"],
   "design_decisions": [{"title": "PR 本文「設計判断」に載せる決定（40 字以内）", "rationale": "その理由（75 字以内）"}],
   "pr_notes": [{"section": "measurement | verification", "text": "PR 本文「検証」に載せる計測値・検証結果（条件と数値を書く。234 字以内）"}],
   "pr_sections": [{"heading": "PR 本文の折りたたみ見出し（80 字以内）", "markdown": "対応表など複数行の markdown（改行保持・切られない。合計 3000 字以内）"}],
@@ -138,7 +145,8 @@ status は正直に付ける。動かないものを `DONE` にしない。曖�
 }
 ```
 
-`design_decisions` / `pr_notes` / `pr_sections` / `out_of_scope` は該当が無ければ空配列でよい。
+`review_points` / `design_decisions` / `pr_notes` / `pr_sections` / `out_of_scope` は該当が無ければ空配列でよい。
+`behavior_changes` は `DONE` / `DONE_WITH_CONCERNS` では必ず 1 項目以上返す。
 
 `BLOCKED` のときの `blocking_reason` は `{"block_class": "approach_mismatch" | "guard_blocked",
 "detail": "...", "guard_id": "<^[a-z][a-z0-9-]{0,39}$>"|null}`。

@@ -4,7 +4,6 @@ import {
   buildCommitMessage,
   buildPrBody,
   prPhasePrompt,
-  clip,
   hasClosesLine,
   verifyPrBody,
   prBodyEditPrompt,
@@ -14,25 +13,20 @@ import {
   prPhaseFailureComment,
   PR_PHASE_FAILED_CATEGORY,
   PR_FAILED_STEP_VALUES,
-  PR_BODY_MAX_CHARS,
-  PR_BODY_HEADINGS,
+  PR_BODY_DETAILS,
+  PR_BODY_CHANGES_HEADING,
+  PR_BODY_REVIEW_POINTS_HEADING,
   PR_CLOSES_STATUS_VALUES,
   PR_BODY_NOTES_MAX,
   PR_NOTE_SECTIONS,
   adoptImplPrNotes,
   PR_BODY_OUT_OF_SCOPE_HEADING,
   PR_BODY_OUT_OF_SCOPE_MAX,
-  PR_BODY_OUT_OF_SCOPE_ITEM_MAX,
-  PR_BODY_NOTE_MAX,
   PR_BODY_DECISIONS_MAX,
-  PR_BODY_DECISION_MAX,
-  PR_BODY_CHANGE_BULLET_MAX,
   PR_SECTIONS_MAX_CHARS,
   PR_SECTION_HEADING_MAX,
   PR_BODY_PLAN_KEYS,
-  prBodyClipReport,
   prSectionsTrimFeedback,
-  hasPrBodyClips,
   prBodyEvidenceInstr,
   planWithoutPrBodyMaterial,
   prPushLogPath,
@@ -112,22 +106,100 @@ test('[pr-artifacts] commit message: plan.summary 欠落でも subject のみで
   assert.equal(msg, 'refactor(dev-flow): PR phase を純関数で生成する (#642)\n');
 });
 
-// ---- buildPrBody: 6 セクション固定構成（issue #661） ----
+// ---- buildPrBody: 見える部分は人間向けの要約、判定材料は <details>（issue #928） ----
 
-test('[pr-artifacts] PR body: 結論1行 + 4 見出し + Closes の 6 セクションを持つ', () => {
-  const body = buildPrBody({ ...INPUT, ledger: ledger(), testsurfHits: [], dangerHits: [] });
-  assert.ok(body.startsWith(`**${plan().summary}**`), `結論1行が先頭に来る: ${body}`);
-  for (const h of PR_BODY_HEADINGS) {
-    assert.ok(body.includes(`\n${h}\n`), `section '${h}' が無い: ${body}`);
-  }
-  assert.ok(body.includes('- [ ] AC one\n- [ ] AC two'), '受入条件を checkbox 列挙する');
-  assert.ok(body.includes('- commit message は純関数で組み立てる — diff 再読不要'), 'object 形の decision を decision — rationale で列挙');
-  assert.ok(body.includes('- PR body に LLM 生成文を足さない'), 'string 形の decision をそのまま列挙');
-  assert.ok(body.includes('- `plugins/dev-flow/_lib/`: pr-artifacts.mjs'), 'component 別 bullet（F1 の file_changes）');
-  assert.ok(body.includes('- `plugins/dev-flow/.claude/workflows/`: dev-flow.js'), 'component 別 bullet（F2 の file_changes）');
-  assert.ok(!body.includes('## 変更 task'), '旧 table セクションは無い');
-  assert.ok(!body.includes('## 要約'), '旧要約見出しは無い');
+// <details> ブロックを除いた見える部分。
+function visiblePart(body) {
+  return body.replace(/<details><summary>[^\n]*<\/summary>\n[\s\S]*?\n<\/details>(\n\n)?/g, '');
+}
+
+// summary が一致する <details> の中身（summary 後と </details> 前の空行を除く）。無ければ null。
+function detailsOf(body, summary) {
+  const open = `<details><summary>${summary}</summary>\n\n`;
+  const i = body.indexOf(open);
+  if (i < 0) return null;
+  return body.slice(i + open.length, body.indexOf('\n\n</details>', i));
+}
+
+test('[pr-artifacts] PR body: 見える部分（<details> の外）は結論・何が変わるか・人間に見てほしい点・含めなかったもの・Closes だけ', () => {
+  const p = plan({
+    behavior_changes: ['PR 本文の見える部分が  要約だけになる', '', 'AC 全文は\n折りたたみに入る'],
+    review_points: ['telemetry キーを 1 つ減らした'],
+    out_of_scope: ['dotfiles の変更（worktree 外）'],
+    pr_notes: [{ section: 'verification', text: 'vitest: 12 passed' }],
+    pr_sections: [{ heading: '対応表', markdown: '| a |\n|---|\n| 1 |' }],
+  });
+  const body = buildPrBody({ issue: 642, req: req(), plan: p, ledger: ledger(), testsurfHits: [], dangerHits: [{ class: 'exec-sink', file: 'src/run.mjs' }] });
+  assert.deepEqual(
+    [PR_BODY_CHANGES_HEADING, PR_BODY_REVIEW_POINTS_HEADING, PR_BODY_OUT_OF_SCOPE_HEADING],
+    ['## 何が変わるか', '## 人間に見てほしい点', '## この PR に含めなかったもの'],
+  );
+  assert.equal(visiblePart(body), [
+    `**${p.summary}**`,
+    '',
+    PR_BODY_CHANGES_HEADING,
+    '- PR 本文の見える部分が 要約だけになる',
+    '- AC 全文は 折りたたみに入る',
+    '',
+    PR_BODY_REVIEW_POINTS_HEADING,
+    '- telemetry キーを 1 つ減らした',
+    '',
+    PR_BODY_OUT_OF_SCOPE_HEADING,
+    '- dotfiles の変更（worktree 外）',
+    '',
+    'Closes #642',
+    '',
+  ].join('\n'), body);
+  // plan.serial の file_changes（plugins/dev-flow/_lib/pr-artifacts.mjs ほか）を並べた `## 変更` 節は本文のどこにも出さない
+  assert.ok(!/^## 変更$/m.test(body) && !body.includes('plugins/dev-flow/') && !body.includes('dev-flow.js'), body);
   assert.ok(body.trimEnd().endsWith('Closes #642'), 'Closes #<issue> で終わる');
+});
+
+test('[pr-artifacts] PR body: 何が変わるか / 人間に見てほしい点 / 含めなかったもの は材料が空なら節ごと出さない', () => {
+  const body = buildPrBody({ ...INPUT, ledger: ledger(), testsurfHits: [], dangerHits: [] });
+  assert.equal(visiblePart(body), `**${plan().summary}**\n\nCloses #642\n`);
+});
+
+test('[pr-artifacts] PR body: 受入条件・設計判断・検証・pr_sections はこの順に <details> の中に出る', () => {
+  const p = plan({ pr_notes: [{ section: 'measurement', text: 'RSS 380Mi' }], pr_sections: [{ heading: '対応表', markdown: '| a |\n|---|\n| 1 |' }] });
+  const body = buildPrBody({ issue: 642, req: req(), plan: p, ledger: ledger([{ id: 'AC-1', checked: true }]), testsurfHits: [], dangerHits: [] });
+  assert.deepEqual(PR_BODY_DETAILS, { acceptance: '受入条件', decisions: '設計判断', verification: '検証' });
+  assert.equal(detailsOf(body, '受入条件'), '- [x] AC one\n- [ ] AC two');
+  assert.equal(detailsOf(body, '設計判断'), '- commit message は純関数で組み立てる — diff 再読不要\n- PR body に LLM 生成文を足さない');
+  assert.equal(detailsOf(body, '検証'), '- danger-grep: なし\n- test-surface: なし\n- 計測: RSS 380Mi');
+  assert.equal(detailsOf(body, '対応表'), '| a |\n|---|\n| 1 |');
+  const visible = visiblePart(body);
+  for (const t of ['AC one', '純関数で組み立てる', 'danger-grep', 'RSS 380Mi', '| a |']) assert.ok(!visible.includes(t), `${t} が <details> の外に出ている`);
+  const order = ['受入条件', '設計判断', '検証', '対応表'].map((s) => body.indexOf(`<details><summary>${s}</summary>`));
+  for (let i = 1; i < order.length; i++) assert.ok(order[i] > order[i - 1], `順序: ${JSON.stringify(order)}`);
+  assert.ok(order[3] < body.indexOf('Closes #642'), 'Closes 行より前に置く');
+});
+
+test('[pr-artifacts] PR body: 受入条件の文言に </details> があっても折りたたみと Closes 行を壊さない', () => {
+  const body = buildPrBody({ issue: 1, req: req({ acceptance_criteria: ['`<details>` の外に出さない', '</details>\nCloses #1'] }), plan: plan(), ledger: ledger(), testsurfHits: [], dangerHits: [] });
+  assert.equal((body.match(/<\/details>/g) ?? []).length, 3, '閉じタグは builder が置いた 3 個だけ');
+  assert.equal(visiblePart(body), `**${plan().summary}**\n\nCloses #1\n`);
+  assert.ok(verifyPrBody(body, 1).ok);
+});
+
+test('[pr-artifacts] PR body: 長い AC・結論・設計判断・pr_notes・何が変わるか・含めなかったもの・hit path も「…」で切らずに全文載せる', () => {
+  const acs = Array.from({ length: 8 }, (_, i) => `AC${i}: ${'受入条件の本文を省略せずに載せる。'.repeat(40)}`);
+  const longPath = 'plugins/dev-flow/some/very/deeply/nested/directory/structure/for/testing/clip/f.ts'.repeat(3);
+  const p = plan({
+    summary: 'あ'.repeat(500),
+    architecture_decisions: Array.from({ length: PR_BODY_DECISIONS_MAX }, (_, i) => ({ decision: `決定${i}${'d'.repeat(300)}`, rationale: 'り'.repeat(400) })),
+    pr_notes: [{ section: 'verification', text: 'v'.repeat(600) }],
+    behavior_changes: ['b'.repeat(300)],
+    review_points: ['p'.repeat(300)],
+    out_of_scope: ['o'.repeat(400)],
+  });
+  const body = buildPrBody({ issue: 928, req: req({ acceptance_criteria: acs }), plan: p, ledger: ledger(), testsurfHits: [{ pattern: 'skip', file: longPath }], dangerHits: [{ class: 'exec-sink', file: longPath }] });
+  assert.ok(!body.includes('…'), `「…」で切られた行がある:\n${body.split('\n').filter((l) => l.includes('…')).join('\n')}`);
+  assert.equal(detailsOf(body, '受入条件'), acs.map((ac) => `- [ ] ${ac}`).join('\n'), 'AC 全文がそのまま載る');
+  assert.ok(body.startsWith(`**${'あ'.repeat(500)}**\n`));
+  for (const d of p.architecture_decisions) assert.ok(body.includes(`- ${d.decision} — ${d.rationale}\n`), d.decision.slice(0, 10));
+  for (const t of [`- 検証: ${'v'.repeat(600)}\n`, `- ${'b'.repeat(300)}\n`, `- ${'p'.repeat(300)}\n`, `- ${'o'.repeat(400)}\n`]) assert.ok(body.includes(t), t.slice(0, 12));
+  assert.ok(body.includes(`exec-sink: \`${longPath}\``) && body.includes(`skip: \`${longPath}\``), 'hit の file path は切らない');
 });
 
 test('[pr-artifacts] PR body: ledger の AC-n が checked なら [x]、danger / testsurf hit を検証に列挙する', () => {
@@ -169,8 +241,8 @@ test('[pr-artifacts] adoptImplPrNotes: IMPL の design_decisions / pr_notes が 
     ],
   }]);
   const body = buildPrBody({ issue: 1, req: req(), plan: adopted, ledger: ledger(), testsurfHits: [], dangerHits: [] });
-  const decisions = body.slice(body.indexOf('## 設計判断'), body.indexOf('## 検証'));
-  const verify = body.slice(body.indexOf('## 検証'), body.indexOf('Closes #1'));
+  const decisions = detailsOf(body, '設計判断');
+  const verify = detailsOf(body, '検証');
   assert.ok(decisions.includes('- worker 上限は 4 — 512Mi で RSS 合計 380Mi に収まる'), `設計判断: ${decisions}`);
   assert.ok(verify.includes('- 計測: 512Mi で worker 4 本: app 全体の RSS 合計 380Mi（ローカル docker stats）'), `検証: ${verify}`);
   assert.ok(verify.includes('- 検証: pnpm vitest run src/worker.test.ts: 12 passed'), `検証: ${verify}`);
@@ -190,19 +262,30 @@ test('[pr-artifacts] adoptImplPrNotes: 空の報告は前回分を保持し、�
   assert.deepEqual(adoptImplPrNotes({ serial: [] }, [{ design_decisions: [{ title: '', rationale: 'r' }] }]), { serial: [] });
 });
 
+// issue #928: 見える部分の材料（何が変わるか / 人間に見てほしい点）も同じ規則で取り込む
+test('[pr-artifacts] adoptImplPrNotes: behavior_changes / review_points は 1 行に畳んで取り込み、空の報告は前回分を保持する', () => {
+  const first = adoptImplPrNotes({ serial: [] }, [{ behavior_changes: [' A\n変わる ', '', 'B'], review_points: ['見て'] }]);
+  assert.deepEqual(first.behavior_changes, ['A 変わる', 'B']);
+  assert.deepEqual(first.review_points, ['見て']);
+  const kept = adoptImplPrNotes(first, [{ behavior_changes: [], review_points: [] }]);
+  assert.deepEqual([kept.behavior_changes, kept.review_points], [first.behavior_changes, first.review_points]);
+  const replaced = adoptImplPrNotes(kept, [{ behavior_changes: ['C'] }]);
+  assert.deepEqual([replaced.behavior_changes, replaced.review_points], [['C'], ['見て']]);
+});
+
 // issue #793: 範囲外にした作業を PR 本文の「この PR に含めなかったもの」に載せる
-test('[pr-artifacts] adoptImplPrNotes: out_of_scope は plan.out_of_scope に取り込み、PR 本文の Closes 行の前に節を足す（空なら節なし）', () => {
+test('[pr-artifacts] adoptImplPrNotes: out_of_scope は plan.out_of_scope に取り込み、PR 本文の見える部分に節を足す（空なら節なし）', () => {
   const adopted = adoptImplPrNotes({ serial: [] }, [{ task_id: 't', out_of_scope: ['  telemetry キーの削除（AC 外）  ', '', 'dotfiles の変更（worktree 外）', 'dotfiles の変更（worktree 外）'] }]);
   assert.deepEqual(adopted.out_of_scope, ['telemetry キーの削除（AC 外）', 'dotfiles の変更（worktree 外）']);
   const body = buildPrBody({ issue: 1, req: req(), plan: plan({ out_of_scope: adopted.out_of_scope }), ledger: ledger(), testsurfHits: [], dangerHits: [] });
-  assert.ok(body.includes(`${PR_BODY_OUT_OF_SCOPE_HEADING}\n- telemetry キーの削除（AC 外）\n- dotfiles の変更（worktree 外）\n\nCloses #1`), body);
+  assert.ok(body.includes(`${PR_BODY_OUT_OF_SCOPE_HEADING}\n- telemetry キーの削除（AC 外）\n- dotfiles の変更（worktree 外）\n\n<details><summary>受入条件</summary>`), body);
   assert.ok(verifyPrBody(body, 1).ok, '節を足しても構造検証は通る');
   const kept = adoptImplPrNotes(adopted, [{ task_id: 't', out_of_scope: [] }]);
   assert.deepEqual(kept.out_of_scope, adopted.out_of_scope, '空の報告は前回分を保持する');
   assert.ok(!buildPrBody({ issue: 1, req: req(), plan: plan(), ledger: ledger(), testsurfHits: [], dangerHits: [] }).includes(PR_BODY_OUT_OF_SCOPE_HEADING));
   const many = Array.from({ length: PR_BODY_OUT_OF_SCOPE_MAX + 2 }, (_, i) => `oos-${i}`);
-  const clipped = buildPrBody({ issue: 1, req: req(), plan: plan({ out_of_scope: many }), ledger: ledger(), testsurfHits: [], dangerHits: [] });
-  assert.ok(clipped.includes(`- oos-${PR_BODY_OUT_OF_SCOPE_MAX - 1}\n（他 2 件）`), clipped);
+  const folded = buildPrBody({ issue: 1, req: req(), plan: plan({ out_of_scope: many }), ledger: ledger(), testsurfHits: [], dangerHits: [] });
+  assert.ok(folded.includes(`- oos-${PR_BODY_OUT_OF_SCOPE_MAX - 1}\n（他 2 件）`), folded);
 });
 
 test('[pr-artifacts] PR body: pr_notes は PR_BODY_NOTES_MAX 件まで、超過分は件数だけ出す', () => {
@@ -213,7 +296,7 @@ test('[pr-artifacts] PR body: pr_notes は PR_BODY_NOTES_MAX 件まで、超過�
   assert.ok(body.includes('（他 2 件）'), body);
 });
 
-// ---- issue #815: pr_sections（複数行 markdown）は clip せず <details> に載せ、要約行の clip は報告する ----
+// ---- issue #815: pr_sections（複数行 markdown）は切らずに <details> に載せる ----
 
 // 40 行の対応表（ヘッダ 2 行 + 本体 40 行）。1 行あたり pr_notes の上限を超える長さにする。
 const TABLE_40 = [
@@ -222,13 +305,7 @@ const TABLE_40 = [
   ...Array.from({ length: 40 }, (_, i) => `| ${i + 1} | references/item-${i + 1}.md の節「${'説明'.repeat(10)}」 | skills/daily-blog-factory/references/item-${i + 1}.md | 移植済み |`),
 ].join('\n');
 
-// <details> ブロックを除いた可視部。
-function visiblePart(body) {
-  return body.replace(/<details><summary>[^\n]*<\/summary>\n[\s\S]*?\n<\/details>(\n\n)?/g, '');
-}
-
 test('[pr-artifacts] pr_sections: 40 行の markdown table が改行を保ったまま切られずに <details> で本文に載る', () => {
-  assert.ok(Array.from(TABLE_40).length > PR_BODY_NOTE_MAX * 10, 'fixture は pr_notes の上限より十分長い');
   const adopted = adoptImplPrNotes({ summary: 's', serial: [] }, [{
     status: 'DONE', task_id: 'issue-1',
     pr_sections: [{ heading: '落とした項目が無いことの対応表', markdown: `\n${TABLE_40.replace(/\n/g, '\r\n')}\n\n` }],
@@ -239,8 +316,6 @@ test('[pr-artifacts] pr_sections: 40 行の markdown table が改行を保った
   assert.ok(body.includes(`<details><summary>落とした項目が無いことの対応表</summary>\n\n${TABLE_40}\n\n</details>`), body);
   assert.equal(body.split('\n').filter((l) => /^\| \d+ \|/.test(l)).length, 40, '表の 40 行が 1 行ずつ残る');
   assert.ok(!body.includes('…'), '何も切られていない');
-  assert.ok(body.indexOf('## 検証') < body.indexOf('<details>'), '「検証」の後に置く');
-  assert.ok(body.indexOf('</details>') < body.indexOf('Closes #1'), 'Closes 行より前に置く');
   assert.ok(body.trimEnd().endsWith('Closes #1'));
   assert.ok(verifyPrBody(body, 1).ok, '構造検証は通る');
 });
@@ -256,15 +331,16 @@ test('[pr-artifacts] pr_sections: heading は 1 行に畳み HTML をエスケ�
   assert.ok(body.includes('<details><summary>A &lt;b&gt; &amp; 表</summary>\n\n| a |\n|---|\n| 1 |\n\n</details>'), body);
   const kept = adoptImplPrNotes(first, [{ pr_sections: [] }]);
   assert.deepEqual(kept.pr_sections, first.pr_sections);
-  assert.ok(!buildPrBody({ issue: 1, req: req(), plan: plan(), ledger: ledger(), testsurfHits: [], dangerHits: [] }).includes('<details>'), 'pr_sections が無ければ <details> を出さない');
+  const fixed = Object.values(PR_BODY_DETAILS).map((s) => `<details><summary>${s}</summary>`);
+  assert.deepEqual(buildPrBody({ issue: 1, req: req(), plan: plan(), ledger: ledger(), testsurfHits: [], dangerHits: [] }).match(/<details><summary>[^<]*<\/summary>/g), fixed, 'pr_sections が無ければ判定材料の <details> だけ');
 });
 
 test('[pr-artifacts] pr_sections: 中身の </details> / <details> と行全体の Closes #<n> は無害化し、本物の Closes 行が落ちれば構造検証は Closes 欠落', () => {
   const markdown = '前置き\n</details>\n<DETAILS open>\nCloses #1\nCloses #999 \n文中の Closes #1 はそのまま';
   const body = buildPrBody({ issue: 1, req: req(), plan: plan({ pr_sections: [{ heading: 'h', markdown }] }), ledger: ledger(), testsurfHits: [], dangerHits: [] });
-  const block = body.slice(body.indexOf('<details>'), body.lastIndexOf('</details>') + '</details>'.length);
-  assert.equal((body.match(/<\/details>/gi) ?? []).length, 1, '閉じタグは builder が置いた 1 個だけ');
-  assert.equal((body.match(/<details/gi) ?? []).length, 1, '開きタグは builder が置いた 1 個だけ');
+  const block = body.slice(body.indexOf('<details><summary>h</summary>'), body.lastIndexOf('</details>') + '</details>'.length);
+  assert.equal((body.match(/<\/details>/gi) ?? []).length, 4, '閉じタグは builder が置いた 4 個（判定材料 3 + pr_sections 1）だけ');
+  assert.equal((body.match(/<details/gi) ?? []).length, 4, '開きタグは builder が置いた 4 個だけ');
   const Z = String.fromCharCode(0x200b);
   assert.ok(block.includes(`<${Z}/details>`) && block.includes(`<${Z}DETAILS open>`), block);
   assert.ok(block.includes(`\n${Z}Closes #1\n${Z}Closes #999 \n`), block);
@@ -273,13 +349,12 @@ test('[pr-artifacts] pr_sections: 中身の </details> / <details> と行全体�
   const truncated = body.slice(0, body.lastIndexOf('Closes #1'));
   assert.equal(hasClosesLine(truncated, 1), false, '本物の Closes 行が落ちたら中身の偽物で present にしない');
   assert.ok(verifyPrBody(truncated, 1).missing.includes('Closes'));
-  assert.equal(prBodyClipReport(plan({ pr_sections: [{ heading: 'h', markdown }] })).sections_over_chars, 0);
 });
 
 test('[pr-artifacts] pr_sections: 閉じていないコードフェンスは閉じ、<!-- は無害化して、後続の </details> と Closes 行を飲み込ませない', () => {
   const Z = String.fromCharCode(0x200b);
   const bodyOf = (markdown) => buildPrBody({ issue: 1, req: req(), plan: plan({ pr_sections: [{ heading: 'h', markdown }] }), ledger: ledger(), testsurfHits: [], dangerHits: [] });
-  const blockOf = (body) => body.slice(body.indexOf('<details>'), body.lastIndexOf('</details>') + '</details>'.length);
+  const blockOf = (body) => body.slice(body.indexOf('<details><summary>h</summary>'), body.lastIndexOf('</details>') + '</details>'.length);
 
   const backtick = blockOf(bodyOf('前置き\n```js\nconst a = 1;'));
   assert.ok(backtick.includes('const a = 1;\n```\n\n</details>'), `閉じフェンスが足される: ${backtick}`);
@@ -301,30 +376,6 @@ test('[pr-artifacts] pr_sections: 閉じていないコードフェンスは閉�
   assert.ok(comment.trimEnd().endsWith('Closes #1'));
 });
 
-test('[pr-artifacts] PR body: pr_sections を上限いっぱいに載せても可視部（<details> の外）は PR_BODY_MAX_CHARS 以内', () => {
-  const big = 'x'.repeat(PR_SECTIONS_MAX_CHARS / 2 - 10);
-  const sections = [{ heading: 'h1', markdown: big }, { heading: 'h2', markdown: big }];
-  const acs = Array.from({ length: 6 }, (_, i) => `AC${i}: ${'x'.repeat(300)}`);
-  const longPath = (i) => `plugins/dev-flow/some/very/deeply/nested/directory/structure/for/testing/clip/f${i}.ts`;
-  const body = buildPrBody({
-    issue: 815,
-    req: req({ acceptance_criteria: acs }),
-    plan: plan({ summary: 'あ'.repeat(500), pr_sections: sections, pr_notes: Array.from({ length: 5 }, () => ({ section: 'verification', text: 'v'.repeat(400) })) }),
-    ledger: ledger(),
-    testsurfHits: Array.from({ length: 20 }, (_, i) => ({ pattern: `pat${i}`, file: longPath(i) })),
-    dangerHits: Array.from({ length: 20 }, (_, i) => ({ class: `class${i}`, file: longPath(i) })),
-  });
-  const visible = visiblePart(body);
-  assert.ok(Array.from(visible).length <= PR_BODY_MAX_CHARS, `可視部 ${Array.from(visible).length} 字が上限超過`);
-  assert.ok(Array.from(body).length > PR_BODY_MAX_CHARS, '<details> の中は上限計測に入らない（本文全体は上限を超えうる）');
-  assert.equal((body.match(new RegExp(big, 'g')) ?? []).length, 2, 'pr_sections は切られない');
-  assert.ok(visible.trimEnd().endsWith('Closes #815'));
-  assert.equal(prBodyClipReport(plan({ pr_sections: sections })).sections_over_chars, 0, '上限いっぱいは超過ではない');
-  // 転写が verbatim なら Closes 行は残り、末尾の Closes 行が落ちれば欠落になる（実 PR での haiku 転写の実測は別）
-  assert.ok(verifyPrBody(body, 815).ok, '構造検証は通る');
-  assert.equal(hasClosesLine(body.slice(0, body.lastIndexOf('Closes #815')), 815), false);
-});
-
 test('[pr-artifacts] prSectionsTrimFeedback: pr_sections の合計が上限以内なら null、超えたら合計・内訳・指示を 1 件返す', () => {
   const at = [{ heading: 'a', markdown: 'x'.repeat(PR_SECTIONS_MAX_CHARS - 1) }, { heading: 'b', markdown: 'y' }];
   assert.equal(prSectionsTrimFeedback(plan({ pr_sections: at })), null, '上限ちょうどは差し戻さない');
@@ -341,55 +392,27 @@ test('[pr-artifacts] prSectionsTrimFeedback: pr_sections の合計が上限以�
   assert.ok(fb[0].instruction.includes(`${PR_SECTIONS_MAX_CHARS} 字以内`), fb[0].instruction);
 });
 
-test('[pr-artifacts] prBodyClipReport: 本文で「…」に切った note / decision / change bullet の件数と pr_sections の上限超過字数を返す', () => {
-  const clean = prBodyClipReport(plan({ pr_notes: [{ section: 'verification', text: 'short' }] }));
-  assert.deepEqual(clean, { note: 0, decision: 0, change_bullet: 0, sections_over_chars: 0 });
-  assert.equal(hasPrBodyClips(clean), false);
-  assert.equal(hasPrBodyClips(null), false);
-
-  const p = plan({
-    pr_notes: [
-      { section: 'verification', text: 'n'.repeat(PR_BODY_NOTE_MAX) },
-      { section: 'measurement', text: 'short' },
-      ...Array.from({ length: 6 }, () => ({ section: 'verification', text: 'n'.repeat(PR_BODY_NOTE_MAX * 2) })),
-    ],
-    architecture_decisions: [{ decision: 'd'.repeat(PR_BODY_DECISION_MAX), rationale: 'r' }, 'ok'],
-    serial: [{ id: 'T', file_changes: [`src/${'a'.repeat(PR_BODY_CHANGE_BULLET_MAX)}.ts`, 'lib/b.ts'] }],
-    pr_sections: [{ heading: 'h', markdown: 'm'.repeat(PR_SECTIONS_MAX_CHARS + 7) }],
-  });
-  const report = prBodyClipReport(p);
-  // note: 本文に出る先頭 5 件のうち上限超過は 1 件目と 3〜5 件目（6 件目以降は「他 N 件」で数えない）
-  assert.deepEqual(report, { note: 4, decision: 1, change_bullet: 1, sections_over_chars: 7 });
-  assert.equal(hasPrBodyClips(report), true);
-  const body = buildPrBody({ issue: 1, req: req(), plan: p, ledger: ledger(), testsurfHits: [], dangerHits: [] });
-  const ellipsisLines = body.split('\n').filter((l) => l.startsWith('- ') && l.endsWith('…'));
-  assert.equal(ellipsisLines.length, report.note + report.decision + report.change_bullet, '報告件数と本文の「…」行数が一致する');
-  assert.ok(body.includes('m'.repeat(PR_SECTIONS_MAX_CHARS + 7)), '上限超過でも pr_sections は切らない');
-});
-
 test('[pr-artifacts] prBodyEvidenceInstr / planWithoutPrBodyMaterial: evaluator には本文テキストを渡し、plan の本文材料は外す', () => {
   const body = buildPrBody({ issue: 1, req: req(), plan: plan({ pr_notes: [{ section: 'measurement', text: 'RSS 380Mi' }] }), ledger: ledger(), testsurfHits: [], dangerHits: [] });
   const instr = prBodyEvidenceInstr(body);
   assert.ok(instr.includes(`<<<PR_BODY_PREVIEW_BEGIN>>>\n${body}<<<PR_BODY_PREVIEW_END>>>`), instr);
   assert.match(instr, /「PR 本文に書く」型の AC は、この本文テキスト/);
   assert.match(instr, /チェックボックス（- \[ \] \/ - \[x\]）は未確定であり、AC の充足・未達の根拠にするな/);
-  const p = plan({ pr_notes: [{ section: 'measurement', text: 'x' }], pr_sections: [{ heading: 'h', markdown: 'm' }], out_of_scope: ['o'] });
+  const p = plan({ pr_notes: [{ section: 'measurement', text: 'x' }], pr_sections: [{ heading: 'h', markdown: 'm' }], out_of_scope: ['o'], behavior_changes: ['b'], review_points: ['r'] });
   const stripped = planWithoutPrBodyMaterial(p);
   for (const k of PR_BODY_PLAN_KEYS) assert.ok(!(k in stripped), `${k} が残っている`);
   assert.equal(stripped.summary, p.summary);
   assert.deepEqual(stripped.serial, p.serial);
   assert.ok('pr_notes' in p, '入力 plan は変更しない');
-  assert.deepEqual(PR_BODY_PLAN_KEYS, ['architecture_decisions', 'pr_notes', 'pr_sections', 'out_of_scope']);
+  assert.deepEqual(PR_BODY_PLAN_KEYS, ['architecture_decisions', 'pr_notes', 'pr_sections', 'out_of_scope', 'behavior_changes', 'review_points']);
   assert.equal(planWithoutPrBodyMaterial(null), null);
 });
 
-test('[pr-artifacts] PR body: hit なしは「なし」、AC / decisions / 変更 空でもセクションは残る', () => {
+test('[pr-artifacts] PR body: hit なしは「なし」、AC / decisions が空でも判定材料の <details> は残る', () => {
   const body = buildPrBody({ issue: 5, req: req({ acceptance_criteria: [] }), plan: plan({ architecture_decisions: [], serial: [] }), ledger: ledger(), testsurfHits: [], dangerHits: [] });
-  assert.ok(body.includes('## 変更\n（なし）'), body);
-  assert.ok(body.includes('## 受入条件\n（なし）'), body);
-  assert.ok(body.includes('## 設計判断\n（なし）'), body);
-  assert.ok(body.includes('danger-grep: なし'), body);
-  assert.ok(body.includes('test-surface: なし'), body);
+  assert.equal(detailsOf(body, '受入条件'), '（なし）', body);
+  assert.equal(detailsOf(body, '設計判断'), '（なし）', body);
+  assert.equal(detailsOf(body, '検証'), '- danger-grep: なし\n- test-surface: なし', body);
   assert.ok(body.trimEnd().endsWith('Closes #5'));
 });
 
@@ -415,55 +438,26 @@ test('[pr-artifacts] PR body: null / undefined の任意入力で throw しな�
   assert.ok(body.trimEnd().endsWith('Closes #9'));
 });
 
-// ---- (a) 上限 pin: 巨大 planner 出力でも PR_BODY_MAX_CHARS 以下 ----
+// ---- (a) 件数上限: 巨大 planner 出力でも設計判断・hit の列挙は上限件数で畳む（字数では切らない） ----
 
-test('[pr-artifacts] PR body: 巨大 planner 出力でも PR_BODY_MAX_CHARS 以下・設計判断/変更 bullet は上限件数以下', () => {
-  const bigSummary = 'あ'.repeat(2000);
-  const decisions = Array.from({ length: 12 }, (_, i) => ({ decision: `決定${i}`.repeat(1), rationale: 'り'.repeat(400) }));
-  const tasks = Array.from({ length: 40 }, (_, i) => ({
-    id: `T${i}`,
-    desc: 'd',
-    file_changes: Array.from({ length: 10 }, (_, j) => `dir${i}-${j}/file${j}.ts`),
-    test_plan: 'tp',
-    depends_on: [],
-  }));
-  const acs = Array.from({ length: 6 }, (_, i) => `AC${i}: ${'x'.repeat(300)}`);
-  const longPath = (i) => `plugins/dev-flow/some/very/deeply/nested/directory/structure/for/testing/clip/f${i}.ts`;
-  const dangerHits = Array.from({ length: 20 }, (_, i) => ({ class: `class${i}`, file: longPath(i) }));
-  const testsurfHits = Array.from({ length: 20 }, (_, i) => ({ pattern: `pat${i}`, file: longPath(i) }));
-
-  const body = buildPrBody({
-    issue: 642,
-    req: req({ acceptance_criteria: acs }),
-    plan: plan({ summary: bigSummary, architecture_decisions: decisions, serial: tasks }),
-    ledger: ledger(),
-    testsurfHits,
-    dangerHits,
-  });
-
-  assert.ok(Array.from(body).length <= PR_BODY_MAX_CHARS, `body 長 ${Array.from(body).length} が上限超過:\n${body}`);
-  assert.ok(!body.includes(longPath(0)), '上限超過時は hit の file path が clip されている必要がある');
-
-  const decisionLines = body.split('\n').filter((l) => l.startsWith('- ') && /決定\d+/.test(l));
-  assert.ok(decisionLines.length <= 5, `設計判断 bullet は5件以下: ${decisionLines.length}`);
-  for (const l of decisionLines) assert.ok(Array.from(l).length <= 122, `設計判断行が長すぎる (${Array.from(l).length}): ${l}`);
-
-  const firstLine = body.split('\n')[0];
-  assert.ok(Array.from(firstLine).length <= 124, `結論行が長すぎる (${Array.from(firstLine).length}): ${firstLine}`);
-
-  const changeSection = body.split('## 変更\n')[1].split('\n\n')[0];
-  const changeBullets = changeSection.split('\n').filter((l) => l.startsWith('- `'));
-  assert.ok(changeBullets.length <= 6, `変更 bullet は6件以下: ${changeBullets.length}`);
+test('[pr-artifacts] PR body: 設計判断は PR_BODY_DECISIONS_MAX 件・hit は 5 件まで列挙し、超過分は件数だけ出す', () => {
+  const decisions = Array.from({ length: 12 }, (_, i) => ({ decision: `決定${i}`, rationale: 'り'.repeat(400) }));
+  const dangerHits = Array.from({ length: 20 }, (_, i) => ({ class: `class${i}`, file: `src/f${i}.ts` }));
+  const body = buildPrBody({ issue: 642, req: req(), plan: plan({ architecture_decisions: decisions }), ledger: ledger(), testsurfHits: [], dangerHits });
+  const decisionLines = detailsOf(body, '設計判断').split('\n');
+  assert.equal(decisionLines.length, PR_BODY_DECISIONS_MAX + 1, decisionLines.join('\n'));
+  assert.equal(decisionLines.at(-1), `（他 ${12 - PR_BODY_DECISIONS_MAX} 件は plan 参照）`);
+  assert.ok(body.includes('- danger-grep: 20 件（class0: `src/f0.ts`、class1: `src/f1.ts`、class2: `src/f2.ts`、class3: `src/f3.ts`、class4: `src/f4.ts`、他 15 件）'), body);
 });
 
-// ---- (b) 6 セクションの順序・存在（verifyPrBody） ----
+// ---- (b) 構造の順序・存在（verifyPrBody） ----
 
 test('[pr-artifacts] verifyPrBody: 通常 fixture で ok:true・missing 空・見出しが単調増加の順序で現れる', () => {
   const body = buildPrBody({ ...INPUT, ledger: ledger(), testsurfHits: [], dangerHits: [] });
   const result = verifyPrBody(body, 642);
   assert.equal(result.ok, true, JSON.stringify(result));
   assert.deepEqual(result.missing, []);
-  const indices = ['**', '## 変更', '## 受入条件', '## 設計判断', '## 検証', 'Closes #642'].map((marker) => body.indexOf(marker));
+  const indices = ['**', ...Object.values(PR_BODY_DETAILS).map((s) => `<details><summary>${s}</summary>`), 'Closes #642'].map((marker) => body.indexOf(marker));
   for (const idx of indices) assert.ok(idx >= 0, `marker が見つからない: ${JSON.stringify(indices)}`);
   for (let i = 1; i < indices.length; i++) assert.ok(indices[i] > indices[i - 1], `順序が単調増加でない: ${JSON.stringify(indices)}`);
 });
@@ -481,12 +475,12 @@ test('[pr-artifacts] Closes 行: 末尾に存在し hasClosesLine が真、欠�
 
 // ---- (d) verifyPrBody: セクション欠落検出（PR #660 症状） ----
 
-test('[pr-artifacts] verifyPrBody: ## 設計判断 以降が欠落した本文は missing に ## 検証 / Closes を含み ok:false', () => {
+test('[pr-artifacts] verifyPrBody: 設計判断 以降が欠落した本文は missing に 検証 / Closes を含み ok:false', () => {
   const full = buildPrBody({ ...INPUT, ledger: ledger(), testsurfHits: [], dangerHits: [] });
-  const truncated = full.split('## 設計判断')[0].trimEnd();
+  const truncated = full.split('<details><summary>設計判断')[0].trimEnd();
   const result = verifyPrBody(truncated, 642);
   assert.equal(result.ok, false);
-  assert.ok(result.missing.includes('## 検証'), JSON.stringify(result));
+  assert.deepEqual(result.missing, ['設計判断', '検証', 'Closes'], JSON.stringify(result));
   assert.ok(result.missing.includes('Closes'), JSON.stringify(result));
 });
 
@@ -521,14 +515,6 @@ test('[pr-artifacts] PR body: acResults 未指定は ledger の checked に従�
     dangerHits: [],
   });
   assert.ok(body.includes('- [x] AC one\n- [ ] AC two'), body);
-});
-
-// ---- clip ----
-
-test('[pr-artifacts] clip: code point 単位で数え、超過時は末尾 … に切り詰める', () => {
-  assert.equal(clip('abc', 5), 'abc');
-  assert.equal(clip('abcdef', 5), 'abcd…');
-  assert.equal(clip('あいうえお', 3), 'あい…');
 });
 
 // ---- prPhasePrompt (既存) ----
@@ -842,55 +828,75 @@ test('[pr-artifacts] dev-flow.js: IMPL schema の pr_sections は heading / mark
   assert.ok(m[0].includes(`markdown: { type: 'string', maxLength: ${PR_SECTIONS_MAX_CHARS} }`), m[0]);
 });
 
-// ---- issue #830: design_decisions / pr_notes / out_of_scope は schema の maxLength で書き手に収めさせ、builder は切らない ----
+// ---- issue #830 / #928: 1 行要約欄の長さは IMPL schema の maxLength（と maxItems）で書き手に収めさせ、builder は切らない ----
 
-// IMPL schema（dev-flow.js）の 1 行要約欄の maxLength を読む。
+// IMPL schema（dev-flow.js）の 1 行要約欄の上限を読む。
 const implSchemaSrc = (() => {
   const start = devFlowSrc.indexOf('\nconst IMPL = {');
   assert.ok(start >= 0, 'dev-flow.js に IMPL schema が無い');
   return devFlowSrc.slice(start, devFlowSrc.indexOf('\n}\n', start));
 })();
-function implMaxLength(re, what) {
+function implLimit(re, what) {
   const m = implSchemaSrc.match(re);
-  assert.ok(m, `IMPL schema の ${what} に maxLength が無い`);
+  assert.ok(m, `IMPL schema の ${what} に上限が無い`);
   return Number(m[1]);
 }
 const IMPL_MAX = {
-  title: implMaxLength(/\btitle: \{ type: 'string', maxLength: (\d+) \}/, 'design_decisions[].title'),
-  rationale: implMaxLength(/\brationale: \{ type: 'string', maxLength: (\d+) \}/, 'design_decisions[].rationale'),
-  note: implMaxLength(/\btext: \{ type: 'string', maxLength: (\d+) \}/, 'pr_notes[].text'),
-  outOfScope: implMaxLength(/\bout_of_scope: \{ type: 'array', items: \{ type: 'string', maxLength: (\d+) \} \}/, 'out_of_scope[]'),
+  title: implLimit(/\btitle: \{ type: 'string', maxLength: (\d+) \}/, 'design_decisions[].title'),
+  rationale: implLimit(/\brationale: \{ type: 'string', maxLength: (\d+) \}/, 'design_decisions[].rationale'),
+  note: implLimit(/\btext: \{ type: 'string', maxLength: (\d+) \}/, 'pr_notes[].text'),
+  outOfScope: implLimit(/\bout_of_scope: \{ type: 'array', items: \{ type: 'string', maxLength: (\d+) \} \}/, 'out_of_scope[]'),
+  behaviorChange: implLimit(/\bbehavior_changes: \{ type: 'array', maxItems: \d+, items: \{ type: 'string', maxLength: (\d+) \} \}/, 'behavior_changes[]'),
+  behaviorChanges: implLimit(/\bbehavior_changes: \{ type: 'array', maxItems: (\d+),/, 'behavior_changes の件数'),
+  reviewPoint: implLimit(/\breview_points: \{ type: 'array', maxItems: \d+, items: \{ type: 'string', maxLength: (\d+) \} \}/, 'review_points[]'),
+  reviewPoints: implLimit(/\breview_points: \{ type: 'array', maxItems: (\d+),/, 'review_points の件数'),
 };
 
-// builder が各欄に付ける区切りの字数（`- 決定 — 理由` / `- 検証: 本文` / `- 本文`）を本文の実出力から測る。
-// 区切りを変えれば測り直されるので、不変条件は builder の実装と schema の両方に追従する。
-function prBodyLineOverheads() {
-  const adopted = adoptImplPrNotes({ serial: [] }, [{
-    design_decisions: [{ title: '甲', rationale: '乙' }],
-    pr_notes: PR_NOTE_SECTIONS.map((section, i) => ({ section, text: `丙${i}` })),
-    out_of_scope: ['丁'],
-  }]);
-  const lines = buildPrBody({ issue: 1, req: req(), plan: adopted, ledger: ledger(), testsurfHits: [], dangerHits: [] }).split('\n');
-  const len = (marker) => Array.from(lines.find((l) => l.includes(marker))).length;
-  return {
-    decision: len('甲') - 2,
-    note: Math.max(...PR_NOTE_SECTIONS.map((_, i) => len(`丙${i}`) - 2)),
-    outOfScope: len('丁') - 1,
-  };
+// IMPL schema が使う JSON Schema の語彙（type / required / properties / items / enum / pattern / maxLength / maxItems）だけを
+// 解釈する検証器。StructuredOutput の schema 検証と同じく、違反した返却をエラーとして列挙する（空配列なら受理）。
+function schemaErrors(schema, v, path = '$') {
+  const typeOf = (x) => (x === null ? 'null' : Array.isArray(x) ? 'array' : typeof x);
+  const types = [].concat(schema.type ?? []);
+  if (types.length && !types.includes(typeOf(v))) return [`${path}: type ${typeOf(v)}`];
+  const errs = [];
+  if (schema.enum && !schema.enum.includes(v)) errs.push(`${path}: enum`);
+  if (typeof v === 'string') {
+    if (schema.maxLength != null && Array.from(v).length > schema.maxLength) errs.push(`${path}: maxLength ${schema.maxLength}`);
+    if (schema.pattern && !new RegExp(schema.pattern).test(v)) errs.push(`${path}: pattern`);
+  }
+  if (Array.isArray(v)) {
+    if (schema.maxItems != null && v.length > schema.maxItems) errs.push(`${path}: maxItems ${schema.maxItems}`);
+    if (schema.items) v.forEach((x, i) => errs.push(...schemaErrors(schema.items, x, `${path}[${i}]`)));
+  } else if (v !== null && typeof v === 'object') {
+    for (const k of schema.required ?? []) if (!(k in v)) errs.push(`${path}: required ${k}`);
+    for (const [k, sub] of Object.entries(schema.properties ?? {})) if (k in v) errs.push(...schemaErrors(sub, v[k], `${path}.${k}`));
+  }
+  return errs;
 }
 
-test('[pr-artifacts] dev-flow.js: IMPL schema の design_decisions / pr_notes / out_of_scope の maxLength + 区切りは clip 上限以下', () => {
-  const sep = prBodyLineOverheads();
-  assert.ok(sep.decision > 0 && sep.note > 0 && sep.outOfScope > 0, `区切りを測れない: ${JSON.stringify(sep)}`);
-  assert.ok(IMPL_MAX.title + IMPL_MAX.rationale + sep.decision <= PR_BODY_DECISION_MAX,
-    `design_decisions: title ${IMPL_MAX.title} + rationale ${IMPL_MAX.rationale} + 区切り ${sep.decision} > PR_BODY_DECISION_MAX ${PR_BODY_DECISION_MAX}`);
-  assert.ok(IMPL_MAX.note + sep.note <= PR_BODY_NOTE_MAX,
-    `pr_notes: text ${IMPL_MAX.note} + 区切り ${sep.note} > PR_BODY_NOTE_MAX ${PR_BODY_NOTE_MAX}`);
-  assert.ok(IMPL_MAX.outOfScope + sep.outOfScope <= PR_BODY_OUT_OF_SCOPE_ITEM_MAX,
-    `out_of_scope: item ${IMPL_MAX.outOfScope} + 区切り ${sep.outOfScope} > PR_BODY_OUT_OF_SCOPE_ITEM_MAX ${PR_BODY_OUT_OF_SCOPE_ITEM_MAX}`);
+test('[pr-artifacts] dev-flow.js: IMPL schema は behavior_changes / review_points の字数・件数の上限を超えた返却を拒否する', async () => {
+  const { ctx, calls } = makeDevFlowSandbox();
+  const { error } = await runWorkflowCapture(devFlowSrc, ctx);
+  assertNoCrash(error, 'impl schema');
+  const schema = calls.find((c) => c.label === 'impl:serial:issue-1')?.schema;
+  assert.ok(schema, `impl:serial:issue-1 の schema が取れない: ${calls.map((c) => c.label).join(', ')}`);
+  const full = (n, len, c) => Array.from({ length: n }, () => c.repeat(len));
+  const ok = {
+    status: 'DONE', task_id: 'issue-1',
+    behavior_changes: full(IMPL_MAX.behaviorChanges, IMPL_MAX.behaviorChange, 'あ'),
+    review_points: full(IMPL_MAX.reviewPoints, IMPL_MAX.reviewPoint, 'い'),
+  };
+  assert.deepEqual(schemaErrors(schema, ok), [], '上限いっぱいの返却は受理される');
+  const cases = [
+    [{ ...ok, behavior_changes: ['あ'.repeat(IMPL_MAX.behaviorChange + 1)] }, `$.behavior_changes[0]: maxLength ${IMPL_MAX.behaviorChange}`],
+    [{ ...ok, behavior_changes: [...ok.behavior_changes, 'x'] }, `$.behavior_changes: maxItems ${IMPL_MAX.behaviorChanges}`],
+    [{ ...ok, review_points: ['い'.repeat(IMPL_MAX.reviewPoint + 1)] }, `$.review_points[0]: maxLength ${IMPL_MAX.reviewPoint}`],
+    [{ ...ok, review_points: [...ok.review_points, 'x'] }, `$.review_points: maxItems ${IMPL_MAX.reviewPoints}`],
+  ];
+  for (const [v, err] of cases) assert.deepEqual(schemaErrors(schema, v), [err]);
 });
 
-test('[pr-artifacts] PR body: schema の maxLength いっぱいの design_decisions / pr_notes / out_of_scope は 1 行も clip しない', () => {
+test('[pr-artifacts] PR body: schema の上限いっぱいの 1 行要約欄は builder が 1 行も切らずに載せる', () => {
   // code point で数えることも確かめるため、多バイト文字と ASCII を混ぜる
   const fill = (n, c) => Array.from({ length: n }, (_, i) => (i % 2 ? c : 'あ')).join('');
   const adopted = adoptImplPrNotes({ summary: 's', serial: [] }, [{
@@ -898,43 +904,26 @@ test('[pr-artifacts] PR body: schema の maxLength いっぱいの design_decisi
     design_decisions: Array.from({ length: PR_BODY_DECISIONS_MAX }, () => ({ title: fill(IMPL_MAX.title, 't'), rationale: fill(IMPL_MAX.rationale, 'r') })),
     pr_notes: Array.from({ length: PR_BODY_NOTES_MAX }, (_, i) => ({ section: PR_NOTE_SECTIONS[i % PR_NOTE_SECTIONS.length], text: fill(IMPL_MAX.note, String(i)) })),
     out_of_scope: Array.from({ length: PR_BODY_OUT_OF_SCOPE_MAX }, (_, i) => fill(IMPL_MAX.outOfScope, String(i))),
+    behavior_changes: Array.from({ length: IMPL_MAX.behaviorChanges }, (_, i) => fill(IMPL_MAX.behaviorChange, `b${i}`)),
+    review_points: Array.from({ length: IMPL_MAX.reviewPoints }, (_, i) => fill(IMPL_MAX.reviewPoint, `p${i}`)),
   }]);
   const body = buildPrBody({ issue: 830, req: req(), plan: adopted, ledger: ledger(), testsurfHits: [], dangerHits: [] });
-  assert.ok(!body.includes('…'), `上限内の入力が切られた:\n${body.split('\n').filter((l) => l.includes('…')).join('\n')}`);
-  const report = prBodyClipReport(adopted);
-  assert.equal(report.decision, 0);
-  assert.equal(report.note, 0);
   for (const d of adopted.architecture_decisions) assert.ok(body.includes(`- ${d.decision} — ${d.rationale}\n`), d.decision);
   for (const n of adopted.pr_notes) assert.ok(body.includes(`: ${n.text}\n`), n.text);
-  for (const o of adopted.out_of_scope) assert.ok(body.includes(`- ${o}\n`), o);
+  for (const t of [...adopted.out_of_scope, ...adopted.behavior_changes, ...adopted.review_points]) assert.ok(body.includes(`- ${t}\n`), t);
 });
 
-test('[pr-artifacts] PR body: schema を外れた長さの入力は builder が backstop として「…」に切る', () => {
-  const p = plan({
-    architecture_decisions: [{ decision: 'd'.repeat(IMPL_MAX.title + 1), rationale: 'r'.repeat(PR_BODY_DECISION_MAX) }],
-    pr_notes: [{ section: 'verification', text: 'n'.repeat(PR_BODY_NOTE_MAX) }],
-    out_of_scope: ['o'.repeat(PR_BODY_OUT_OF_SCOPE_ITEM_MAX)],
-  });
-  const body = buildPrBody({ issue: 1, req: req(), plan: p, ledger: ledger(), testsurfHits: [], dangerHits: [] });
-  const lineOf = (c) => body.split('\n').find((l) => l.includes(c.repeat(10)));
-  assert.equal(Array.from(lineOf('d')).length, PR_BODY_DECISION_MAX);
-  assert.ok(lineOf('d').endsWith('…'));
-  assert.equal(Array.from(lineOf('n')).length, PR_BODY_NOTE_MAX);
-  assert.ok(lineOf('n').endsWith('…'));
-  assert.equal(Array.from(lineOf('o')).length, PR_BODY_OUT_OF_SCOPE_ITEM_MAX);
-  assert.ok(lineOf('o').endsWith('…'));
-  assert.deepEqual({ note: prBodyClipReport(p).note, decision: prBodyClipReport(p).decision }, { note: 1, decision: 1 });
-});
-
-test('[pr-artifacts] agents/dev-implementer.md: design_decisions / pr_notes / out_of_scope の字数の説明は IMPL schema の maxLength と一致', () => {
+test('[pr-artifacts] agents/dev-implementer.md: 1 行要約欄の字数・件数の説明は IMPL schema の上限と一致', () => {
   const md = readFileSync(join(here, '..', 'agents', 'dev-implementer.md'), 'utf8');
   assert.ok(md.includes(`\`pr_notes[].text\` は ${IMPL_MAX.note} 字`), 'pr_notes の字数');
   assert.ok(md.includes(`\`title\` ${IMPL_MAX.title} 字・\`rationale\` ${IMPL_MAX.rationale} 字`), 'design_decisions の字数');
   assert.ok(md.includes(`\`out_of_scope\` は 1 項目 ${IMPL_MAX.outOfScope} 字まで`), 'out_of_scope の字数');
+  assert.ok(md.includes(`\`behavior_changes\` は 1 項目 ${IMPL_MAX.behaviorChange} 字・${IMPL_MAX.behaviorChanges} 項目まで`), 'behavior_changes の字数・件数');
+  assert.ok(md.includes(`\`review_points\` は 1 項目 ${IMPL_MAX.reviewPoint} 字・${IMPL_MAX.reviewPoints} 項目まで`), 'review_points の字数・件数');
   const example = md.slice(md.indexOf('```json'), md.indexOf('```', md.indexOf('```json') + 7));
   assert.ok(example.includes(`決定（${IMPL_MAX.title} 字以内）`) && example.includes(`その理由（${IMPL_MAX.rationale} 字以内）`), example);
   assert.ok(example.includes(`${IMPL_MAX.note} 字以内）`), example);
   assert.ok(example.includes(`1 項目 1 文・${IMPL_MAX.outOfScope} 字以内）`), example);
-  // clip 上限（PR 本文で切られる幅）を書き手の上限として案内しない
-  assert.ok(!md.includes(`${PR_BODY_NOTE_MAX} 字`) && !md.includes(`${PR_BODY_DECISION_MAX} 字`), '古い clip 上限の字数が残っている');
+  assert.ok(example.includes(`${IMPL_MAX.behaviorChange} 字以内・最大 ${IMPL_MAX.behaviorChanges} 項目）`), example);
+  assert.ok(example.includes(`${IMPL_MAX.reviewPoint} 字以内・最大 ${IMPL_MAX.reviewPoints} 項目）`), example);
 });

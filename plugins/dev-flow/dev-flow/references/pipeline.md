@@ -181,16 +181,18 @@ pg-broker に届かない・結果を取得できない・Validate が red な�
 Merge tier の HOLD 理由は
 `ac_agent_unsatisfied`（差し戻し上限後も未達 = ループの取りこぼし）と `ac_human_pending`（人手 AC 待ち）と
 `ac_ci_pending`（ci AC が CI で success にならなかった。「CI の `<check>` 実行中 — 結果を確認して merge」）に分ける。
-`dev-implementer` が返す `design_decisions` / `pr_notes` は plan（`architecture_decisions` / `pr_notes`）に取り込み、
-PR body の「設計判断」「検証」に 1 行要約として clip して載せる。対応表など複数行の記録は `pr_sections` で返させ、
-`## 検証` の後に `<details>` で改行を保ったまま clip せず載せる（`PR_BODY_MAX_CHARS` は `<details>` の外にだけ掛ける）。
-`pr_sections` の合計が `PR_SECTIONS_MAX_CHARS`（3000 字）を超えたら、Implement / reimpl の直後（Evaluate より前）に
-`dev-implementer` へ要約を 1 回差し戻す（`sections-trim` / `sections-trim#<i>`。builder は切らない）。
-要約行の clip と、差し戻し後も残った合計上限超過は telemetry `pr_body_clips` と終端サマリーに出す。
-evaluator（Evaluate / final-ac-reconcile）には plan の本文材料ではなく `buildPrBody` の出力（Evaluate は PR 作成前の
-プレビュー）を渡し、「PR 本文に書く」型の AC を本文テキストで判定させる — builder が切った内容を充足と見なさないため。
-`out_of_scope`（issue 本文にあるが AC 外・worktree 外として実施しなかった作業）は `plan.out_of_scope` に取り込み、
-PR body と終端サマリーの「この PR に含めなかったもの」節にそのまま転記する（空なら節ごと出さない）。
+PR body（`buildPrBody`）は見える部分を人間向けの短い要約に限り、判定材料は `<details>` に畳む。見える部分は
+結論 1 行 → `## 何が変わるか`（`behavior_changes`）→ `## 人間に見てほしい点`（`review_points`、任意）→
+`## この PR に含めなかったもの`（`out_of_scope`）→ `Closes #N` の順で、材料が空の節は出さない。`<details>` には
+受入条件（AC 全文の checkbox）・設計判断（`design_decisions`）・検証（danger-grep / test-surface の hit と `pr_notes`）・
+`pr_sections`（1 件 1 つ）を載せる。`dev-implementer` の返却は `adoptImplPrNotes` が plan に取り込む。
+builder はどの欄も字数で切らない — 1 行要約欄の長さは IMPL schema の `maxLength`（`behavior_changes` は `maxItems` 3 も）で
+書き手に収めさせ、超過は schema 検証で差し戻す。`pr_sections` の合計が `PR_SECTIONS_MAX_CHARS`（3000 字）を超えたら、
+Implement / reimpl の直後（Evaluate より前）に `dev-implementer` へ要約を 1 回差し戻す（`sections-trim` / `sections-trim#<i>`）。
+判定する LLM の文脈を薄めないための上限で、差し戻し後も超えたら切らずに載せる。
+evaluator（Evaluate / final-ac-reconcile）には plan の本文材料ではなく `buildPrBody` の出力（Evaluate は PR 作成前に
+同じ builder・同じ材料で組んだプレビュー）を渡し、「PR 本文に書く」型の AC を本文テキスト（`<details>` の中を含む）で判定させる。
+`out_of_scope` は終端サマリーの「この PR に含めなかったもの」節にもそのまま転記する（空なら節ごと出さない）。
 
 pr-iterate の fix（`fix#i`）prompt は必須 5 要素を持ち、Boundary で worktree の外・他 repo への書き込み、ブランチ作成、
 `gh api` での変更を禁止する。`file` が worktree の外（URL・`~`・`..` で出る相対パス・worktree 配下でない絶対パス）を
