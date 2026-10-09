@@ -28,7 +28,7 @@ Zennで伸びる記事は「コードを貼って終わり」ではなく、**�
 - TL;DRで始める（好奇心を殺す）
 - コードだけ貼って解説なし
 - 「さらに深掘りしたい方へ」という宣伝感のある見出し
-- playpark企業紹介セクション
+- 企業紹介セクション
 
 ---
 
@@ -211,7 +211,7 @@ TypeScript → typescript
 ```markdown
 ---
 
-**この記事は [playpark Blog](https://www.playpark.co.jp/blog/{slug}?utm_source=zenn&utm_medium=crosspost&utm_campaign={slug}) からの転載です。**
+**この記事は [{ARTICLE_TITLE}]({ORIGINAL_URL}?utm_source=zenn&utm_medium=crosspost&utm_campaign={slug}) からの転載です。**
 ```
 
 ---

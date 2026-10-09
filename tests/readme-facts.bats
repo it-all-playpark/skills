@@ -10,6 +10,7 @@
 #   - Python 例の import は実際の script が使う形と同じ
 #   - ほかの agent から使う節は locator が要求する PATH と ${CLAUDE_PLUGIN_ROOT} の前提を書く
 #   - README / .gitignore は作者個人の環境（dotfiles repo・home-manager・rip）を前提にしない
+#   - 設定節に載せる skill は実在し、キーは実装がそのセクションから読むものだけを書く（issue #900）
 
 setup() {
     REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
@@ -25,6 +26,47 @@ readme_h2_section() {
 # README の `### <title>` 節（次の `##` / `###` 見出しの手前まで）を出力する
 readme_h3_section() {
     awk -v t="### $1" '$0 == t {on=1; next} on && /^##+ / {exit} on {print}' "$README"
+}
+
+# README の `#### <skill>` 設定キー表（次の見出しの手前まで）からトップレベルのキー名を出力する
+readme_config_keys() {
+    awk -v t="#### $1" '$0 == t {on=1; next} on && /^#+ / {exit} on {print}' "$README" \
+        | grep -oE '^\| `[a-z_]+`' | grep -oE '[a-z_]+' | sort -u
+}
+
+@test "README の設定節に載る skill は自作 skill か skills-lock.json の外部 skill として実在する" {
+    # readme_h3_section は `####` でも止まるので、ここは次の `#`〜`###` 見出しまでを取る
+    section="$(awk '$0 == "### 対応スキルと設定項目" {on=1; next} on && /^#{1,3} / {exit} on {print}' "$README")"
+    global_example="$(readme_h3_section 'グローバル設定の例')"
+    names="$( { grep -oE '^#### [a-z0-9-]+$' <<< "$section" | cut -d' ' -f2
+                grep -oE '^  "[a-z0-9-]+": \{' <<< "$global_example" | grep -oE '[a-z0-9-]+'; } | sort -u)"
+    [ -n "$names" ]
+    while IFS= read -r name; do
+        [ -f "$REPO_ROOT/plugins/playpark-skills/$name/SKILL.md" ] || jq -e --arg n "$name" '.skills | has($n)' "$LOCK" >/dev/null || {
+            echo "README の設定節に実在しない skill: $name"
+            return 1
+        }
+    done <<< "$names"
+}
+
+@test "README の ga-analyzer / blog-cross-post / cross-post-publish の設定キーは実装が読むセクションのキーと一致する" {
+    skills="$REPO_ROOT/plugins/playpark-skills"
+    # ga-analyzer: ga_fetch.py の merge_config(defaults, "ga-analyzer") の defaults
+    ga="$(grep -E 'merge_config\(\{.*\}, "ga-analyzer"\)' "$skills/ga-analyzer/scripts/ga_fetch.py" | grep -oE '"[a-z_]+":' | grep -oE '[a-z_]+' | sort -u)"
+    # blog-cross-post: resolve-source.sh の merge_config "$DEFAULTS" "blog-cross-post" の DEFAULTS
+    grep -qF 'merge_config "$DEFAULTS" "blog-cross-post"' "$skills/blog-cross-post/scripts/resolve-source.sh"
+    bcp="$(grep -E "^DEFAULTS='" "$skills/blog-cross-post/scripts/resolve-source.sh" | sed -E "s/^DEFAULTS='(.*)'$/\1/" | jq -r 'keys[]' | sort -u)"
+    # cross-post-publish: list-articles.sh が load_skill_config "cross-post-publish" の結果から読むキー
+    grep -qF 'load_skill_config "cross-post-publish"' "$skills/cross-post-publish/scripts/list-articles.sh"
+    cpp="$(grep -oE "jq -r '\.[a-z_]+" "$skills/cross-post-publish/scripts/list-articles.sh" | grep -oE '[a-z_]+$' | sort -u)"
+    for pair in "ga-analyzer:$ga" "blog-cross-post:$bcp" "cross-post-publish:$cpp"; do
+        name="${pair%%:*}"
+        impl="${pair#*:}"
+        documented="$(readme_config_keys "$name")"
+        echo "$name impl=[$impl] documented=[$documented]"
+        [ -n "$impl" ]
+        [ "$documented" = "$impl" ]
+    done
 }
 
 @test "README のスキル一覧は自作 skill と skills-lock.json の外部 skill に過不足なく一致する" {

@@ -153,8 +153,7 @@ skill-config.json                              # プロジェクト設定（リ�
 
 1. `<project>/skill-config.json` の該当スキルセクション（最優先）
 2. グローバル config（`$SKILL_CONFIG_PATH` > `~/.config/skills/config.json` > `~/.claude/skill-config.json`）
-3. `.claude/<skill-name>.json`（旧形式、フォールバック）
-4. スキル内蔵のデフォルト値
+3. スキル内蔵のデフォルト値
 
 ### グローバル設定の例
 
@@ -169,9 +168,6 @@ skill-config.json                              # プロジェクト設定（リ�
       "x": { "enabled": true },
       "linkedin": { "enabled": true }
     }
-  },
-  "sns-schedule-post": {
-    "timezone": "Asia/Tokyo"
   },
   "trends-analyzer": {
     "geo": "JP"
@@ -218,9 +214,6 @@ skill-config.json                              # プロジェクト設定（リ�
 | キー | 型 | 説明 |
 |------|-----|------|
 | `property_id` | string | GA4 プロパティID（必須） |
-| `default_report_type` | string | レポート種別（`"full"` 等） |
-| `date_range_days` | number | 分析対象日数 |
-| `output_dir` | string | 出力先ディレクトリ |
 
 #### gsc
 
@@ -247,13 +240,6 @@ skill-config.json                              # プロジェクト設定（リ�
 | `schedule.enabled` | boolean | 自動スケジュール有効/無効 |
 | `schedule.mode` | string | スケジュールモード |
 
-#### sns-schedule-post
-
-| キー | 型 | 説明 |
-|------|-----|------|
-| `timezone` | string | タイムゾーン（デフォルト: `"Asia/Tokyo"`） |
-| `default_platforms` | string[] | デフォルト投稿先 |
-
 #### blog-cross-post
 
 | キー | 型 | 説明 |
@@ -261,9 +247,16 @@ skill-config.json                              # プロジェクト設定（リ�
 | `base_url` | string | ブログのベースURL |
 | `content_dir` | string | 記事ソースディレクトリ（デフォルト: `"content/blog"`） |
 | `blog_path_prefix` | string | URLパスプレフィックス（デフォルト: `"/blog/"`） |
-| `company_name` | string | 会社名（CTA表示用） |
-| `contact_url` | string | お問い合わせURL（CTA表示用） |
-| `cross_post_categories` | string[] | クロスポスト対象カテゴリ |
+| `company_name` | string | 会社名（Qiita 版の企業紹介 CTA。未設定ならセクションを出さない） |
+| `contact_url` | string | お問い合わせURL（Qiita 版の企業紹介 CTA。未設定ならリンクを出さない） |
+
+#### cross-post-publish
+
+| キー | 型 | 説明 |
+|------|-----|------|
+| `content_dir` | string | 記事ソースディレクトリ（デフォルト: `"content/blog"`） |
+| `cross_post_dir` | string | 変換結果の出力先（デフォルト: `"post/cross-post"`） |
+| `cross_post_categories` | string[] | クロスポスト対象カテゴリ（デフォルト: `["tech-tips", "lab-reports"]`） |
 
 #### trends-analyzer
 
@@ -292,8 +285,7 @@ skill-config.json                              # プロジェクト設定（リ�
 // <project-root>/skill-config.json
 {
   "ga-analyzer": {
-    "property_id": "123456789",
-    "output_dir": "claudedocs"
+    "property_id": "123456789"
   },
   "sns-announce": {
     "base_url": "https://example.com",
@@ -305,7 +297,12 @@ skill-config.json                              # プロジェクト設定（リ�
   },
   "blog-cross-post": {
     "base_url": "https://example.com",
-    "content_dir": "content/blog"
+    "content_dir": "content/blog",
+    "company_name": "Example Inc.",
+    "contact_url": "https://example.com/contact"
+  },
+  "cross-post-publish": {
+    "cross_post_categories": ["tech-tips", "lab-reports"]
   }
 }
 ```

@@ -2,7 +2,8 @@
 # resolve-source.sh - Resolve blog source from slug or path
 # Usage: ./resolve-source.sh <slug-or-path> [content-dir]
 #
-# Output: JSON with source_path, slug, seed_path (if exists)
+# Output: JSON with source_path, slug, seed_path (if exists), original_url,
+#         and the CTA values (base_url, blog_url, company_name, contact_url) from config
 
 set -euo pipefail
 
@@ -14,7 +15,7 @@ source "$(dirname "$_CORE_BIN")/../_lib/common.sh"
 INPUT="${1:-}"
 
 # Config: defaults → skill-config.json → CLI args
-DEFAULTS='{"base_url":"","content_dir":"content/blog","blog_path_prefix":"/blog/"}'
+DEFAULTS='{"base_url":"","content_dir":"content/blog","blog_path_prefix":"/blog/","company_name":"","contact_url":""}'
 CONFIG=$(merge_config "$DEFAULTS" "blog-cross-post")
 BASE_URL=$(echo "$CONFIG" | jq -r '.base_url')
 CONTENT_DIR="${2:-$(echo "$CONFIG" | jq -r '.content_dir')}"
@@ -70,7 +71,12 @@ fi
 
 # Build original URL
 BLOG_PATH_PREFIX=$(echo "$CONFIG" | jq -r '.blog_path_prefix')
-ORIGINAL_URL="${BASE_URL}${BLOG_PATH_PREFIX}${SLUG}"
+BLOG_URL="${BASE_URL}${BLOG_PATH_PREFIX}"
+ORIGINAL_URL="${BLOG_URL}${SLUG}"
+
+# CTA values: empty when unset (the templates then omit the corresponding CTA line)
+COMPANY_NAME=$(echo "$CONFIG" | jq -r '.company_name')
+CONTACT_URL=$(echo "$CONFIG" | jq -r '.contact_url')
 
 # Output JSON
 jq -n \
@@ -80,11 +86,19 @@ jq -n \
   --arg filename "$FILENAME" \
   --arg seed_path "$SEED_PATH" \
   --arg original_url "$ORIGINAL_URL" \
+  --arg base_url "$BASE_URL" \
+  --arg blog_url "$BLOG_URL" \
+  --arg company_name "$COMPANY_NAME" \
+  --arg contact_url "$CONTACT_URL" \
   '{
     source_path: $source_path,
     slug: $slug,
     date: $date,
     filename: $filename,
     seed_path: (if $seed_path == "" then null else $seed_path end),
-    original_url: $original_url
+    original_url: $original_url,
+    base_url: $base_url,
+    blog_url: $blog_url,
+    company_name: $company_name,
+    contact_url: $contact_url
   }'

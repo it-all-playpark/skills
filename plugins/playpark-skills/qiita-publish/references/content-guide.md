@@ -12,7 +12,7 @@ Qiita向けクロスポスト記事の書き方・テンプレート・変換ル
 | 好む切り口 | **Why（技術選定理由）** |
 | 記事スタイル | 解説先行、比較検討、判断材料 |
 | トーン | 技術解説 |
-| フッター | 企業紹介あり |
+| フッター | 企業紹介あり（`company_name` 設定時） |
 
 ---
 
@@ -32,7 +32,7 @@ tags:
 private: false
 ---
 
-> この記事は [playpark Blog](https://www.playpark.co.jp/blog/{slug}?utm_source=qiita&utm_medium=crosspost&utm_campaign={slug}) からの転載です。
+> この記事は [{ARTICLE_TITLE}]({ORIGINAL_URL}?utm_source=qiita&utm_medium=crosspost&utm_campaign={slug}) からの転載です。
 
 ---
 
@@ -86,11 +86,9 @@ private: false
 
 ---
 
-### playpark について
+### {COMPANY_NAME} について
 
-**playpark LLC** - 業務自動化・AI活用・Web開発
-
-:link: [お問い合わせ](https://www.playpark.co.jp/contact) | [ブログ](https://www.playpark.co.jp/blog)
+:link: [お問い合わせ]({CONTACT_URL}) | [ブログ]({BLOG_URL})
 ```
 
 ### lab-reports — 背景・動機中心
@@ -107,7 +105,7 @@ tags:
 private: false
 ---
 
-> この記事は [playpark Blog](https://www.playpark.co.jp/blog/{slug}?utm_source=qiita&utm_medium=crosspost&utm_campaign={slug}) からの転載です。
+> この記事は [{ARTICLE_TITLE}]({ORIGINAL_URL}?utm_source=qiita&utm_medium=crosspost&utm_campaign={slug}) からの転載です。
 
 ---
 
@@ -173,12 +171,19 @@ private: false
 
 ---
 
-### playpark について
+### {COMPANY_NAME} について
 
-**playpark LLC** - 業務自動化・AI活用・Web開発
-
-:link: [お問い合わせ](https://www.playpark.co.jp/contact) | [ブログ](https://www.playpark.co.jp/blog)
+:link: [お問い合わせ]({CONTACT_URL}) | [ブログ]({BLOG_URL})
 ```
+
+### 企業紹介フッター
+
+`{COMPANY_NAME}` / `{CONTACT_URL}` / `{BLOG_URL}` は blog-cross-post Init（`skill-config.json` の
+`blog-cross-post` セクション）の `company_name` / `contact_url` / `blog_url` で埋める。会社名・URL を
+テンプレートに直書きしない。
+
+- `company_name` が空 → 企業紹介セクション（直前の `---` から末尾まで）を丸ごと出力しない
+- `contact_url` が空 → 「お問い合わせ」リンクだけを省く
 
 ---
 
@@ -219,7 +224,7 @@ private: false
 記事**冒頭**に追加:
 
 ```markdown
-> この記事は [playpark Blog](https://www.playpark.co.jp/blog/{slug}?utm_source=qiita&utm_medium=crosspost&utm_campaign={slug}) からの転載です。
+> この記事は [{ARTICLE_TITLE}]({ORIGINAL_URL}?utm_source=qiita&utm_medium=crosspost&utm_campaign={slug}) からの転載です。
 
 ---
 ```
@@ -266,4 +271,4 @@ private: false
 - [ ] 記事冒頭に転載元テキストリンク明記済み
 - [ ] タグ適切に設定（5個以内、バージョン分離）
 - [ ] 元記事への導線あり
-- [ ] 企業紹介セクションあり
+- [ ] `company_name` 設定時は企業紹介セクションあり

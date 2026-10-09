@@ -98,7 +98,8 @@ blog-cross-post-resolve-source <slug-or-path>
 
 ## Workflow
 
-1. **Init**: resolve-source.sh → `{source_path, slug, seed_path, original_url}`
+1. **Init**: resolve-source.sh → `{source_path, slug, seed_path, original_url, base_url, blog_url, company_name, contact_url}`
+   - CTA の会社名・URL は `skill-config.json` の `blog-cross-post` セクション（`company_name` / `contact_url`）から来る。出力に直書きしない
 2. **Category Check**: 元記事の `category` を確認
    - tech-tips/lab-reports → 続行
    - solutions/case-studies → エラー終了
