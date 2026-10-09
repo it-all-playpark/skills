@@ -35,24 +35,24 @@ if [[ -f "package.json" ]] && has_jq; then
     deps=$(jq -r '(.dependencies // {}) + (.devDependencies // {}) | keys[]' package.json 2>/dev/null || true)
 
     # React / Next.js
-    if grep -qE '^(next|@next/)' <<< "$deps"; then
+    if echo "$deps" | grep -qE '^(next|@next/)'; then
         add_framework "next"
-    elif grep -qE '^react$' <<< "$deps"; then
+    elif echo "$deps" | grep -qE '^react$'; then
         add_framework "react"
     fi
 
     # Fastify
-    if grep -qE '^fastify$' <<< "$deps"; then
+    if echo "$deps" | grep -qE '^fastify$'; then
         add_framework "fastify"
     fi
 
     # Remotion
-    if grep -qE '^(remotion|@remotion/)' <<< "$deps"; then
+    if echo "$deps" | grep -qE '^(remotion|@remotion/)'; then
         add_framework "remotion"
     fi
 
     # Prisma
-    if grep -qE '^(@prisma/client|prisma)$' <<< "$deps"; then
+    if echo "$deps" | grep -qE '^(@prisma/client|prisma)$'; then
         add_framework "prisma"
     fi
 fi

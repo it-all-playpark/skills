@@ -19,9 +19,7 @@ setup() {
     SKILLS_REPO="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd)"
     SCRIPT="$SKILLS_REPO/dev-issue-analyze/scripts/analyze-issue.sh"
 
-    # BATS_TMPDIR は同時に走る別 run (別 worktree) と共有されるため、固定名の fixture を
-    # 上書きし合って判定が食い違う。test ごとの BATS_TEST_TMPDIR に置く。
-    FIXTURE_DIR="$BATS_TEST_TMPDIR/fixtures"
+    FIXTURE_DIR="$BATS_TMPDIR/fixtures"
     mkdir -p "$FIXTURE_DIR"
 
     # gh stub: one log record per invocation ("<arg1> <arg2> ... <argN>"), then
