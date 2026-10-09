@@ -61,6 +61,9 @@ __pycache__/
 # dev-flow ephemeral handoff files (must not be committed via git-commit --all)
 .devflow-tmp/
 
+# 作業者ローカルの設計メモ・計測・RCA（public repo に載せない。現行の不変条件は AGENTS.md / references が持つ）
+claudedocs/
+
 # --- external skills (auto-managed) ---
 plugins/playpark-skills/agent-browser
 plugins/playpark-skills/find-skills

@@ -6,7 +6,7 @@
 //     dev-runner-haiku:    write/Skill 系 proxy 専任。tools は [Bash, Read, Write, Skill] のみ。Write は
 //                          post-comment 系 proxy（post-review#i / post-summary）の一時ファイル保存に必要（issue #372）
 //     dev-runner:          判断寄り（fix / analyze-clarify）の sonnet agent。tools から TodoWrite のみ除去
-//   mechanical exec-proxy の effort は A/B 実測（claudedocs/2026-07-12-issue-323-exec-proxy-effort-ab.md）の
+//   mechanical exec-proxy の effort は A/B 実測（issue #323）の
 //   adopted_effort（low）。maxTurns は全 exec-proxy に有限値（runtime が honor するかは frontmatter からは
 //   検証できないため有限性のみを見る）
 // - dev-runner-haiku-wo は tools を [Write] に限る（issue #521）: Bash が使えると isolation probe が
