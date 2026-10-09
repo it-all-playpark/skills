@@ -21,7 +21,7 @@ import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash, mergeTierFacts, 
 const here = dirname(fileURLToPath(import.meta.url));
 const devFlowSrc = readFileSync(join(here, '..', '.claude', 'workflows', 'dev-flow.js'), 'utf8');
 
-// shift-bud #1519 run で StructuredOutput に渡った実測形（6 サブ結果すべてで value が落ちている）。
+// acme/webapp#103 の run で StructuredOutput に渡った実測形（6 サブ結果すべてで value が落ちている）。
 const DROPPED = {
   changed: { ok: true }, checks: { ok: true }, diffhash: { ok: true },
   head_tree: { ok: true }, pr: { ok: true }, risk: { ok: true }, epoch: 1790000000,

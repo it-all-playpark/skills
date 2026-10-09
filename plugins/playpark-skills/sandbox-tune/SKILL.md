@@ -1,0 +1,116 @@
+---
+name: sandbox-tune
+description: >-
+  Aggregates sandbox denials, permission denials, and "please run this in your terminal" requests from
+  Claude Code transcripts by type, checks them against the settings repo's git log (resolved / remaining),
+  and proposes settings / wrapper / hook fixes with a safety review. Writes a local Markdown report; drafts issues only with --issue.
+  Use when: (1) user asks why the agent keeps asking them to run commands, or which sandbox denials still recur,
+  (2) user wants settings.json / excludedCommands / allowUnixSockets fix candidates backed by evidence,
+  (3) keywords: sandbox-tune, sandbox 拒否, Operation not permitted, EPERM, 人間に実行依頼, 通常のターミナルで, settings 修正, permission 拒否.
+  Accepts args: [--days N] [--issue] [--allow-public]
+---
+
+# Sandbox Tune
+
+transcript（`~/.claude/projects/<project>/<session>.jsonl`）から、繰り返し起きている拒否と人間への実行依頼を型にまとめ、
+直すべきものだけを根拠付きで出す。`/fewer-permission-prompts` が扱う read-only の allow rule は対象外。
+
+集計（collect）・突き合わせ（verify）・レポートはスクリプトが決定論で行う。あなたの仕事は remaining の型の原因・修正案・安全性の判断と、
+`--issue` のときの下書きと確認。レポートはローカルに書くだけで、外部には何も送らない。
+
+## 設定 (`<repo>/sandbox-tune.json`)
+
+呼び出した repo（cwd）の `sandbox-tune.json` を読む。無ければ設定 repo なしで collect と report だけを行う。
+
+```json
+{
+  "configRepo": { "path": "~/src/dotfiles", "paths": ["claude/settings.json", "claude/bin", "claude/hooks"] },
+  "criteriaFiles": ["~/src/dotfiles/claude/RULES.md"],
+  "issue": { "repo": "owner/dotfiles", "template": "sandbox-tune-issue.md", "labels": ["sandbox"] }
+}
+```
+
+| キー | 型 | 意味 |
+|------|----|------|
+| `configRepo.path` | 文字列（必須: configRepo を書くとき） | settings を管理している git repo。verify はこれがあるときだけ行う |
+| `configRepo.paths` | 空でない文字列の配列 | verify で git log を見るパス（設定ファイル・wrapper・hook）。repo root 相対 |
+| `criteriaFiles` | 文字列の配列 | 安全性の判定に加える基準のファイル（個人の運用ルール等）。必ず読む |
+| `issue.repo` | `owner/name` | issue の提出先。`--issue` のときに必須 |
+| `issue.template` | 文字列 | issue 本文のテンプレート。`{{title}}` `{{id}}` `{{evidence}}` `{{cause}}` `{{fix}}` `{{safety}}` を置換する。省略時は既定のテンプレート |
+| `issue.labels` | 文字列の配列 | 付けるラベル |
+
+- `~` は `$HOME`、相対パスは設定ファイルのディレクトリ基準
+- 未知のキー・型違い・存在しないファイル・git repo でない `configRepo.path` はエラー（exit 2）。直してから再実行する
+
+## 実行
+
+スクリプトは `bash ${CLAUDE_PLUGIN_ROOT}/sandbox-tune/scripts/sandbox-tune.sh <subcommand>` で呼ぶ（以下 `ST`）。
+
+```bash
+ST run [--days N]       # collect →（設定 repo があれば）verify → report。書いたパスを JSON で返す
+ST config               # 検証済みの設定（criteriaFiles の絶対パスを含む）
+```
+
+- `run` は `claudedocs/sandbox-tune-<日付>.md`（レポート）と同名の `.json`（集計結果）を cwd に書く。`--out DIR` で変えられる
+- 期間は既定 30 日。ユーザーが `--days N` を渡したらそのまま渡す
+
+### 集計の決まり（スクリプトが守っていること）
+
+- 型は「拒否された対象」で分ける: `sandbox:path:<書き込み先>` / `sandbox:unix_socket:<path>` / `sandbox:network:<host>` /
+  `sandbox:command:<コマンド>`（対象が出ない拒否）/ `sandbox:launch_services:<コマンド>`（`open` 等の `-10822`）/
+  `request:request:<コマンド>`（人間への実行依頼）/ `permission:<kind>:<tool> <対象>`（kind は permission-rule / hook / automode-blocked / user-rejected 等）
+- 各型に `count`・`sessions`（`sessionId` で数える）・`first_seen`・`last_seen`・`projects`・伏せ字済みの代表例（2 件まで）が付く
+- subagent の transcript と `isSidechain` の行、grep / cat 等の出力やファイル本文に拒否の文言が含まれていただけの行、
+  依頼の文に書かれたコマンドやエラー文は数えない
+- verify の「関係する commit」は、型の対象（ホスト・パスの一部・コマンド名）が `configRepo.paths` の差分に現れた commit か、
+  commit message に書かれた commit の最新のもの。その後に発生が無ければ `resolved`、あれば・commit が無ければ `remaining`。
+  対象が 1 語のコマンド名（`node` 等）の型は無関係な commit に当たるので突き合わせず `remaining` にする
+- 型は数百件になることがある。レポートは件数順なので、Read の offset / limit で `remaining` 節を上から読む
+
+## 判断手順（remaining の型ごと）
+
+1. `ST config` の `criteriaFiles` を全部読む（追加の判定基準）
+2. レポートの `remaining` 節を上から読む。verify の根拠の commit が型と無関係（文字列が偶然一致しただけ）なら、関係する commit なしとして扱う。
+   commit の後の発生が、commit より前に起動していた session だけなら（`first_seen` と commit 日時で判断）再発ではない可能性を書く
+3. 型ごとに次の 3 つを出す
+   - **原因**: 何が何を拒否したか（sandbox の書き込み・socket・ネットワーク、permission rule、hook、classifier）。代表例の文から言い切れることだけ書く
+   - **修正案**: settings のキー（`sandbox.filesystem.allowWrite` / `sandbox.network.allowUnixSockets` / `sandbox.excludedCommands` / `permissions.allow` 等）、
+     wrapper、hook、手順の変更のいずれか。設定 repo のどのファイルのどこを変えるかまで書く
+   - **安全性の評価**: 下の基準それぞれに照らして可否を書く。基準に反する修正案は出さず、手順の変更（作業場所を変える等）を代わりに出す
+4. 結果をユーザーに表で示す（型 / 件数・最終発生 / 原因 / 修正案 / 安全性）
+
+### 安全性の基準
+
+- sandbox の外で動かす設定（`excludedCommands` 等）に足してよいのは、**sandbox 内から書き換えられない場所にある実体だけ**。
+  書ける場所（repo の作業ツリー・worktree・`$TMPDIR` 等）のスクリプトや、任意のファイルを実行するランナー（`bash <path>`・テストランナー等）は不可。
+  書き換えて sandbox の外で実行できる脱出口になる
+- 前方一致の glob で引数を絞る形（例 `cmd -x *`）は、後ろに option を足して迂回できるので**安全策として扱わない**
+- 他プロセスの環境変数や資格情報を読める経路（`ps e`・`/proc/*/environ`・keychain・資格情報ファイル等）を sandbox の外に開けない
+- Unix socket の許可は個別のパスで行い、全許可（`allowAllUnixSockets` 等）は使わない
+- `criteriaFiles` の基準も同じ重みで適用する
+
+## issue 化（`--issue` のときだけ）
+
+ユーザーが `--issue` を付けなかったら、ここは行わない（レポートと提案で終える）。
+
+1. ユーザーに issue にする型を選んでもらい、判断手順の結果を候補ファイルに書く（`$TMPDIR` に置く）:
+   `{"candidates":[{"id":"<型の id>","title":"...","cause":"...","fix":"...","safety":"...","security":true|false}]}`。
+   秘密・資格情報・他プロセスの情報が sandbox の外から読める経路などに関わる候補は `security: true` にする
+2. 下書きを作る。本文は伏せ字を通して `claudedocs/sandbox-tune-issue-<n>.md` に書かれ、本文と digest が表示される
+   ```bash
+   ST draft --issue --analysis claudedocs/sandbox-tune-<日付>.json --candidates "$TMPDIR/candidates.json" --ids <id>[,<id>]
+   ```
+3. 表示された本文をそのままユーザーに見せ、投稿してよいか確認を取る（AskUserQuestion）。確認なしに次へ進まない。
+   伏せ字は形での判定なので、秘密が残っていないかもユーザーに見てもらう。直すなら候補ファイルを直して 2 からやり直す
+4. 確認が取れた下書きだけを、表示された digest を付けて投稿する
+   ```bash
+   ST post claudedocs/sandbox-tune-issue-<n>.md --digest <表示された digest> [--allow-public]
+   ```
+   - 下書きが表示後に変わっていたら投稿しない（exit 3）
+   - 提出先が公開 repo なら警告し、ユーザーが `--allow-public` を付けたときだけ投稿する（無ければ exit 5）
+   - **セキュリティ系の候補は公開 repo に投稿しない**（`--allow-public` でも exit 5）。レポートに留めるか、
+     非公開の報告先（GitHub の private security advisory 等）を案内する。経路を説明する本文を公開の場に書くこと自体が漏えいになる
+
+## Exit
+
+0 成功 / 2 引数・設定の誤り / 3 下書きが表示したものと違う / 4 gh の失敗 / 5 投稿を拒否（公開 repo）

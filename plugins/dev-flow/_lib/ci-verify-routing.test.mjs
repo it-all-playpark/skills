@@ -18,10 +18,10 @@ const src = readFileSync(join(here, '..', '.claude/workflows/dev-flow.js'), 'utf
 const evaluatorMd = readFileSync(join(here, '..', 'agents/evaluator.md'), 'utf8');
 
 const CI_VERIFY = { label: 'full-ci', checks: ['e2e'], commands: ['pnpm test:e2e:local', 'pnpm test:e2e'], wait_ceiling_seconds: 1500 };
-// shift-bud issue #1613 の AC#4
+// acme/webapp#105 の AC#4
 const E2E_AC = '`pnpm test:e2e:local`（または full-ci ラベルの CI）で `tenant-isolation.spec.ts` が通ることを確認する';
 const CODE_AC = 'tenant ID を持たない query を repository 層で拒否する';
-const E2E_LINK = 'https://github.com/acme/shift-bud/actions/runs/77/job/88';
+const E2E_LINK = 'https://github.com/acme/webapp/actions/runs/77/job/88';
 
 const evalWith = (results, feedback = []) => ({
   verdict: 'pass', total: 100, threshold: 80, feedback, feedback_level: 'implementation',

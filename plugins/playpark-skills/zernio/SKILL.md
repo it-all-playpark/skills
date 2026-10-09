@@ -39,14 +39,15 @@ Zernio CLI wrapper for SNS scheduling and sync.
 
 **CRITICAL**: `zernio` が PATH に無いまま subagent から呼ぶと、外部 API 待ちで stall する。必ず最初に解決する。
 
+前提条件: zernio CLI は本 skill に同梱されない。別途 install して PATH（または `~/.cargo/bin`）に置いておく必要がある。
+
 優先順:
 1. `command -v zernio` (PATH)
 2. `~/.cargo/bin/zernio` (cargo install)
-3. `~/ghq/github.com/playpark-llc/zernio-cli/target/release/zernio` (source build)
 
-いずれも無ければ `cargo install --path ~/ghq/github.com/playpark-llc/zernio-cli` を促してエラー終了。
+いずれも無ければ「zernio CLI を別途 install してください」と伝えてエラー終了。
 
-詳細・resolver スニペット・install 手順: [Environment](references/environment.md)
+詳細・resolver スニペット: [Environment](references/environment.md)
 
 ## Step 1: Resolve Profile ID
 
