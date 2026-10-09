@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/claude-zombie-kill/scripts/zombie-kill.sh\" --force --min-hours 48",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/claude-zombie-kill/scripts/zombie-kill.sh\" --hook --min-hours 48",
             "timeout": 15
           }
         ]

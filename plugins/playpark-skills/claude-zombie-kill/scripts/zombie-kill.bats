@@ -6,9 +6,10 @@ setup() {
   WORK="$BATS_TEST_TMPDIR"
   mkdir -p "$WORK/bin"
 
-  # 偽 ps: ps aux 形式で前日以前に起動した claude を 2 件返す
+  # 偽 ps: ps aux 形式で前日以前に起動した claude を 2 件返す。ps -o etime= には 3 日経過を返す
   cat > "$WORK/bin/ps" <<'EOF'
 #!/usr/bin/env bash
+if [ "$1" = "-o" ]; then echo "3-01:00:00"; exit 0; fi
 echo "USER       PID  %CPU %MEM      VSZ    RSS   TT  STAT STARTED      TIME COMMAND"
 echo "me       11111   0.0  0.1   100000   2000 s001  S    Thu06AM   0:01.00 claude --resume"
 echo "me       22222   0.0  0.1   100000   2000 s002  S    Wed04PM   0:02.00 claude"
@@ -28,6 +29,33 @@ EOF
   }
   sleep() { :; }
   export -f kill sleep
+
+  unset ZOMBIE_KILL_AUTO
+  PLUGIN_ROOT="$(cd "$BATS_TEST_DIRNAME/../.." && pwd)"
+  HOOK_CMD=$(jq -r '.hooks.SessionStart[] | select(.matcher=="startup") | .hooks[0].command' "$PLUGIN_ROOT/hooks/hooks.json")
+}
+
+# hooks.json の SessionStart command を Claude Code と同じく bash -c で実行する
+run_hook_cmd() {
+  CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" bash -c "$HOOK_CMD" < /dev/null
+}
+
+@test "SessionStart hook は既定（opt-in なし）で kill を呼ばず、検出を報告するだけで終わる" {
+  run run_hook_cmd
+  [ "$status" -eq 0 ]
+  [ ! -s "$KILL_LOG" ]
+  [[ "$output" == *"PID 11111"* ]]
+  [[ "$output" == *"PID 22222"* ]]
+  [[ "$output" == *"ZOMBIE_KILL_AUTO=1"* ]]
+}
+
+@test "SessionStart hook は ZOMBIE_KILL_AUTO=1 のときだけ kill する" {
+  export ZOMBIE_KILL_AUTO=1
+  run run_hook_cmd
+  [ "$status" -eq 0 ]
+  grep -qx "11111" "$KILL_LOG"
+  grep -qx "22222" "$KILL_LOG"
+  [[ "$output" == *"Done: 2 killed, 0 force-killed."* ]]
 }
 
 @test "zombie 候補 2 件の全件に SIGTERM を送り、集計を表示する" {
