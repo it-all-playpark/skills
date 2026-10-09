@@ -63,7 +63,7 @@ pip install google-analytics-data google-auth-oauthlib
 ### Step 7: 動作確認
 
 ```bash
-python scripts/ga_fetch.py \
+ga-analyzer-fetch \
   --property-id YOUR_PROPERTY_ID \
   --oauth-client /path/to/client_secret.json \
   --start-date 7daysAgo \
@@ -110,7 +110,7 @@ python scripts/ga_fetch.py \
 ### Step 6: 実行
 
 ```bash
-python scripts/ga_fetch.py \
+ga-analyzer-fetch \
   --property-id YOUR_PROPERTY_ID \
   --credentials /path/to/service-account.json \
   --output test_report.json

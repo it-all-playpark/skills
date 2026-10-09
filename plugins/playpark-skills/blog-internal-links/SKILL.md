@@ -53,7 +53,7 @@ skill-config.json の `blog-internal-links` セクションから設定を読み
 全 MDX 記事から内部リンクを抽出しリンクマトリクスを構築。
 
 ```bash
-scripts/extract-links.sh [--content-dir DIR] [--blog-prefix PREFIX]
+${CLAUDE_PLUGIN_ROOT}/blog-internal-links/scripts/extract-links.sh [--content-dir DIR] [--blog-prefix PREFIX]
 # Output: JSON
 # {"links": {"slug-a": ["slug-b", "slug-c"]}, "counts": {"slug-a": 2}}
 ```
@@ -67,7 +67,7 @@ scripts/extract-links.sh [--content-dir DIR] [--blog-prefix PREFIX]
 未公開記事へのリンク違反を検出。
 
 ```bash
-scripts/check-future-links.sh --links-json <path> [--content-dir DIR]
+${CLAUDE_PLUGIN_ROOT}/blog-internal-links/scripts/check-future-links.sh --links-json <path> [--content-dir DIR]
 # Output: JSON array
 # [{"from": "slug-a", "to": "slug-b", "reason": "future_date|draft|seed_only|not_found", "target_date": "..."}]
 ```

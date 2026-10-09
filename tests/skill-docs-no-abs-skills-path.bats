@@ -55,6 +55,24 @@ setup() {
     [ "$status" -ne 0 ]
 }
 
+# skill は利用者の project を CWD として実行されるので、`scripts/...` / `./scripts/...` の相対呼び出しは
+# 見つからない（#903）。SKILL.md は ${CLAUDE_PLUGIN_ROOT}/<skill>/scripts/、references は bin/ の bare 名で書く。
+# 検出するのは呼び出しの形（interpreter 前置・行頭のコマンド・./scripts/・Run:・「を実行」）だけで、
+# Resources 一覧や見出しの `scripts/foo.sh` のような skill dir 内の所在説明は対象外。
+@test "全pluginのSKILL.md/referencesにCWD相対の scripts/ 呼び出しが残っていない" {
+    run git -C "$REPO_ROOT" grep -nIE \
+        -e '(^|[^[:alnum:]_/-])(bash|sh|zsh|python3?|node|uv run|ruby|perl) +(\./)?scripts/' \
+        -e '^[[:space:]]*(\$ +)?(\./)?scripts/[^[:space:]]' \
+        -e '(^|[^[:alnum:]_.-])\./scripts/' \
+        -e '[Rr]un:? +`?(\./)?scripts/' \
+        -e '(^|[^[:alnum:]_./}-])scripts/[^[:space:]`]+`? *を実行' \
+        -- '*SKILL.md' '*skill.md' '*references/*.md' \
+           'plugins/playpark-skills/skill-creator/assets/skill-template.md' \
+           ':(exclude).claude/'
+    echo "$output"
+    [ "$status" -ne 0 ]
+}
+
 @test "skill script(*.sh/*.py)に~/.claude/skills絶対パス参照が残っていない" {
     run git -C "$REPO_ROOT" grep -nIF \
         -e '~/.claude/skills/' \

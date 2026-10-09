@@ -16,17 +16,17 @@ GA4 Data APIでアクセス解析データを取得し、企業サイト/LP向�
 
 ```
 1. セットアップ確認 → 未完了なら references/setup_guide.md を案内
-2. データ取得 → scripts/ga_fetch.py を実行
+2. データ取得 → ga-analyzer-fetch を実行
 3. データ読み込み → 生成されたJSONを読み込み
 4. 分析・提案 → references/metrics_guide.md を参照しながらレポート作成
 ```
 
 ## Data Fetching
 
-`scripts/ga_fetch.py --help` で全オプション確認可能。基本コマンド:
+`ga-analyzer-fetch --help` で全オプション確認可能。基本コマンド:
 
 ```bash
-python scripts/ga_fetch.py \
+ga-analyzer-fetch \
   --property-id PROPERTY_ID \
   --oauth-client ~/.config/ga4/client_secret.json \
   --output ga_report.json

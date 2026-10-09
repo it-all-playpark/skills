@@ -65,6 +65,7 @@ dep-guardian-classify-pr
 dep-guardian-discover-prs
 dep-guardian-merge-prs
 dep-guardian-test-pr
+ga-analyzer-fetch
 gmail-cleanup
 gmail-receipts
 qiita-publish
@@ -115,6 +116,7 @@ skills_target_for() {
         dep-guardian-classify-pr) echo "bash dep-guardian/scripts/classify-pr.sh" ;;
         dep-guardian-test-pr) echo "bash dep-guardian/scripts/test-pr.sh" ;;
         dep-guardian-merge-prs) echo "bash dep-guardian/scripts/merge-prs.sh" ;;
+        ga-analyzer-fetch) echo "python3 ga-analyzer/scripts/ga_fetch.py" ;;
         gmail-cleanup) echo "bash gmail-cleanup/scripts/gmail-cleanup.sh" ;;
         gmail-receipts) echo "bash gmail-receipts/scripts/gmail-receipts.sh" ;;
         qiita-publish) echo "bash qiita-publish/scripts/publish.sh" ;;

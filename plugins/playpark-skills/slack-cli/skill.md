@@ -89,9 +89,9 @@ Deterministic workspace token resolution. Run before any Slack CLI command.
 
 ```bash
 # Resolve default workspace
-./scripts/resolve-workspace.sh
+${CLAUDE_PLUGIN_ROOT}/slack-cli/scripts/resolve-workspace.sh
 # Resolve specific workspace
-./scripts/resolve-workspace.sh --workspace my-company
+${CLAUDE_PLUGIN_ROOT}/slack-cli/scripts/resolve-workspace.sh --workspace my-company
 ```
 
 Output: `{"workspace": "name", "token_env": "ENV_VAR_NAME", "team_id": "T01ABC123"|null, "token_set": true|false}`

@@ -26,7 +26,7 @@ ga-analyzer → [trends-analyzer]
 
 ```
 1. 入力判定 → --ga-report（自動KW抽出）or --keywords（手動指定）
-2. データ取得 → scripts/trends_fetch.py を実行
+2. データ取得 → trends_fetch.py を実行（Data Fetching のコマンド）
 3. 結果読み込み → trends_report.json を読み込み
 4. 分析・要約 → references/trends_guide.md を参照しトレンドスコアを解釈
 ```
@@ -35,12 +35,12 @@ ga-analyzer → [trends-analyzer]
 
 ```bash
 # GA レポートからキーワード自動抽出
-python scripts/trends_fetch.py \
+python ${CLAUDE_PLUGIN_ROOT}/trends-analyzer/scripts/trends_fetch.py \
   --ga-report /path/to/ga_report.json \
   --output trends_report.json
 
 # 手動キーワード指定
-python scripts/trends_fetch.py \
+python ${CLAUDE_PLUGIN_ROOT}/trends-analyzer/scripts/trends_fetch.py \
   --keywords "Claude Code,AI開発,LLM活用" \
   --geo JP \
   --output trends_report.json
