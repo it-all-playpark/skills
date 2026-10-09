@@ -162,8 +162,7 @@ flowchart TD
     IN["test green"] --> C1["secfloor-classify.sh<br/>統合 exec-proxy・1 呼び出し"]
     C1 --> C2["ephemeral・宣言外・format_only を count から除外"]
     C2 --> C3["classifyShape(req, realizedCount, lineStats)<br/>EFFECTIVE_SHAPE 確定"]
-    C3 --> C4["ui-verify config<br/>UI touch 時のみ"]
-    C4 --> C5{"runEval ?"}
+    C3 --> C5{"runEval ?"}
     C5 -->|true| OUT["Evaluate へ"]
     C5 -->|false| SKIP["micro path<br/>evaluator 0 回"]
 
@@ -178,7 +177,7 @@ fail-closed** で SEC seed を全 unchecked にして merge tier を HOLD へ倒
 
 - `EFFECTIVE_SHAPE` が micro 以外
 - danger-grep hit / test-weakening 検出 / plan 宣言外の変更
-- green-fix が発生した / dev-implementer が null を返して task を落とした / UI パスを touch した
+- green-fix が発生した / dev-implementer が null を返して task を落とした
 
 ### 1.6 Evaluate
 
@@ -235,7 +234,7 @@ flowchart TD
     F0 -->|no| FSKIP["skipped<br/>agent 呼び出しゼロ"]
     F0 -->|yes| F1["worktree を PR 最終 HEAD へ ff-sync"]
     F1 --> F2["test suite 再実行"]
-    F2 --> F3["changed-files-final で<br/>UI touch / 宣言外を再判定"]
+    F2 --> F3["changed-files-final で<br/>宣言外を再判定"]
     F3 --> F4["final AC reconcile"]
     FSKIP --> OUT["Merge tier へ"]
     F4 --> OUT

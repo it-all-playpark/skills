@@ -39,7 +39,7 @@ dev-flow 本体（workflow / agent 定義 / `_lib` canonical / generator）を�
 
 - 軸A invariant: deterministic oracle / seed / critical は全 gate_policy で blocking。security floor と決定論ゲートを policy で緩めない。記録専用 telemetry は gate 入力にしない
 - Merge tier は pr-iterate の後（fix 後の最終 tree で danger 再 reconcile）。fixes_applied>0 は Final reconcile で test 再実行、red / 再検証不能は HOLD（PR head sha に pin した CI 決定論判定でのみ代替）。例外は flake だけ: `failed_files` 非空の red は落ちたファイルだけ 1 回再実行し、exit code が green なら flake（`final_test_flaky` に記録・HOLD 理由にしない）。全件・2 回目の再実行と LLM 判定はしない（繰り返すほど本物の red を通す）
-- danger-grep 失敗は fail-closed（全 SEC seed unchecked → HOLD）。realized-diff / redgreen / final-reconcile / final-ac-reconcile / issue-labels の失敗は fail-safe（安全側 floor・HOLD）。advisory 信号（ui-verify / ci-checks / structural / vdelta / post-comment / clock / pr-meta）は fail-open。理由: 決定論 gate の入力不明を通過と同一視しない
+- danger-grep 失敗は fail-closed（全 SEC seed unchecked → HOLD）。realized-diff / redgreen / final-reconcile / final-ac-reconcile / issue-labels の失敗は fail-safe（安全側 floor・HOLD）。advisory 信号（ci-checks / structural / vdelta / post-comment / clock / pr-meta）は fail-open。理由: 決定論 gate の入力不明を通過と同一視しない
 - analyze ゲート（Setup 末尾）は prerun の決定論 analyze（`analyze-issue --contract` + Jev）の検証とゲートのみで spawn は観測型 null 時の分類 1 回のみ。LLM に issue を転写させる経路を戻さない。AC 空 / comment_conflicts 非空 / uncertain 非空は needs_clarification で終端（決定論は意味的矛盾の要否を判定できず、LLM に黙って片方を採らせると訂正が実装に反映されない）
 - empty-diff gate は fail-closed（cross-repo は人間ラベル opt-in + 決定論 dirty 検証が揃った場合のみ graceful 終端）
 - block_class は `approach_mismatch` / `guard_blocked` の閉じた enum。guard_blocked は replan ループから除外し evaluator focus へ直行
@@ -50,7 +50,7 @@ dev-flow 本体（workflow / agent 定義 / `_lib` canonical / generator）を�
 
 - 各 distrust 機構は incentive-structural（永続）/ blast-radius（永続）/ capability-bound（sunset 対象）を宣言。capability-bound はパラメータ値 + 再評価トリガを併記。クラス無しは負債
 - agent への指示も contract / incentive-structural / capability-bound を宣言。capability-bound の再評価は major モデルリリース毎の dry-run
-- sunset トリガ: `gate_policy` → calibration monitor が judge を well-calibrated と実証した時点で blocking へ。pr-iterate major 閾値 → 同（critical は永続）。ui-verify advisory → UI judge precision 実証まで固定。redgreen vdelta → deny-only 固定、record_integrity 昇格 + precision 実証で再評価。trust-layer 復帰 → (1) 監査証跡の破壊的上書き無し (2) classifier ブロックが run abort へ波及しない実測 (3) 完走率が劣後しない、の 3 条件を満たす再設計のみ
+- sunset トリガ: `gate_policy` → calibration monitor が judge を well-calibrated と実証した時点で blocking へ。pr-iterate major 閾値 → 同（critical は永続）。redgreen vdelta → deny-only 固定、record_integrity 昇格 + precision 実証で再評価。trust-layer 復帰 → (1) 監査証跡の破壊的上書き無し (2) classifier ブロックが run abort へ波及しない実測 (3) 完走率が劣後しない、の 3 条件を満たす再設計のみ
 - incentive-structural / blast-radius はモデル更新で撤去しない
 
 ## exec-proxy（起動形の制約）

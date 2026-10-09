@@ -106,7 +106,7 @@ function createResponder({ concerns, ciChecksResponse }) {
     }
     // issue-meta（issue #451）: analyze provenance 突合 probe
     if (label === 'issue-meta') return { ok: true, number: 1, title: 'stub-issue-title' };
-    // デフォルト（worktree-deps / ui-verify-config 等）
+    // デフォルト（worktree-deps 等）
     return null;
   };
 }

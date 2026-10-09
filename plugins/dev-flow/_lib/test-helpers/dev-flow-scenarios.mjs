@@ -15,39 +15,6 @@
 
 import { mergeTierFacts, STANDARD_FILES, shapeOverrides, analyzeArgs, devFlowArgs, prerunAnalyze } from './vm-sandbox.mjs';
 
-const UI_FILE = 'src/components/Foo.tsx';
-const VALID_UI_CFG = { base_port: 4100, up: [{ name: 'app', serve: 'npm run dev -- --port {port}', ready: { http: 'http://127.0.0.1:{port}/' } }], env_files: [] };
-const UI_OVERRIDES = {
-  'danger-grep': { risk: { ok: true, hits: [] }, files: [UI_FILE], struct: null, diffhash: { hash: 'AAA', empty: false } },
-  'merge-tier-facts': mergeTierFacts({ files: [UI_FILE] }),
-  'ui-verify-config': { found: true, config: VALID_UI_CFG },
-  'ui-verify-config-final': { found: true, config: VALID_UI_CFG },
-  'ui-verify-stack': { ok: true, phase: 'ready', port: 4100, pid: 1 },
-  'ui-verify-stack-final': { ok: true, phase: 'ready', port: 4100, pid: 1 },
-  'ui-verify-smoke': { ok: true, mode: 'smoke', checks: [], console_errors: [], screenshots: [], summary: 'ok' },
-  'ui-verify-smoke-final': { ok: true, mode: 'smoke', checks: [], console_errors: [], screenshots: [], summary: 'ok' },
-  'ui-verify-teardown': { server_stopped: true, session_closed: true, leftover: [], notes: '' },
-  'ui-verify-teardown-final': { server_stopped: true, session_closed: true, leftover: [], notes: '' },
-};
-
-// scenario mode（standard 以上 + scenarios 宣言）+ login 宣言 → ui-verify-login（exec-proxy）→ ui-verifier（label 'ui-verify'）
-const UI_FILES3 = ['src/components/A.tsx', 'src/components/B.tsx', 'src/components/C.tsx'];
-const SCENARIO_UI_CFG = {
-  ports: ['web'],
-  up: [{ name: 'web', serve: 'npm run dev -- --port {port.web}', ready: { tcp: '{port.web}' } }],
-  login: { commands: [['open', '{base_url}/login'], ['click', 'button[type=submit]']] },
-  scenarios: [{ name: 's1', steps: ['open /'], checks: ['ok'], ac_index: 0 }],
-};
-const UI_SCENARIO_OVERRIDES = {
-  ...UI_OVERRIDES,
-  'danger-grep': { risk: { ok: true, hits: [] }, files: UI_FILES3, struct: null, diffhash: { hash: 'AAA', empty: false } },
-  'merge-tier-facts': mergeTierFacts({ files: UI_FILES3 }),
-  'ui-verify-config': { found: true, config: SCENARIO_UI_CFG },
-  'impl:serial:issue-1': { status: 'DONE', task_id: 'issue-1', files: [...UI_FILES3], summary: 's', concerns: [] },
-  'ui-verify-login': { ok: true, ran: 2, total: 2 },
-  'ui-verify': { ok: true, mode: 'scenario', checks: [], console_errors: [], screenshots: [], summary: 'ok' },
-};
-
 // 実効 shape は realized diff の file 数で決まる（issue #676）: complex は shapeOverrides('complex')（realized 7 件）、
 // micro（lite）は danger-grep の files を空にする。
 const AC2 = [
@@ -71,18 +38,15 @@ export const DEV_FLOW_SCENARIOS = {
   },
   // Merge tier で merge-tier-facts の diffhash が secfloor と不一致 → facts の risk / changed で再判定
   'merge-rescan': { overrides: { 'merge-tier-facts': mergeTierFacts({ hash: 'CCC' }) } },
-  // pr-iterate が fix を適用 → Final reconcile 経路（reconcile-sync / test#final / *-final）+ UI 経路
-  'final-reconcile-ui': {
+  // pr-iterate が fix を適用 → Final reconcile 経路（reconcile-sync / test#final / *-final）
+  'final-reconcile': {
     overrides: {
-      ...UI_OVERRIDES,
       'reconcile-sync': { ok: true, head: 'deadbeef' },
-      'changed-files-final': { files: [UI_FILE] },
+      'changed-files-final': { files: [...STANDARD_FILES] },
       'ci-final': { ok: true, headRefOid: 'a'.repeat(40), statusCheckRollup: [] },
     },
     workflow: async () => ({ status: 'lgtm', iterations: 2, fixes_applied: 1 }),
   },
-  // UI scenario mode + login 宣言 → ui-verify-login → ui-verifier
-  'ui-scenario-login': { overrides: UI_SCENARIO_OVERRIDES },
   // test#final が null（unavailable）→ reconcile-sync の head sha に pin した CI 委譲 ci-final（issue #599）
   'final-ci': {
     overrides: {

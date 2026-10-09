@@ -17,7 +17,7 @@
 #     "timeout_seconds": 1500                         # command の上限。超えたら止めて timeout
 #   } }
 #
-# プロセスモデル（ui-verify-stack と同じ）:
+# プロセスモデル:
 #   別の Bash 呼び出しからは kill できない（sandbox が別実体への signal を EPERM にする）ので、start は
 #   detached な supervisor を 1 本起こし、DB の確保・command の起動・停止・DB の削除はすべて supervisor が行う。
 #   止めるときは state dir に stop file を置く。DB の DELETE は supervisor の EXIT trap で必ず呼ぶ

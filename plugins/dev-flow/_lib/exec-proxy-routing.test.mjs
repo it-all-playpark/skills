@@ -6,7 +6,7 @@
 //     - dev-runner-haiku-ro: read-only 決定論 proxy (danger-grep / diff-hash /
 //       changed-files / CI read 系など)
 //     - dev-runner-haiku: write/Skill 系 proxy 専任 (worktree 作成 / test 実行 /
-//       redgreen / journal / ui-verify-stack / ui-verify-smoke / PR コメント投稿 (post-summary。issue #392 で
+//       redgreen / journal / PR コメント投稿 (post-summary。issue #392 で
 //       per-round post-review#i 投稿は終端 post-summary へ統合済み) など)
 //     - dev-runner: 判断寄り (fix / analyze)
 //
@@ -43,8 +43,6 @@ const EXPECTED_DEV_FLOW = {
   'diff-gate': RO,
   'diff-gate-retry': RO,
   'danger-grep': RO,
-  'ui-verify-config': RO,
-  'ui-verify-config-final': RO,
   'diff-hash-eval': RO,
   'diff-hash-pr': RO,
   // local-verify を実行した tree / 最終 tree の diff hash（issue #863。exit 0 を最終 tree と突き合わせる）
@@ -68,11 +66,6 @@ const EXPECTED_DEV_FLOW = {
   // write/Skill tier
   'test#*': RW,
   'test#final': RW,
-  'ui-verify-stack*': RW,
-  // smoke は決定的な exec-proxy。LLM の scenario（ui-verifier）は label 'ui-verify' で別に記録される
-  'ui-verify-smoke*': RW,
-  'ui-verify-teardown*': RW,
-  'ui-verify-login*': RW,
   // ci の AC のローカル実行（issue #863）。local-verify は worktree のコマンドを実行するので sandbox 内で動かす
   // （excludedCommands に登録しない）。起動形は bin/ の bare 名 `local-verify start|wait|stop`
   'local-verify-start#*': RW,
@@ -175,7 +168,7 @@ test('[exec-proxy-routing] dev-flow.js: 全 scenario で観測される exec-pro
 // Guard against the 'dev-runner-haiku' → 'dev-runner-haiku-ro' prefix-match footgun:
 // write/Skill-tier の観測 agentType は '-ro' で終わらない（EXPECTED の値そのものを完全一致で突合している）。
 test("[exec-proxy-routing] dev-flow.js write/Skill-tier labels do NOT route to 'dev-runner-haiku-ro'", async () => {
-  const calls = await runDevFlowScenario('final-reconcile-ui');
+  const calls = await runDevFlowScenario('final-reconcile');
   for (const c of calls) {
     const exp = expectedFor(EXPECTED_DEV_FLOW, c.label);
     if (exp?.agentType !== RW) continue;

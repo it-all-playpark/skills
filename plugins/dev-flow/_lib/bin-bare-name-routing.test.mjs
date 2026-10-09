@@ -5,7 +5,7 @@
 // AC1: 絶対パス literal が 0 箇所。
 // AC2: workflow が使う call site が bare 名で配線されている。
 // [first-token]: bash 前置の bare 名呼び出しや拡張子付き呼び出しの残存が無い。
-// [bin]: workflow / wrapper skill が使う bare 名は全て bin/ に存在し、bin/ は core 1 本 + dev-flow 24 本に分割一致する。
+// [bin]: workflow / wrapper skill が使う bare 名は全て bin/ に存在し、bin/ は core 1 本 + dev-flow 23 本に分割一致する。
 //
 // AC1 の検査文字列自体が禁止パターンの literal を含むと自己矛盾するため、
 // join() で組み立てる（_lib/*.mjs は本テストファイル自身も走査対象に含むため）。
@@ -35,7 +35,6 @@ const BARE = [
   'redgreen-verify',
   'secfloor-classify',
   'structural-classify',
-  'ui-verify-stack',
   'veridelta-archive',
   'worktree-diff-hash',
   'worktree-teardown',
@@ -91,7 +90,6 @@ test('[bin-bare-name-routing][AC1] _lib/*.mjs に skills 絶対パスが 0 箇�
 const devFlowSrc = readFileSync(join(workflowsDir, 'dev-flow.js'), 'utf8');
 const prIterateSrc = readFileSync(join(workflowsDir, 'pr-iterate.js'), 'utf8');
 
-const UI_CFG = { base_port: 4100, up: [{ name: 'app', serve: 'npm run dev -- --port {port}', ready: { http: 'http://127.0.0.1:{port}/' } }], env_files: [] };
 const PASS_EVAL_TEST_AC = {
   verdict: 'pass', total: 100, threshold: 80, feedback: [], feedback_level: 'implementation',
   ac_results: [
@@ -109,15 +107,6 @@ const DEV_FLOW_CALL_SITES = [
   ['test#1', '\nrun-tests /tmp/wt', {}],
   ['pr#', '`pr-push /tmp/wt/.devflow-tmp/push-output.log`', {}],
   ['redgreen', "redgreen-verify /tmp/wt 't.test.mjs' 'src/x.ts'", { 'eval#1': PASS_EVAL_TEST_AC, redgreen: { results: [{ index: 0, red: true, green: true }] } }],
-  ['ui-verify-stack', "ui-verify-stack up --worktree '/tmp/wt' ", {
-    'danger-grep': { risk: { ok: true, hits: [] }, files: ['src/components/Foo.tsx'], struct: null, diffhash: { hash: 'AAA', empty: false } },
-    'ui-verify-config': { found: true, config: UI_CFG },
-    'ui-verify-stack': { ok: true, phase: 'ready', port: 4100, pid: 1 },
-    'ui-verify-smoke': { ok: true, mode: 'smoke', checks: [], console_errors: [], screenshots: [], summary: 'ok' },
-    'ui-verify-teardown': { server_stopped: true, session_closed: true, leftover: [], notes: '' },
-  }],
-  ['ui-verify-smoke', 'ui-verify-stack smoke --state-dir', null], // ui-verify-stack と同じ scenario
-  ['ui-verify-teardown', 'ui-verify-stack down --state-dir', null], // ui-verify-stack と同じ scenario
   ['cross-repo-artifacts', 'cross-repo-artifacts /tmp/wt ', {
     'diff-gate': { hash: 'EMPTY', empty: true },
     'issue-labels': { ok: true, labels: ['cross-repo'] },
@@ -193,12 +182,12 @@ for (const [name, src] of [
   });
 }
 
-// ---- [bin] workflow / wrapper skill が使う bare 名は全て bin/ に存在し、bin/ は core 1 本 + dev-flow 24 本に分割一致する ----
+// ---- [bin] workflow / wrapper skill が使う bare 名は全て bin/ に存在し、bin/ は core 1 本 + dev-flow 23 本に分割一致する ----
 
-test('[bin-bare-name-routing][bin] plugins/dev-flow/bin は BARE から journal を除いた 24 名に完全一致する', () => {
+test('[bin-bare-name-routing][bin] plugins/dev-flow/bin は BARE から journal を除いた 23 名に完全一致する', () => {
   const actual = readdirSync(binDir).sort();
   const expected = BARE.filter((name) => name !== 'journal').sort();
-  assert.deepEqual(actual, expected, `plugins/dev-flow/bin の内容が期待 24 名と一致しない: actual=${JSON.stringify(actual)}`);
+  assert.deepEqual(actual, expected, `plugins/dev-flow/bin の内容が期待 23 名と一致しない: actual=${JSON.stringify(actual)}`);
 });
 
 test("[bin-bare-name-routing][bin] plugins/playpark-core/bin は ['journal'] に完全一致する", () => {
