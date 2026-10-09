@@ -220,8 +220,8 @@ LLM の事前見積もり（shape / 見込み file 数）は REQ に
 `realized_file_count` に、判定根拠は `shape_reason` に載る（journal telemetry には実効 `shape` だけを書く）。danger-grep hit が
 あれば micro でも Evaluate を強制実行（security path）。
 
-**micro lite route**: `EFFECTIVE_SHAPE === 'micro' && !state.runEval && state.dangerHits.length === 0`（clean-micro かつ
-contract 準拠かつ danger clean）を満たす run は、PR phase で dev-implementer 1 spawn → targeted test →
+**micro lite route**: `state.EFFECTIVE_SHAPE === 'micro' && !state.runEval && state.dangerHits.length === 0 && CI_AC_INDEXES.length === 0`
+（clean-micro かつ contract 準拠かつ danger clean かつ ci の AC — `ci_verify` の check で判定する AC — を持たない）を満たす run は、PR phase で dev-implementer 1 spawn → targeted test →
 PR → pr-reviewer 1-pass の縮約経路（lite route、判断系 agent 呼び出し ≤10）を通る。lite の pr-reviewer
 1-pass が `review==null || blocking.length>0`（critical/major finding あり）を検出した場合のみ
 `workflow('dev-flow:pr-iterate-run')` フル loop へ自動昇格し、以降は通常の review⇄fix 経路で処理する。danger-grep
@@ -235,7 +235,7 @@ hit で `runEval=true` になったケースは lite ゲート条件を満たさ
   namespace は `agent()` を呼ぶ直前の `nsAgentOpts()` (canonical `_lib/agent-namespace.mjs`。dev-flow.js /
   pr-iterate.js へ inline 生成) でのみ付与する。dev-flow-canary.js は inline bridge 非依存
   (self-contained) を保つため例外で、namespaced id を直接書く。新しい call site はこの経路に乗せる。
-- **判断系 leaf は subagent** (`.claude/agents/{dev-implementer,evaluator,pr-reviewer,dev-runner,dev-runner-haiku,dev-runner-haiku-ro}.md`)。
+- **判断系 leaf は subagent** (`.claude/agents/{dev-implementer,evaluator,pr-reviewer,dev-runner,dev-runner-haiku,dev-runner-haiku-ro,dev-runner-haiku-wo}.md`)。
   effort は原則 subagent frontmatter で決める。`agent()` の `opts.effort` は frontmatter より優先して実効値に反映される
   （transcript で確認済み。dev-flow-canary の `agent_opts_effort_accepted` probe は受理の有無だけを見る）が、
   opts で effort を渡すのは pr-iterate の fix（`fix#i` / `fix#i-retry`、`FIX_EFFORT = 'medium'`）のみ

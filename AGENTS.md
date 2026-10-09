@@ -75,7 +75,9 @@ JS で保持し、中間 state は script 変数に持つ (外部 state JSON は
                       → Final reconcile(fixes_applied>0 のみ) → Merge tier
 /pr-iterate <pr>    → [wrapper preflight: pr-iterate-prerun → EnterWorktree] → Workflow('dev-flow:pr-iterate-run') で
                       review ⇄ fix loop (LGTM まで, 上限10)。dev-flow からは nested 起動
-日次 launchd         → dev-flow-health/scripts/daily.sh: 失敗の型を決定論で集計（new / ongoing / resolved / regressed + 候補 commit）
+日次 launchd         → [macOS のみ。dev-flow-health/scripts/install-schedule.sh --install --repo <skills checkout> を
+                      手動で 1 回実行して登録した場合だけ動く]
+                      → dev-flow-health/scripts/daily.sh: 失敗の型を決定論で集計（new / ongoing / resolved / regressed + 候補 commit）
                       → new / regressed がある日だけ /dev-flow-health が原因を推定して self-improve issue を起票
 ```
 
@@ -89,8 +91,7 @@ JS で保持し、中間 state は script 変数に持つ (外部 state JSON は
 - `plugins/dev-flow/.claude/workflows/*.js` の `// ==== BEGIN inline: <path> ====` 〜
   `// ==== END inline: <path> ====` 区間は**生成物であり直接編集禁止**。編集は `_lib` の
   canonical 側で行い `tools/sync-inlines.mjs --write`（repo root、既定 root は
-  `plugins/dev-flow`）で再生成する（先頭トークン=スクリプトパスの bare 形。sandbox
-  excludedCommands は先頭トークンでマッチするため node 前置は付けない）。
+  `plugins/dev-flow`）で再生成する。
 - Claude 専用 (workflow 依存)。cross-vendor portability は dev-flow / pr-iterate のみ放棄する例外扱い。
 
 不変条件（fail-closed の理由・sunset トリガ・起動形の制約）は

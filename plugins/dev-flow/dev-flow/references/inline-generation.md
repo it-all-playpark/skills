@@ -6,8 +6,8 @@ root とする plugin 相対パス。`tools/sync-inlines.mjs` のみ repo root�
 
 `.claude/workflows/*.js` 内の `// ==== BEGIN inline: <path> ... ====` 〜 `// ==== END inline: <path> ====`
 区間は**生成物であり直接編集禁止**。編集は `_lib` の canonical 側で行い `tools/sync-inlines.mjs --write`
-（先頭トークン=スクリプトパスの bare 形。shebang + 実行bit 付与済み — sandbox excludedCommands は
-先頭トークンでマッチするため node/cd/bash 前置は付けない）で再生成する（`--check` が CI で全文一致を
+（shebang + 実行bit 付与済みで、スクリプトパスを先頭トークンにして起動できる。excludedCommands には
+登録しておらず、`--check` も `--write` も sandbox 内で動き `.claude/workflows/*.js` を書ける）で再生成する（`--check` が CI で全文一致を
 検証 — `_lib/workflow-inlines.sync.test.mjs`）。blame は `_lib` 側を見る。
 
 **新規 inline 区間の追加**にも正規経路がある: `tools/sync-inlines.mjs --add <_lib/xxx.mjs> --into
