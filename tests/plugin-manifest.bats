@@ -211,7 +211,7 @@ plugin_json_path() {
     [ -z "$output" ]
 }
 
-@test "corporate-site に移した seed 収穫 skill は playpark-skills に無く、repo 内に参照も残っていない" {
+@test "別 repo（サイト側）に移した seed 収穫 skill は playpark-skills に無く、repo 内に参照も残っていない" {
     # 名前はリテラルで書かない: このテスト自身が git grep に引っかからないようにする
     stem="seed"
     [ ! -e "$REPO_ROOT/plugins/playpark-skills/$stem-harvest" ]

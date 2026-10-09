@@ -182,8 +182,8 @@ test('refloorShape / mergeShape / SHAPE_RANK は export されない（realized 
 const stat = (path, added, deleted) => ({ path, added, deleted });
 const codeStats = (n, added, deleted) => Array.from({ length: n }, (_, i) => stat(`src/m${i}.ts`, added, deleted));
 
-// shift-bud#1513（PR shift-bud#1515）相当: docs 2 + 本番 2（うち削除だけ 1）+ テスト 2（うち 1 は対応本番あり）、+24/-128
-const SHIFT_BUD_1513 = [
+// acme/webapp#101（PR acme/webapp#102）相当: docs 2 + 本番 2（うち削除だけ 1）+ テスト 2（うち 1 は対応本番あり）、+24/-128
+const WEBAPP_101 = [
   stat('docs/DOMAIN_PATTERNS_GUIDE.md', 4, 14),
   stat('docs/UBIQUITOUS_LANGUAGE.md', 4, 14),
   stat('src/domain/planning-constraints.ts', 0, 36),
@@ -192,11 +192,11 @@ const SHIFT_BUD_1513 = [
   stat('src/solver/solve-month.objectives.test.ts', 8, 23),
 ];
 
-test('shift-bud#1513 相当（6 files, +24/-128, AC 3, type=chore）→ micro（file 数判定では complex）', () => {
-  assert.equal(SHIFT_BUD_1513.reduce((n, s) => n + s.added, 0), 24);
-  assert.equal(SHIFT_BUD_1513.reduce((n, s) => n + s.deleted, 0), 128);
+test('acme/webapp#101 相当（6 files, +24/-128, AC 3, type=chore）→ micro（file 数判定では complex）', () => {
+  assert.equal(WEBAPP_101.reduce((n, s) => n + s.added, 0), 24);
+  assert.equal(WEBAPP_101.reduce((n, s) => n + s.deleted, 0), 128);
   const req = baseReq({ issue_type: 'chore', acceptance_criteria: ['a', 'b', 'c'] });
-  const result = classifyShape(req, 6, SHIFT_BUD_1513);
+  const result = classifyShape(req, 6, WEBAPP_101);
   assert.ok(['micro', 'standard'].includes(result.shape), `micro か standard のはずだが ${result.shape}`);
   assert.equal(result.shape, 'micro');
   assert.equal(result.uncorrected_shape, 'complex');
@@ -208,7 +208,7 @@ test('shift-bud#1513 相当（6 files, +24/-128, AC 3, type=chore）→ micro（
   assert.match(result.reason, /→ shape=micro$/);
 });
 
-test('shift-bud#1513 相当でも行数が取れない（lineStats=null）なら file 数判定の complex のまま', () => {
+test('acme/webapp#101 相当でも行数が取れない（lineStats=null）なら file 数判定の complex のまま', () => {
   const req = baseReq({ issue_type: 'chore', acceptance_criteria: ['a', 'b', 'c'] });
   const result = classifyShape(req, 6, null);
   assert.equal(result.shape, 'complex');

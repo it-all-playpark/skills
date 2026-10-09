@@ -569,13 +569,13 @@ REG_MARKERS="[[jev:ac_2:0.04]] [[jev:ac_3:0.5]] [[jev:ac_4:0.96]] [[jev:ac_5:0.0
     [ "$(curl_calls)" -eq 1 ]
 }
 
-@test "観測型 AC の回帰（shift-bud）: 絞り込みに当たった AC だけを title と AC 文面で 1 request に聞き、Jev の p で true / false / null に振り分ける" {
-    ACS="$(controls_json 'm.SHIFT_BUD_REGRESSION_ACS.map((r) => r.ac)')"
+@test "観測型 AC の回帰（acme/webapp）: 絞り込みに当たった AC だけを title と AC 文面で 1 request に聞き、Jev の p で true / false / null に振り分ける" {
+    ACS="$(controls_json 'm.APP_REPO_REGRESSION_ACS.map((r) => r.ac)')"
     fixture "$WORK/i.json" "test(video): 件数の直書きを整理 ${REG_MARKERS}" "$(printf '%s' "$ACS" | ac_body)"
-    run_analyze "$WORK/i.json" --repo playpark-llc/shift-bud
+    run_analyze "$WORK/i.json" --repo acme/webapp
     [ "$status" -eq 0 ]
     echo "$output" | jq -e --argjson acs "$ACS" '.acceptance_criteria == $acs'
-    # 本番コード… = 絞り込みに当たらない / ログの件数表示 p=0.04 / エラー件数… 低確信 / 1 件以上記録 p=0.96 / #1605 AC#2 p=0.03
+    # 本番コード… = 絞り込みに当たらない / ログの件数表示 p=0.04 / エラー件数… 低確信 / 1 件以上記録 p=0.96 / #104 AC#2 p=0.03
     echo "$output" | jq -e '.ac_observational == [false, false, null, true, false]'
     echo "$output" | jq -e '.ac_observational_evidence[0] == "正規表現の絞り込みに当たらない" and (.ac_observational_evidence[1] | test("p=0.04")) and (.ac_observational_evidence[2] | test("低確信") and test("p=0.5") and test("分類 agent")) and (.ac_observational_evidence[3] | test("p=0.96"))'
     echo "$output" | jq -e '.jev_reasons == ["observational_ac prefilter hit (AC-2, AC-3, AC-4, AC-5)"] and .analyze_path == "jev"'
@@ -590,7 +590,7 @@ REG_MARKERS="[[jev:ac_2:0.04]] [[jev:ac_3:0.5]] [[jev:ac_4:0.96]] [[jev:ac_5:0.0
 }
 
 @test "観測型 AC: Jev が応答しない（bg セッション等）-> 当たった AC は null（uncertain には積まない）、理由を根拠に載せる" {
-    ACS="$(controls_json 'm.SHIFT_BUD_REGRESSION_ACS.map((r) => r.ac)')"
+    ACS="$(controls_json 'm.APP_REPO_REGRESSION_ACS.map((r) => r.ac)')"
     fixture "$WORK/i.json" "test(video): 件数の直書きを整理" "$(printf '%s' "$ACS" | ac_body)"
     FAKE_CURL_EXIT=28 run_analyze "$WORK/i.json"
     [ "$status" -eq 0 ]
@@ -599,7 +599,7 @@ REG_MARKERS="[[jev:ac_2:0.04]] [[jev:ac_3:0.5]] [[jev:ac_4:0.96]] [[jev:ac_5:0.0
 }
 
 @test "観測型 AC: DEVFLOW_JEV_DISABLE=1 -> Jev を呼ばず当たった AC は null" {
-    ACS="$(controls_json 'm.SHIFT_BUD_REGRESSION_ACS.map((r) => r.ac)')"
+    ACS="$(controls_json 'm.APP_REPO_REGRESSION_ACS.map((r) => r.ac)')"
     fixture "$WORK/i.json" "test(video): 件数の直書きを整理 ${REG_MARKERS}" "$(printf '%s' "$ACS" | ac_body)"
     DEVFLOW_JEV_DISABLE=1 run_analyze "$WORK/i.json"
     [ "$status" -eq 0 ]
@@ -609,7 +609,7 @@ REG_MARKERS="[[jev:ac_2:0.04]] [[jev:ac_3:0.5]] [[jev:ac_4:0.96]] [[jev:ac_5:0.0
 }
 
 @test "観測型 AC: 正規表現の絞り込みが実行できない（node 失敗）-> 全 AC を null にして分類 agent に回す" {
-    ACS="$(controls_json 'm.SHIFT_BUD_REGRESSION_ACS.map((r) => r.ac)')"
+    ACS="$(controls_json 'm.APP_REPO_REGRESSION_ACS.map((r) => r.ac)')"
     fixture "$WORK/i.json" "test(video): 件数の直書きを整理 ${REG_MARKERS}" "$(printf '%s' "$ACS" | ac_body)"
     printf '#!/usr/bin/env bash\necho "node: broken" >&2\nexit 1\n' >"$WORK/bin/node"
     chmod +x "$WORK/bin/node"

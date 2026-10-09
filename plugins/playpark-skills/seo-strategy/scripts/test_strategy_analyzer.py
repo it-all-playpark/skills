@@ -13,7 +13,7 @@ Run:
     python3 -m unittest seo-strategy/scripts/test_strategy_analyzer.py
 
 The tests are self-contained: they synthesize a tiny corpus on tmpfs that
-mirrors the real corporate-site layout (`<root>/content/blog/*.mdx` and
+mirrors the site layout the analyzer expects (`<root>/content/blog/*.mdx` and
 `<root>/lib/blog-hubs.ts`).
 """
 

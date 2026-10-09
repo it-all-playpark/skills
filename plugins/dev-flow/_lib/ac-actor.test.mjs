@@ -63,20 +63,20 @@ test('[ac-actor] unsatisfiedAcByActor: satisfied:false だけを actor 別に数
 
 // ---- issue #861: ci の AC（repo の "dev-flow".ci_verify で CI の check が判定する AC） ----
 
-// shift-bud issue #1613 の AC#4（E2E は sandbox 内で DB が起動せず実行できない）
-const SHIFT_BUD_1613_AC4 = '`pnpm test:e2e:local`（または full-ci ラベルの CI）で `tenant-isolation.spec.ts` が通ることを確認する';
+// acme/webapp#105 の AC#4（E2E は sandbox 内で DB が起動せず実行できない）
+const WEBAPP_105_AC4 = '`pnpm test:e2e:local`（または full-ci ラベルの CI）で `tenant-isolation.spec.ts` が通ることを確認する';
 const CI_VERIFY = { label: 'full-ci', commands: ['pnpm test:e2e:local'] };
 
 test('[ac-actor] ci_verify の commands を inline code で書いた / label に言及した AC は ci、ci_verify が無ければ従来どおり', () => {
-  assert.equal(classifyAcActor(SHIFT_BUD_1613_AC4, { ciVerify: CI_VERIFY }), 'ci');
-  assert.equal(classifyAcActor(SHIFT_BUD_1613_AC4), 'agent');
-  assert.equal(classifyAcActor(SHIFT_BUD_1613_AC4, { ciVerify: null }), 'agent');
+  assert.equal(classifyAcActor(WEBAPP_105_AC4, { ciVerify: CI_VERIFY }), 'ci');
+  assert.equal(classifyAcActor(WEBAPP_105_AC4), 'agent');
+  assert.equal(classifyAcActor(WEBAPP_105_AC4, { ciVerify: null }), 'agent');
   // commands だけ・label だけでも ci（どちらか一方に当たれば足りる）
   assert.equal(classifyAcActor('`pnpm test:e2e:local` で spec が通る', { ciVerify: { label: 'other', commands: ['pnpm test:e2e:local'] } }), 'ci');
   assert.equal(classifyAcActor('`pnpm test:e2e:local --grep tenant` が通る', { ciVerify: CI_VERIFY }), 'ci');
   assert.equal(classifyAcActor('full-ci ラベルの CI で通る', { ciVerify: { label: 'full-ci', commands: [] } }), 'ci');
-  assert.deepEqual(acActorsOf(['a', SHIFT_BUD_1613_AC4], { ciVerify: CI_VERIFY }), ['agent', 'ci']);
-  assert.deepEqual(acActorsOf(['a', SHIFT_BUD_1613_AC4]), ['agent', 'agent']);
+  assert.deepEqual(acActorsOf(['a', WEBAPP_105_AC4], { ciVerify: CI_VERIFY }), ['agent', 'ci']);
+  assert.deepEqual(acActorsOf(['a', WEBAPP_105_AC4]), ['agent', 'agent']);
 });
 
 test('[ac-actor] negative control: vitest のテスト追加・`pnpm test` が通る AC は ci_verify があっても agent', () => {
@@ -91,7 +91,7 @@ test('[ac-actor] negative control: vitest のテスト追加・`pnpm test` が�
 
 test('[ac-actor] （人手）・staging の明示は ci より優先し、ci は観測型より優先する', () => {
   assert.equal(classifyAcActor('staging で `pnpm test:e2e:local` を流す', { ciVerify: CI_VERIFY }), 'human');
-  assert.equal(classifyAcActor(SHIFT_BUD_1613_AC4, { ciVerify: CI_VERIFY, observational: true }), 'ci');
+  assert.equal(classifyAcActor(WEBAPP_105_AC4, { ciVerify: CI_VERIFY, observational: true }), 'ci');
 });
 
 test('[ac-actor] ci の AC: CI の結果で ac_results を置き換え、success だけ satisfied。未達は ci に数え agent / human に数えない', () => {

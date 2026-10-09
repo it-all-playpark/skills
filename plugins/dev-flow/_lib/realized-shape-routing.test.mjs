@@ -15,7 +15,7 @@
 //       triviality / estimated_file_count）が無い
 //   (J) 3 shape の spawn 構造（dev-implementer 回数 / evaluator 回数 / route）が shape 別経路の期待と一致する
 //   (K) 静的 pin: dev-flow.js（inline 生成区間含む）に refloorShape / mergeShape / 事前見積もりキーが無い
-//   (L) shift-bud#1513 相当 + secfloor の lines → 重み・削除主体の補正で micro、shape_reason に補正前の shape（issue #740）
+//   (L) acme/webapp#101 相当 + secfloor の lines → 重み・削除主体の補正で micro、shape_reason に補正前の shape（issue #740）
 //   (M) 同じ files で lines 無し → file 数判定の complex（補正なし）
 //   (N) counted file の 1 件に行数が無い → 補正なし
 //   (O) 宣言外 file の行数は補正に使わない
@@ -192,8 +192,8 @@ test('[realized-shape] (K) 静的 pin: dev-flow.js（inline 生成区間含む�
 
 // ---- 差分の中身による補正（issue #740）: secfloor の lines が classifyShape に届く ----
 
-// shift-bud#1513 相当: docs 2 + 本番 2（うち削除だけ 1）+ テスト 2、+24/-128
-const SHIFT_BUD_LINES = [
+// acme/webapp#101 相当: docs 2 + 本番 2（うち削除だけ 1）+ テスト 2、+24/-128
+const WEBAPP_101_LINES = [
   { path: 'docs/DOMAIN_PATTERNS_GUIDE.md', added: 4, deleted: 14 },
   { path: 'docs/UBIQUITOUS_LANGUAGE.md', added: 4, deleted: 14 },
   { path: 'src/domain/planning-constraints.ts', added: 0, deleted: 36 },
@@ -201,11 +201,11 @@ const SHIFT_BUD_LINES = [
   { path: 'src/domain/planning-constraints.test.ts', added: 6, deleted: 40 },
   { path: 'src/solver/solve-month.objectives.test.ts', added: 8, deleted: 23 },
 ];
-const SHIFT_BUD_FILES = SHIFT_BUD_LINES.map((l) => l.path);
-const SHIFT_BUD_REQ = { issue_type: 'chore', acceptance_criteria: ['a', 'b', 'c'] };
+const WEBAPP_101_FILES = WEBAPP_101_LINES.map((l) => l.path);
+const WEBAPP_101_REQ = { issue_type: 'chore', acceptance_criteria: ['a', 'b', 'c'] };
 
-test('[realized-shape] (L) shift-bud#1513 相当（6 files, +24/-128, AC 3, chore）+ lines → micro、shape_reason に補正前 complex と根拠が載る', async () => {
-  const { calls, returned } = await run({ ...filesOverrides(SHIFT_BUD_FILES, { lines: SHIFT_BUD_LINES }) }, SHIFT_BUD_REQ);
+test('[realized-shape] (L) acme/webapp#101 相当（6 files, +24/-128, AC 3, chore）+ lines → micro、shape_reason に補正前 complex と根拠が載る', async () => {
+  const { calls, returned } = await run({ ...filesOverrides(WEBAPP_101_FILES, { lines: WEBAPP_101_LINES }) }, WEBAPP_101_REQ);
   assert.ok(['micro', 'standard'].includes(returned.shape), `micro か standard のはずだが ${returned.shape}`);
   assert.equal(returned.shape, 'micro');
   assert.equal(returned.realized_file_count, 6);
@@ -217,15 +217,15 @@ test('[realized-shape] (L) shift-bud#1513 相当（6 files, +24/-128, AC 3, chor
 });
 
 test('[realized-shape] (M) 同じ 6 files で lines が無い（secfloor が lines を返さない）→ file 数判定の complex（補正なし）', async () => {
-  const { calls, returned } = await run({ ...filesOverrides(SHIFT_BUD_FILES) }, SHIFT_BUD_REQ);
+  const { calls, returned } = await run({ ...filesOverrides(WEBAPP_101_FILES) }, WEBAPP_101_REQ);
   assert.equal(returned.shape, 'complex');
   assert.equal(returned.shape_reason, 'realized 6 file(s), 3 AC, type=chore → shape=complex');
   assert.equal(journalTelemetry(calls).shape, 'complex');
 });
 
 test('[realized-shape] (N) counted file の 1 件に行数が無い（binary 等）→ 補正なしの file 数判定', async () => {
-  const lines = SHIFT_BUD_LINES.filter((l) => l.path !== 'src/domain/planning-constraints.ts');
-  const { returned } = await run({ ...filesOverrides(SHIFT_BUD_FILES, { lines }) }, SHIFT_BUD_REQ);
+  const lines = WEBAPP_101_LINES.filter((l) => l.path !== 'src/domain/planning-constraints.ts');
+  const { returned } = await run({ ...filesOverrides(WEBAPP_101_FILES, { lines }) }, WEBAPP_101_REQ);
   assert.equal(returned.shape, 'complex');
   assert.equal(returned.shape_reason, 'realized 6 file(s), 3 AC, type=chore → shape=complex');
 });

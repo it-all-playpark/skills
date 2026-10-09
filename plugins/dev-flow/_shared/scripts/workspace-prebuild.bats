@@ -2,7 +2,7 @@
 # Tests for _shared/scripts/workspace-prebuild.sh (issue #754)
 #
 # Strategy: mktemp -d に git 管理下の pnpm ワークスペース fixture を作る。packages/shared は exports が
-# git 管理外の ./dist を指し、packages/backend が workspace:* で依存する（shift-bud の @shift-bud/shared と
+# git 管理外の ./dist を指し、packages/backend が workspace:* で依存する（アプリ repo でよくある @acme/shared と
 # 同じ形）。pnpm は stub（--filter <name>... の各 package で scripts.build を実行し、呼び出しを STUB_LOG に
 # 残す）に差し替え、実 install なしで決定論に回す。
 

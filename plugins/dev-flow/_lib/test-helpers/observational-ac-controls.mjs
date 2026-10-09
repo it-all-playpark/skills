@@ -26,16 +26,16 @@ export const NON_OBSERVATIONAL_ACS = {
   '561-5': 'AC-5: `.claude/agents/evaluator.md` と `.claude/agents/pr-reviewer.md` に confidence の判定基準が記載され、verdict と独立に付ける旨が明記されている',
   '786-5': 'journal の prune で残す一覧（`PRUNE_KEEP_DEFAULT`）から doctor / improve を外す',
   '556-5': 'journal choreography が `_lib/journal-handoff.mjs` へ deps 注入形で canonical 化され、',
-  'corporate-site#915-1': '`real-case-catalog.md` が存在し、実案件14本すべてに解法パターン・引用可能な実測値・実測セッション数が入っている',
+  'acme/site#106-1': '`real-case-catalog.md` が存在し、実案件14本すべてに解法パターン・引用可能な実測値・実測セッション数が入っている',
 };
 
-// 回帰ケース（issue #859）: 語彙の違うアプリ repo（playpark-llc/shift-bud）で正規表現だけの判定が誤った AC。
+// 回帰ケース（issue #859）: 語彙の違うアプリ repo（acme/webapp）で正規表現だけの判定が誤った AC。
 // 値は正しい観測型判定。
-export const SHIFT_BUD_REGRESSION_ACS = [
+export const APP_REPO_REGRESSION_ACS = [
   // /本番/ で actor は human のまま（HUMAN_AC_PATTERNS は issue #859 の対象外）。観測型ではない
   { id: 'table-1', ac: '本番コードは変更しない（テストのみ）', observational: false },
   { id: 'table-2', ac: 'ログの件数表示を修正する', observational: false },
   { id: 'table-3', ac: 'エラー件数を返す関数にテストを足す', observational: false },
   { id: 'table-4', ac: '実行ログに 1 件以上記録される', observational: true },
-  { id: 'shift-bud#1605-2', ac: '件数の直書きを、元データ（GUIDE_SLUGS 等）の長さとの比較か、件数に依存しない不変条件に置き換える', observational: false },
+  { id: 'acme/webapp#104-2', ac: '件数の直書きを、元データ（GUIDE_SLUGS 等）の長さとの比較か、件数に依存しない不変条件に置き換える', observational: false },
 ];

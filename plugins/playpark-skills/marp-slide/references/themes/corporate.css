@@ -18,14 +18,14 @@
   --color-accent: #f39c12;
   --color-border: #e5e7eb;
 
-  /* Reaction Colors (from corporate-site design system) */
+  /* Reaction Colors (from the corporate site design system) */
   --color-reaction-pink: #ff6b9d;
   --color-reaction-yellow: #ffd93d;
   --color-reaction-green: #6bcb77;
   --color-reaction-purple: #9b59b6;
   --color-reaction-orange: #ff8c42;
 
-  /* Sticky Note Colors (from corporate-site) */
+  /* Sticky Note Colors (from the corporate site) */
   --color-sticky-blue: #3498db;
   --color-sticky-blue-border: #2980b9;
   --color-sticky-yellow: #ffd93d;
@@ -343,7 +343,7 @@ section.two-col h2 {
   color: #dc2626;
 }
 
-/* Lab-style Card (dashed border variant from corporate-site) */
+/* Lab-style Card (dashed border variant from the corporate site) */
 .lab-card {
   background: white;
   border: 2px dashed var(--color-border);
@@ -363,7 +363,7 @@ section.two-col h2 {
   box-shadow: 0 8px 20px rgba(52,152,219,0.1);
 }
 
-/* ===== STICKY NOTE CARDS (from corporate-site) ===== */
+/* ===== STICKY NOTE CARDS (from the corporate site) ===== */
 /* Colorful card style like post-it notes */
 
 .sticky-note {
