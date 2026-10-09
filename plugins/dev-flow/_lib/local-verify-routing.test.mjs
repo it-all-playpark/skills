@@ -23,7 +23,7 @@ const LOCAL_VERIFY = { command: 'pnpm test:e2e:local', db: { engine: 'postgres',
 const CODE_AC = 'tenant ID を持たない query を repository 層で拒否する';
 const E2E_AC = '`pnpm test:e2e:local` で `tenant-isolation.spec.ts` が通ることを確認する';
 const LOG_PATH = '/tmp/wt/.devflow-tmp/local-verify/logs/command.log';
-const E2E_LINK = 'https://github.com/acme/shift-bud/actions/runs/77/job/88';
+const E2E_LINK = 'https://github.com/acme/webapp/actions/runs/77/job/88';
 
 const running = { ok: true, status: 'running', log_path: LOG_PATH };
 const passed = { ok: true, status: 'passed', exit_code: 0, log_path: LOG_PATH, log_tail: '1 passed', db_deleted: true };

@@ -226,7 +226,7 @@ GA4 で `landingPage` が `(not set)` または空文字のセッションは以
 |---|---|
 | ツール比較・選定 | `comparison`, `vs-`, `pricing`, `complete-guide` |
 | 技術 How-to | `skills-`, `hooks-`, `customization`, `worktree-` |
-| ソリューション/事例 | `shift-bud`, `salon-`, `site-renewal-` |
+| ソリューション/事例 | `case-study-`, `salon-`, `site-renewal-` |
 | サービスページ | `/`, `/contact`, `/about`, `/solutions/` |
 
 ### 分析出力
@@ -256,7 +256,7 @@ GA4 で `landingPage` が `(not set)` または空文字のセッションは以
 
 ## Validation: content_overlap_analysis
 
-corporate-site (issue#419) など既知のカニバリ事例で再生成検証する場合の手順:
+既知のカニバリ事例があるサイト repo で再生成検証する場合の手順:
 
 1. 解析を実行して JSON を生成:
 
