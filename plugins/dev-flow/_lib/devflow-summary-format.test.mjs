@@ -1020,43 +1020,6 @@ test('evalStaleness=hash_reconverged は enum 検証で throw しない', () => 
   });
 });
 
-// ─── ui-verify 結果表示 (issue #285) ─────────────────────────────────────────
-
-test('uiVerify=findings, uiVerifyMode=scenario -> ui-verify 結果行が出る', () => {
-  const body = buildDevflowSummaryBody({
-    ...BASE_INPUT,
-    uiVerify: 'findings',
-    uiVerifyMode: 'scenario',
-  });
-  assert.ok(body.includes('- UI 検証 (ui-verify): findings (mode: scenario)'), 'ui-verify 結果行を含む');
-});
-
-test('uiVerify=skipped -> 本文に「ui-verify」文字列を含まない', () => {
-  const body = buildDevflowSummaryBody({
-    ...BASE_INPUT,
-    uiVerify: 'skipped',
-    uiVerifyMode: null,
-  });
-  assert.ok(!body.includes('ui-verify'), 'skipped 時は ui-verify 行を出さない');
-});
-
-test('uiVerify 未指定（既存呼び出し互換） -> 本文に「ui-verify」文字列を含まない', () => {
-  const body = buildDevflowSummaryBody({
-    ...BASE_INPUT,
-  });
-  assert.ok(!body.includes('ui-verify'), '未指定時は ui-verify 行を出さない');
-});
-
-test('uiVerify=failed_open, uiVerifyMode=null -> mode 括弧が付かない', () => {
-  const body = buildDevflowSummaryBody({
-    ...BASE_INPUT,
-    uiVerify: 'failed_open',
-    uiVerifyMode: null,
-  });
-  assert.ok(body.includes('- UI 検証 (ui-verify): failed_open'), 'ui-verify 結果行を含む');
-  assert.ok(!body.includes('mode:'), 'mode 括弧を含まない');
-});
-
 // ─── 環境ノート (issue #296) ──────────────────────────────────────────────────
 
 test('environment item は「⚠️ 要対応」テーブルから除外され「🏗 環境ノート 1 件」件数行のみで現れる（全文は非表示）', () => {
@@ -1279,28 +1242,6 @@ test.each([
   assert.ok(line, 'Final reconcile 行を含む');
   for (const s of includes) assert.ok(line.includes(s), `「${s}」を含む: ${line}`);
   for (const s of excludes) assert.ok(!line.includes(s), `「${s}」を含まない: ${line}`);
-});
-
-test('finalUiVerify 付与 -> 「, final ui-verify: findings」を含む', () => {
-  const body = buildDevflowSummaryBody({
-    ...BASE_INPUT,
-    finalReconcile: 'reverified',
-    finalTestGreen: true,
-    finalUiVerify: 'findings',
-  });
-  const lines = body.split('\n');
-  const line = lines.find(l => l.startsWith('- Final reconcile'));
-  assert.ok(line, 'Final reconcile 行を含む');
-  assert.ok(line.includes(', final ui-verify: findings'), 'final ui-verify 部分を含む');
-});
-
-test('finalUiVerify 未指定 -> 「final ui-verify」文字列を含まない', () => {
-  const body = buildDevflowSummaryBody({
-    ...BASE_INPUT,
-    finalReconcile: 'reverified',
-    finalTestGreen: true,
-  });
-  assert.ok(!body.includes('final ui-verify'), 'finalUiVerify 未指定時は final ui-verify を含まない');
 });
 
 // （finalReconcile の out-of-enum は上の validation error 表）
@@ -2468,7 +2409,7 @@ test('issue #658 AC-3: disclosures は Merge tier 理由から除外され「参
   assert.ok(body.includes('- breaking keyword hit (可視化のみ)'), '参考セクションに disclosures が箇条書きで出る');
 
   const bodyNoRef = buildDevflowSummaryBody({ ...BASE_INPUT });
-  assert.ok(!bodyNoRef.includes('**参考（可視化のみ'), 'disclosures/UI 検証/Final reconcile が無ければ参考セクション自体が出ない');
+  assert.ok(!bodyNoRef.includes('**参考（可視化のみ'), 'disclosures/Final reconcile が無ければ参考セクション自体が出ない');
 });
 
 test('issue #658 AC-4: あなたがやること に danger class 由来のマージ後確認が入力順・重複除去で並び、未知 class は汎用文、ci_verified は追加行になる', () => {

@@ -459,14 +459,14 @@ skills/
 │   │   │   └── references/subagent-dispatch.md  # Subagent dispatch 必須5要素
 │   │   ├── bin/journal                   # core bare 名 wrapper（1本）
 │   │   └── journal/                      # journal.sh（dev-flow telemetry・失敗記録）
-│   ├── dev-flow/                         # issue-to-LGTM ワークフロー plugin（7 skills, 8 agents）
+│   ├── dev-flow/                         # issue-to-LGTM ワークフロー plugin（7 skills, 7 agents）
 │   │   ├── .claude/
 │   │   │   ├── workflows/                # dynamic workflow js（dev-flow.js / pr-iterate.js 等）
 │   │   │   └── agents -> ../agents       # symlink（plugin subagent 読み込み用）
-│   │   ├── agents/                       # 8 dev-flow agent 実体
+│   │   ├── agents/                       # 7 dev-flow agent 実体
 │   │   ├── _lib/                         # workflow のロジック本体・test
 │   │   ├── _shared/scripts/              # dev-flow 共通スクリプト
-│   │   ├── bin/                          # dev-flow bare 名 wrapper（24本）
+│   │   ├── bin/                          # dev-flow bare 名 wrapper（23本）
 │   │   └── dev-flow/, dev-flow-health/, dev-issue-analyze/,
 │   │       git-commit/, git-pr/, github-issue-orchestrator/,
 │   │       pr-iterate/（SKILL.md 7本）

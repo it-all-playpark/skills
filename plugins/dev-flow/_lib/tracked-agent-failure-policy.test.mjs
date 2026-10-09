@@ -82,8 +82,6 @@ const DF_CLOSES = { overrides: { 'merge-tier-facts': mergeTierFacts({ closes: fa
 // scenario 集合を参照し、到達する label の分類を強制する）──
 const DF_DIFF_GATE_RETRY = DEV_FLOW_SCENARIOS['diff-gate-retry'];
 const DF_HASH_MISMATCH = DEV_FLOW_SCENARIOS['hash-mismatch'];
-const DF_FINAL_RECONCILE_UI = DEV_FLOW_SCENARIOS['final-reconcile-ui'];
-const DF_UI_SCENARIO_LOGIN = DEV_FLOW_SCENARIOS['ui-scenario-login'];
 const DF_REDGREEN = DEV_FLOW_SCENARIOS['redgreen'];
 const DF_CI_CHECKS = DEV_FLOW_SCENARIOS['ci-checks'];
 const DF_COMPLEX_FIX = DEV_FLOW_SCENARIOS['complex-fix'];
@@ -242,16 +240,6 @@ const EXPECTED_DEV_FLOW = {
     },
   },
   'fix-diff-numstat': { config: DF_FINAL_RECHECK, policy: 'continue', reason: 'failOpenAgent経由。fix差分の取得失敗は最終diff全体で再検証対象を選ぶ（多めに確かめる側）' },
-  'ui-verify-config': { config: DF_FINAL_RECONCILE_UI, policy: 'continue', reason: 'try/catchで吸収しsetup_failedとして扱うfail-open経路（advisoryなUI検証）' },
-  'ui-verify-stack': { config: DF_FINAL_RECONCILE_UI, policy: 'continue', reason: 'try/catchで吸収しfailed_openへ倒すfail-open経路（advisoryなUI検証）' },
-  'ui-verify-smoke': { config: DF_FINAL_RECONCILE_UI, policy: 'continue', reason: 'try/catchで吸収しfailed_openへ倒すfail-open経路（advisoryなUI検証のsmoke）' },
-  'ui-verify': { config: DF_UI_SCENARIO_LOGIN, policy: 'continue', reason: 'try/catchで吸収しfailed_openへ倒すfail-open経路（ui-verifierによるscenario検証）' },
-  'ui-verify-login': { config: DF_UI_SCENARIO_LOGIN, policy: 'continue', reason: 'try/catchで吸収しfailed_openへ倒すfail-open経路（scenario前段の決定的ログイン）' },
-  'ui-verify-teardown': { config: DF_FINAL_RECONCILE_UI, policy: 'abort', reason: 'finally節内のbare呼び出し。try/catchの外にあり例外はrunを中断させる' },
-  'ui-verify-config-final': { config: DF_FINAL_RECONCILE_UI, policy: 'continue', reason: 'try/catchで吸収しsetup_failedとして扱うfail-open経路（Final reconcile再検証）' },
-  'ui-verify-stack-final': { config: DF_FINAL_RECONCILE_UI, policy: 'continue', reason: 'try/catchで吸収しfailed_openへ倒すfail-open経路（Final reconcile再検証）' },
-  'ui-verify-smoke-final': { config: DF_FINAL_RECONCILE_UI, policy: 'continue', reason: 'try/catchで吸収しfailed_openへ倒すfail-open経路（Final reconcile再検証）' },
-  'ui-verify-teardown-final': { config: DF_FINAL_RECONCILE_UI, policy: 'abort', reason: 'finally節内のbare呼び出し。try/catchの外にあり例外はrunを中断させる（Final reconcile）' },
   'local-verify-start#1': { config: DF_LOCAL_VERIFY, policy: 'continue', reason: 'failOpenAgent経由。ローカル実行の起動結果が無ければfail-openでCIのcheck待ちに回す' },
   'local-verify-wait#1.1': { config: DF_LOCAL_VERIFY, policy: 'continue', reason: 'failOpenAgent経由。ローカル実行の結果が無ければfail-openでCIのcheck待ちに回す' },
   'local-verify-stop#1': { config: DF_LOCAL_VERIFY, policy: 'continue', reason: 'failOpenAgent経由。停止確認の失敗はlogのみでDBの削除はlocal-verifyのtrapに委ねる' },

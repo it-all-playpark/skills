@@ -297,7 +297,7 @@ hit で `runEval=true` になったケースは lite ゲート条件を満たさ
   使うためのもので、片側専用の canonical 関数は追加しない）。
   probe の直前の cleanup は dev-flow / pr-iterate で経路が分かれる。**dev-flow は wrapper の
   prerun が run 開始前に `.devflow-tmp` 全体を `git clean -fdx` 済み**（agent 呼び出しではなく
-  決定論スクリプト内で完結する）——前 run の残置物（probe artifact / journal payload / ui-verify
+  決定論スクリプト内で完結する）——前 run の残置物（probe artifact / journal payload / local-verify
   state 等）の持ち越し防止（run 間衛生）を prerun が担う。**pr-iterate の `/pr-iterate` wrapper 経由の
   単体起動は `pr-iterate-prerun` が** canonical `_lib/isolation-probe.mjs` の exported 定数
   `ISOLATION_PROBE_CLEANUP_GLOB` と同じ `.devflow-tmp/.isolation-probe*`（probe の token 形ファイル名

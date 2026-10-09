@@ -117,7 +117,7 @@ object がそのまま entry の `telemetry` になる）。hook は値が `null
 
 ## run 返り値との関係
 
-shape の判定根拠、Evaluate / Final reconcile / UI 検証の結果、danger / testsurf の hit、pr-iterate の round 履歴・
+shape の判定根拠、Evaluate / Final reconcile の結果、danger / testsurf の hit、pr-iterate の round 履歴・
 CI 待ち・終端理由などは run の返り値に載り、telemetry には書かない（読み方は `dev-flow/SKILL.md`
 「完了後の返り値の読み方」）。返り値には加えて `merge_tier_hold_reasons`（`[{reason, kind}]`。`kind` は
 `deterministic_recheck`（決定論再チェックで解消しうる HOLD。Final reconcile unavailable の CI 不成立理由のうち

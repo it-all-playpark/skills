@@ -51,7 +51,6 @@ redgreen-verify
 run-tests
 secfloor-classify
 structural-classify
-ui-verify-stack
 veridelta-archive
 workspace-prebuild
 worktree-diff-hash
@@ -90,7 +89,6 @@ target_for() {
         merge-tier-facts) echo "_shared/scripts/merge-tier-facts.sh" ;;
         secfloor-classify) echo "_shared/scripts/secfloor-classify.sh" ;;
         structural-classify) echo "_shared/scripts/structural-classify.sh" ;;
-        ui-verify-stack) echo "_shared/scripts/ui-verify-stack.mjs" ;;
         veridelta-archive) echo "_shared/scripts/veridelta-archive.sh" ;;
         worktree-diff-hash) echo "_shared/scripts/worktree-diff-hash.sh" ;;
         worktree-teardown) echo "_shared/scripts/worktree-teardown.sh" ;;
@@ -109,13 +107,6 @@ target_for() {
     esac
 }
 
-# dev-flow wrapper の interpreter。既定は bash、node 製の target だけ node。
-devflow_interp_for() {
-    case "$1" in
-        ui-verify-stack) echo "node" ;;
-        *) echo "bash" ;;
-    esac
-}
 
 skills_target_for() {
     case "$1" in
@@ -143,7 +134,7 @@ skills_target_for() {
     [ "$actual" = "$expected" ]
 }
 
-@test "plugins/dev-flow/bin の entry は対象24本と完全一致する" {
+@test "plugins/dev-flow/bin の entry は対象23本と完全一致する" {
     expected="$(devflow_expected_names)"
     actual="$(/bin/ls -1 "$REPO_ROOT/plugins/dev-flow/bin" | sort)"
     [ "$actual" = "$expected" ]
@@ -214,7 +205,7 @@ skills_target_for() {
         [ "$line3" = "export GIT_OPTIONAL_LOCKS=0" ]
 
         line4=$(sed -n '4p' "$file")
-        expected_line4="exec $(devflow_interp_for "$name") \"\$(dirname \"\$0\")/../$target\" \"\$@\""
+        expected_line4="exec bash \"\$(dirname \"\$0\")/../$target\" \"\$@\""
         [ "$line4" = "$expected_line4" ]
         [ "$(wc -l < "$file" | tr -d ' ')" = "4" ]
 
