@@ -46,20 +46,23 @@ bash ${CLAUDE_PLUGIN_ROOT}/dev-flow-health/scripts/install-schedule.sh --install
 | `first_seen` / `last_seen` / `regressed_at` | `{timestamp, plugin_commit, file}`。`file` は `~/.claude/journal/` 下の entry |
 | `recent_runs` | 直近 5 件の発生（issue / pr_number / 元の message 付き） |
 | `candidates` | new / regressed のみ。`last_good_commit..first_bad_commit` で `plugins/dev-flow/` を触った commit。列挙できなかったときは `error` に理由 |
+| `issue_repo` | 起票先の `OWNER/NAME`。`--repo` の checkout の origin（GitHub URL）から script が解決する。checkout が無い・origin が GitHub でないときは `null` |
 
 ## 手順（LLM 部分）
 
 1. 引数のレポート（無ければ `~/.claude/logs/dev-flow-health/` の最新 `YYYY-MM-DD.json`）を Read する。
    `needs_llm` が false なら「new / regressed なし」と報告して終える。
-2. `status` が `new` / `regressed` の signature ごとに、以下を行う:
-   1. **重複確認**: `gh issue list --repo it-all-playpark/skills --label self-improve --state open --search "dev-flow-health:<id>" --json number,title`。
+   `issue_repo` が `null` なら、重複確認・起票をせずに「起票先を解決できない（`--repo` に GitHub の origin を持つ
+   checkout を渡す）」と報告して終える。起票先を推測したり別の repo を代わりに使ったりしない。
+2. `status` が `new` / `regressed` の signature ごとに、以下を行う（`<issue_repo>` はレポートの `issue_repo` の値）:
+   1. **重複確認**: `gh issue list --repo <issue_repo> --label self-improve --state open --search "dev-flow-health:<id>" --json number,title`。
       既にあれば起票せず、その issue 番号を報告に載せる。
    2. **該当 run を読む**: `recent_runs[].file` を `~/.claude/journal/` から Read し、error と telemetry を確認する。
    3. **候補 commit の diff を読む**: skills repo の checkout で `git show <sha> -- plugins/dev-flow/` を
       `candidates.commits` の各 sha について実行する。`candidates.error` があるときは推定の根拠が run だけになる
       ことを本文に書く。
    4. **起票**: 本文を `$TMPDIR` の file に書き、
-      `gh issue create --repo it-all-playpark/skills --label self-improve --title "<fix(dev-flow): 症状を一文で>" --body-file <file>`。
+      `gh issue create --repo <issue_repo> --label self-improve --title "<fix(dev-flow): 症状を一文で>" --body-file <file>`。
       本文は analyze が先頭から読むので、次の順で短く書く:
       - `## 背景` — signature・status・first_seen / last_seen（commit 付き）・発生回数・該当 run
       - `## 原因の推定` — どの候補 commit のどの変更が原因と考えるか、根拠（diff の該当箇所と error の対応）
@@ -73,3 +76,4 @@ bash ${CLAUDE_PLUGIN_ROOT}/dev-flow-health/scripts/install-schedule.sh --install
 - 判定（status・候補 commit）は script の出力をそのまま使う。LLM 側で状態を付け直さない
 - 起票した issue の実装は人間が `/dev-flow` で起動する。本 skill は実装・merge をしない
 - 1 signature = 1 issue
+- 起票先はレポートの `issue_repo` だけを使う。`null` のときは起票しない（fail-closed）

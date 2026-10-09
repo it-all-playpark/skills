@@ -19,8 +19,8 @@ setup() {
     SKILLS_REPO="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd)"
     SCRIPT="$SKILLS_REPO/dev-issue-analyze/scripts/analyze-issue.sh"
 
-    # テストごとの private dir。$BATS_TMPDIR は同時に走る他の bats run と共有で、
-    # 同名 fixture を互いに上書きして "comments array field missing" を起こす。
+    # $BATS_TMPDIR は同時に走る別の bats run（他 worktree・並列 Validate）と共有され、
+    # 固定名の fixture が互いに上書きされる。テストごとに閉じた dir に置く。
     FIXTURE_DIR="$BATS_TEST_TMPDIR/fixtures"
     mkdir -p "$FIXTURE_DIR"
 

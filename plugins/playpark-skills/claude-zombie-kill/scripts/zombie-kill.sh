@@ -124,7 +124,7 @@ FORCE_KILLED=0
 
 for pid in "${ZOMBIES[@]}"; do
   if kill "$pid" 2>/dev/null; then
-    ((KILLED++))
+    KILLED=$((KILLED+1))
   fi
 done
 
@@ -134,7 +134,7 @@ sleep 1
 for pid in "${ZOMBIES[@]}"; do
   if kill -0 "$pid" 2>/dev/null; then
     echo "PID $pid didn't respond to SIGTERM, sending SIGKILL..."
-    kill -9 "$pid" 2>/dev/null && ((FORCE_KILLED++))
+    kill -9 "$pid" 2>/dev/null && FORCE_KILLED=$((FORCE_KILLED+1))
   fi
 done
 

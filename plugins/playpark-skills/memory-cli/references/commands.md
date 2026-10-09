@@ -19,7 +19,7 @@ memvid put ~/.claude/memory/global.mv2 --input "$TMPFILE" \
   --embedding \
   --title "タイトル" \
   --tag type=feedback \
-  --tag project=shift-bud \
+  --tag project=my-app \
   --uri "feedback/2026-03-16/no-mock-db"
 
 memvid commit ~/.claude/memory/global.mv2
@@ -41,7 +41,7 @@ rip "$TMPFILE"
 <type>/<date>/<slug>
 例: feedback/2026-03-16/no-mock-db
     project/2026-03-16/auth-middleware-rewrite
-    session/2026-03-16/shift-bud-summary
+    session/2026-03-16/my-app-summary
 ```
 
 ## 2. search — メモリを検索
@@ -101,8 +101,8 @@ memvid stats <FILE.mv2> --json
 
 ```bash
 memvid memories <FILE.mv2> --json
-memvid facts <FILE.mv2> --entity "shift-bud"
-memvid state <FILE.mv2> --entity "shift-bud"
+memvid facts <FILE.mv2> --entity "my-app"
+memvid state <FILE.mv2> --entity "my-app"
 ```
 
 ## 7. init — プロジェクトメモリの初期化

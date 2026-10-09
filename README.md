@@ -1,6 +1,7 @@
 # Agent Skills Collection
 
-**70+ production-ready skills** for AI coding agents (Claude Code, Codex, and more).
+**Production-ready skills** for Claude Code, distributed as Claude Code plugins.
+Codex などほかの agent からも、前提（[ほかの agent から使う](#ほかの-agentcodex-等から使う)）を満たせば `playpark-skills` を使えます。
 
 Dev workflow automation, SEO/marketing analytics, blog operations, Git workflow, image/video processing, Google Workspace integration — all in one repo.
 
@@ -38,29 +39,23 @@ Use skills in Claude Code:
 
 本 repo を手元で clone して開発し、編集を即座に反映させたい場合はこちら（dev-flow 開発者向け）。
 
-1. **旧 symlink 方式の撤去**: `~/.claude/skills` / `~/.claude/workflows` / `~/.claude/agents`
-   への symlink 3 本を `rip` で撤去してください（残すと bare 名 workflow の解決先が plugin 経路と
-   symlink 経路のどちらになるか不定になります）。
+1. **本 repo を指す symlink を外す**: 以前に `~/.claude/skills` / `~/.claude/workflows` /
+   `~/.claude/agents` を本 repo（の clone）への symlink にしていた場合は外してください
+   （残すと bare 名 workflow の解決先が plugin 経路と symlink 経路のどちらになるか不定になります）。
 
-   ```bash
-   rip ~/.claude/skills ~/.claude/workflows ~/.claude/agents
-   ```
-
-2. **dotfiles settings への登録**: マシン固有パスを含む plugin 登録は dotfiles repo 側の
-   settings.json で行います。`extraKnownMarketplaces` に command source（本 repo の絶対パス）を
-   `"mode": "link"` で登録し、`enabledPlugins` に `playpark-core` / `dev-flow` /
-   `playpark-skills` の 3 件を並べます（マシン固有パスを本 repo の git 管理ファイルに持ち込まない
-   ため。登録手順は [it-all-playpark/dotfiles#179](https://github.com/it-all-playpark/dotfiles/issues/179) を参照）。
+2. **ユーザー settings への登録**: 自分の Claude Code ユーザー settings.json
+   （`~/.claude/settings.json` など、マシンごとの設定）で、`extraKnownMarketplaces` に
+   command source（本 repo の clone の絶対パス）を `"mode": "link"` で登録し、`enabledPlugins` に
+   `playpark-core` / `dev-flow` / `playpark-skills` の 3 件を並べます。clone の絶対パスは
+   マシン固有なので、本 repo の git 管理ファイル（`.claude/settings.json` 等）には書きません。
 
    dev-flow 専用 hook（`stop-devflow-telemetry.sh` / `pretool-inline-edit-guard.sh` /
    `pretool-bash-inline-commit-gate.sh`）は `plugins/dev-flow/hooks/hooks.json`、全 skill 共通
    hook（journal hook-capture・track-skill / `validate-skill-frontmatter.sh` /
    `posttool-secret-mask.sh` / `pretool-context-guard.sh`）は `plugins/playpark-core/hooks/hooks.json`、
    zombie-kill の SessionStart 起動は `plugins/playpark-skills/hooks/hooks.json` から、それぞれ
-   `${CLAUDE_PLUGIN_ROOT}` 経由で発火します。dotfiles 側の同 entry 削除は
-   [it-all-playpark/dotfiles#185](https://github.com/it-all-playpark/dotfiles/issues/185) を参照。
-   並存期間（dotfiles 側 entry が残っている間）は hook-capture が二重記録されます
-   （同 issue の適用で解消）。
+   `${CLAUDE_PLUGIN_ROOT}` 経由で発火します。同じ hook を settings.json に直接登録していた場合は
+   そちらを削除してください（残すと二重に発火し、hook-capture が二重記録されます）。
 
 3. **個別 install**: command source（link mode）の plugin は `dependencies` が自動解決されないため、
    3 plugin を個別に `/plugin install` してください。
@@ -77,7 +72,7 @@ Use skills in Claude Code:
 5. **即時反映の確認**: link mode では repo のファイル編集が再 install なしに反映されます。
    任意の SKILL.md を 1 語変更 → `/reload-plugins` → 反映を確認してください。
 
-`dev-flow` plugin では skills（フラット構造）と `agents/` 配下の 9 agent が plugin として
+`dev-flow` plugin では skills（フラット構造）と `agents/` 配下の agent 定義が plugin として
 認識されます。plugin の subagent は plugin root の `agents/` からのみ読み込まれるため、
 agent 定義の実体は `plugins/dev-flow/agents/` に置き、`plugins/dev-flow/.claude/agents` は
 そこへの symlink にしてあります（定義は 1 箇所だけで、コピーの同期は不要）。
@@ -88,15 +83,29 @@ plugin install が skill だけ読み込んで **agent が 0 件のまま成功�
 `agents/` に置けば、そうした環境で影響を受けるのは `plugins/dev-flow/.claude/agents`（本 repo で
 dev-flow を開発する場合のみ使う）だけで済みます。`tests/plugin-manifest.bats` がこの向きを pin します。
 
-従来の clone + symlink 方式（Codex / Antigravity など cross-vendor 向け）はそのまま併存して使えます。
+### ほかの agent（Codex 等）から使う
 
-For Codex or other agents, symlink to the appropriate directory. `~/.claude/skills` は
-上の手順 1 で撤去するため、リンク元は本 repo の clone 配下を直接指します:
+`dev-flow` plugin（dynamic workflow・subagent・hook）は Claude Code 専用です。ほかの agent から
+使えるのは `playpark-skills` の skill だけで、clone した本 repo を symlink で参照させます。
+skill とその script は Claude Code plugin の実行環境を前提に書かれているため、次の 2 つを
+自分で用意してください。
+
+- **PATH**: `plugins/playpark-core/bin` と `plugins/playpark-skills/bin` を PATH に通す。
+  `_lib/common.sh` を使う script は PATH 上の `journal`（playpark-core の `bin/journal`）から
+  `common.sh` を探すため、`plugins/playpark-core/bin` が無いと exit 127 で止まります。SKILL.md が
+  呼ぶ `<skill>-<action>` 形式の bare 名コマンドは `plugins/playpark-skills/bin` にあります。
+- **`${CLAUDE_PLUGIN_ROOT}`**: Claude Code が SKILL.md 読み込み時に plugin root へ展開する変数で、
+  ほかの agent では展開されません。`<repo>/plugins/playpark-skills` を同名の環境変数として export
+  してください。
 
 ```bash
-# <repo> は本 repo の clone 先（例: ~/ghq/github.com/it-all-playpark/skills）
+# <repo> は本 repo の clone 先
 ln -sf <repo>/plugins/playpark-skills ~/.<tool>/skills
+export PATH="<repo>/plugins/playpark-core/bin:<repo>/plugins/playpark-skills/bin:$PATH"
+export CLAUDE_PLUGIN_ROOT="<repo>/plugins/playpark-skills"
 ```
+
+hook（secret mask・context guard 等）はほかの agent では動きません。
 
 ### External Skills Integration (skills.sh)
 
@@ -310,9 +319,17 @@ skill-config.json                              # プロジェクト設定（リ�
 _CORE_BIN="$(command -v journal)" || { echo "playpark-core plugin (bin/journal) not on PATH" >&2; exit 127; }
 source "$(dirname "$_CORE_BIN")/../_lib/common.sh"
 config=$(load_skill_config "ga-analyzer")
+```
 
-# Python: playpark-skills 同一 plugin 内の _lib/config.py を相対 import
-from _lib.config import load_skill_config
+```python
+# Python: playpark-skills の _lib/config.py を使う。_lib は package ではない（__init__.py が無い）ので、
+# <skill>/scripts/ の script から _lib を sys.path に足してモジュール名 config で import する
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "_lib"))
+from config import load_skill_config
+
 config = load_skill_config("ga-analyzer")
 ```
 
@@ -357,7 +374,6 @@ config = load_skill_config("ga-analyzer")
 
 | スキル | 説明 |
 |--------|------|
-| `simplify` | 変更コードの品質・効率レビュー＆修正 |
 | `github-issue-orchestrator` | 議論からGitHub Issue作成（技術調査・レビュー付き） |
 
 ### SEO/マーケティング分析
@@ -368,6 +384,10 @@ config = load_skill_config("ga-analyzer")
 | `gsc` | Google Search Consoleクエリ・SEOデータ取得 🔗 |
 | `trends-analyzer` | Google Trendsキーワードトレンド分析 |
 | `seo-strategy` | GA4+GSC+Trends統合の包括的SEO戦略 |
+
+> `seo-strategy` と、下の `blog-seo-improve` は GSC データの取得に外部スキル `gsc` を使います。
+> `gsc` は marketplace 経由の `/plugin install playpark-skills@playpark` では入らないため、
+> 使う場合は [External Skills Integration](#external-skills-integration-skillssh) の復元コマンドで別途入れてください。
 
 ### ブログ運用
 
@@ -389,14 +409,6 @@ config = load_skill_config("ga-analyzer")
 |--------|------|
 | `sns-announce` | SNS告知文生成（X/LinkedIn/Facebook/Bluesky/Threads等） |
 | `zernio` | Zernio CLIによるSNS投稿スケジュール・同期（post/sync） |
-
-### 営業・セールス
-
-| スキル | 説明 |
-|--------|------|
-| `meeting-followup` | カレンダーアポ情報→議事録生成→お礼メール下書き作成 |
-| `sales-tracker` | Google Spreadsheetで営業パイプライン管理（3シート構成） |
-| `sales-sync` | Gmail確認→営業パイプライン変更検知→スプレッドシート自動更新 |
 
 ### Google Workspace
 
@@ -427,6 +439,8 @@ config = load_skill_config("ga-analyzer")
 | `skill-creator` | 新規スキル作成ガイド（当リポジトリ規約版） |
 | `find-skills` | スキル検索・インストール支援 🔗 |
 | `claude-zombie-kill` | ゾンビClaude Codeセッション検出・終了 |
+| `memory-cli` | memvid CLI によるセッション・プロジェクト横断の永続メモリ（BM25 + semantic のハイブリッド検索） |
+| `sandbox-tune` | transcript から sandbox 拒否・permission 拒否・人間への実行依頼を型ごとに集計し、設定 repo の git log と突き合わせて settings 修正の候補を根拠付きで出す（issue 化は `--issue` のときだけ） |
 | `suica-to-csv` | モバイルSuica明細PDFをマネーフォワード経費CSVに変換 |
 | `agent-browser` | ブラウザ自動操作（ページ操作/スクレイピング/テスト） 🔗 |
 
@@ -457,21 +471,21 @@ skills/
 │   │   │       └── unlink-agent-skills.sh  # symlink解除
 │   │   ├── _shared/
 │   │   │   └── references/subagent-dispatch.md  # Subagent dispatch 必須5要素
-│   │   ├── bin/journal                   # core bare 名 wrapper（1本）
+│   │   ├── bin/journal                   # core bare 名 wrapper
 │   │   └── journal/                      # journal.sh（dev-flow telemetry・失敗記録）
-│   ├── dev-flow/                         # issue-to-LGTM ワークフロー plugin（7 skills, 7 agents）
+│   ├── dev-flow/                         # issue-to-LGTM ワークフロー plugin（skills + agents + workflows）
 │   │   ├── .claude/
 │   │   │   ├── workflows/                # dynamic workflow js（dev-flow.js / pr-iterate.js 等）
 │   │   │   └── agents -> ../agents       # symlink（plugin subagent 読み込み用）
-│   │   ├── agents/                       # 7 dev-flow agent 実体
+│   │   ├── agents/                       # dev-flow agent 定義の実体
 │   │   ├── _lib/                         # workflow のロジック本体・test
 │   │   ├── _shared/scripts/              # dev-flow 共通スクリプト
-│   │   ├── bin/                          # dev-flow bare 名 wrapper（23本）
+│   │   ├── bin/                          # dev-flow bare 名 wrapper
 │   │   └── dev-flow/, dev-flow-health/, dev-issue-analyze/,
 │   │       git-commit/, git-pr/, github-issue-orchestrator/,
-│   │       pr-iterate/（SKILL.md 7本）
+│   │       pr-iterate/（各 SKILL.md）
 │   └── playpark-skills/                  # 個人用スキル plugin（dependencies: playpark-core）
-│       ├── bin/                          # playpark-skills bare 名 wrapper（18本、<skill>-<action> 命名）
+│       ├── bin/                          # playpark-skills bare 名 wrapper（<skill>-<action> 命名）
 │       ├── _lib/config.py                # Python共通設定ローダー
 │       ├── _shared/                      # スキル共通ユーティリティ・schemas・templates
 │       ├── <skill-name>/                 # 各スキル（自作）
@@ -541,4 +555,8 @@ AI開発を専門とするソフトウェア開発スタジオです。AIエー�
 
 ## License
 
-各スキルのSKILL.mdを参照してください。
+MIT License（[LICENSE](LICENSE)）。各 plugin（`playpark-core` / `dev-flow` / `playpark-skills`）の
+`plugin.json` の `license` も MIT です。
+
+外部スキル（`plugins/playpark-skills/skills-lock.json` に載る skills.sh 由来の skill）は本 repo に
+同梱しておらず、MIT の対象外です。それぞれ取得元（lockfile の `source`）の上流 repo の license に従います。

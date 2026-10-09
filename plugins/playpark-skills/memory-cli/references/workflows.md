@@ -12,10 +12,10 @@ EOF
 
 memvid put ~/.claude/memory/global.mv2 --input "$TMPFILE" \
   --embedding \
-  --title "Session: shift-bud 認証リファクタリング" \
+  --title "Session: my-app 認証リファクタリング" \
   --tag type=session \
-  --tag project=shift-bud \
-  --uri "session/2026-03-16/shift-bud-auth-refactor"
+  --tag project=my-app \
+  --uri "session/2026-03-16/my-app-auth-refactor"
 
 memvid commit ~/.claude/memory/global.mv2
 rip "$TMPFILE"
@@ -27,7 +27,7 @@ rip "$TMPFILE"
 
 ```bash
 memvid find ~/.claude/memory/global.mv2 \
-  --query "shift-bud 最近のセッション" \
+  --query "my-app 最近のセッション" \
   --mode auto --top-k 3 --json
 ```
 

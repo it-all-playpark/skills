@@ -25,7 +25,7 @@ jobs:
           ./tests/subagent-dispatch-lint.sh
 
   bats-tests:
-    name: Bats Tests (issue #93 helpers)
+    name: Bats Tests (all *.bats)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -44,7 +44,7 @@ jobs:
           ./tests/run-all-bats.sh --strict
 
   node-tests:
-    name: Node Unit Tests (workflow arg resolver)
+    name: Node Unit Tests (all *.test.mjs)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

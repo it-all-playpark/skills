@@ -23,16 +23,18 @@ Convert モバイルSuica残高ご利用明細 PDF → マネーフォワード�
 
 | Arg | Description |
 |-----|-------------|
-| pdf-path | Path to Suica PDF statement |
-| -o | Output CSV path (default: CWD/suica_transactions.csv) |
+| pdf-path | Path to Suica PDF statement. The PDF is read by Claude, not by the script |
+| -o | Output CSV path, passed through to the script's `-o` (default: CWD/suica_transactions.csv) |
+
+PDF → text → script: Claude extracts transaction lines from the PDF into a temp text file, then the script converts that text file to CSV.
 
 ## Workflow
 
-1. **Read PDF** → Use Read tool to extract text from the Suica PDF
+1. **Read PDF** → Use Read tool to extract text from the Suica PDF (`pdf-path`)
 2. **Parse transactions** → Extract structured data from text using the parsing logic below
-3. **Detect year** → Infer year from PDF filename pattern `_YYYYMMDD_` or ask user
-4. **Write temp text file** → Save parsed transaction lines to a temp file
-5. **Run converter** → Execute `scripts/suica_to_csv.py` with the temp file
+3. **Detect year** → Infer start/end year from PDF filename pattern `_YYYYMMDD_YYYYMMDDHHMMSS` or ask user (the temp file name carries no date, so the years must be passed explicitly)
+4. **Write temp text file** → Save parsed transaction lines (one per line) to a temp file
+5. **Run converter** → `python3 scripts/suica_to_csv.py <temp-file> --start-year YYYY --end-year YYYY [-o output.csv]` (forward `-o` only when the user gave it)
 6. **Report results** → Show summary (row count, total amount, operator breakdown)
 7. **Cleanup** → Remove temp file
 
@@ -119,7 +121,7 @@ UTF-8 with BOM. Columns:
 Converter script: `scripts/suica_to_csv.py`
 
 ```bash
-python3 scripts/suica_to_csv.py <text-file> [--start-year YYYY] [--end-year YYYY]
+python3 scripts/suica_to_csv.py <text-file> [--start-year YYYY] [--end-year YYYY] [-o output.csv]
 ```
 
-The script reads a text file with one transaction per line and outputs `suica_transactions.csv` in CWD.
+The script takes the text file (one transaction per line, from Workflow step 4), not the PDF. It writes the CSV to `-o` (default: `suica_transactions.csv` in CWD). Unknown arguments exit non-zero.

@@ -1,0 +1,47 @@
+# collect / verify の結果を Markdown にする。出す文字列はすべて伏せ字を通す。
+include "redact";
+
+def cell: tostring | gsub("\\|"; "\\|") | gsub("\\n"; " ");
+
+def category_label:
+  {sandbox: "sandbox 拒否", request: "人間への実行依頼", permission: "permission 拒否"}[.] // .;
+
+def evidence_cell:
+  if .status == null then "-"
+  elif .evidence.commit then "\(.evidence.commit[0:12]) (\(.evidence.committed_at)) の後 \(.evidence.after_count) 件" + (if .evidence.last_after then "、最終 \(.evidence.last_after)" else "" end)
+  else "関係する commit なし" + (if .evidence.note then "（\(.evidence.note)）" else "" end) end;
+
+def detail:
+  "### `\(.id | gsub("`"; "'"))`\n\n"
+  + "- 種別: \(.category | category_label) / \(.kind)\n"
+  + "- 件数: \(.count) 件 / \(.sessions) session（\(.first_seen) 〜 \(.last_seen)）\n"
+  + "- projects: \(.projects | join(", "))\n"
+  + (if .status then
+       "- 判定: **\(.status)** — "
+       + (if .evidence.commit then
+            "関係する commit `\(.evidence.commit[0:12])`（\(.evidence.committed_at)「\(.evidence.subject)」）の後の発生 \(.evidence.after_count) 件"
+            + (if .evidence.last_after then "、最終 \(.evidence.last_after)" else "" end)
+          else "関係する commit なし（発生 \(.count) 件、最終 \(.last_seen)）" + (if .evidence.note then "。\(.evidence.note)" else "" end) end)
+       + "\n"
+     else "" end)
+  + "- 代表的なエラー文:\n\n" + ([ .examples[] | "  ~~~\n  \(gsub("\\n"; "\n  "))\n  ~~~" ] | join("\n")) + "\n";
+
+redact_all
+| (.verify != null) as $verified
+| "# sandbox-tune レポート（\(.period.since) 〜 \(.period.until)）\n\n"
+  + "- 期間: \(.period.days) 日 / transcript: \(.files_scanned) ファイル（\(.projects_dir)）/ 型: \(.types | length) 件\n"
+  + (if $verified then "- 設定 repo: \(.verify.repo)（見たパス: \(.verify.paths | join(", "))）\n"
+     else "- 設定 repo: なし（verify は未実施。resolved / remaining の判定なし）\n" end)
+  + (if (.criteria_files // []) | length > 0 then "- 追加の判定基準: \(.criteria_files | join(", "))\n" else "" end)
+  + "\n## 型の一覧\n\n"
+  + "| 判定 | 種別 | 対象 | 件数 | session | 最初 | 最後 | 根拠 |\n|---|---|---|---|---|---|---|---|\n"
+  + ([ .types[] | "| \(.status // "-") | \(.category | category_label) / \(.kind) | `\(.target | cell | gsub("`"; "'"))` | \(.count) | \(.sessions) | \(.first_seen) | \(.last_seen) | \(evidence_cell | cell) |" ] | join("\n"))
+  + "\n\n"
+  + (if $verified then
+       "## remaining（原因・修正案・安全性を判断する対象）\n\n"
+       + ([ .types[] | select(.status == "remaining") | detail ] | if length == 0 then "なし\n" else join("\n") end)
+       + "\n## resolved\n\n"
+       + ([ .types[] | select(.status == "resolved") | detail ] | if length == 0 then "なし\n" else join("\n") end)
+     else
+       "## 型の詳細\n\n" + ([ .types[] | detail ] | if length == 0 then "なし\n" else join("\n") end)
+     end)
