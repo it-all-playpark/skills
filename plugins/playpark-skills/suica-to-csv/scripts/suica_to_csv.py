@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Convert モバイルSuica残高ご利用明細 PDF text data to マネーフォワードクラウド経費 CSV."""
 
+import argparse
 import csv
 import io
 import re
@@ -222,27 +223,20 @@ def to_mf_csv(rows: list[dict]) -> str:
 
 
 def main():
-    if len(sys.argv) < 2:
-        print("Usage: suica_to_csv.py <transaction_text_file> [--start-year YYYY] [--end-year YYYY]")
-        print("  Reads parsed Suica transaction text and outputs MF Cloud CSV.")
-        sys.exit(1)
+    parser = argparse.ArgumentParser(
+        description="Reads parsed Suica transaction text and outputs MF Cloud CSV.",
+    )
+    parser.add_argument("input_file", type=Path, help="transaction text file (one transaction per line)")
+    parser.add_argument("--start-year", type=int)
+    parser.add_argument("--end-year", type=int)
+    parser.add_argument("-o", "--output", type=Path, default=Path.cwd() / "suica_transactions.csv",
+                        help="output CSV path (default: CWD/suica_transactions.csv)")
+    # Unknown args exit non-zero (argparse) instead of being silently dropped.
+    args = parser.parse_args()
 
-    input_file = Path(sys.argv[1])
-    start_year = None
-    end_year = None
-
-    # Parse optional args
-    args = sys.argv[2:]
-    i = 0
-    while i < len(args):
-        if args[i] == "--start-year" and i + 1 < len(args):
-            start_year = int(args[i + 1])
-            i += 2
-        elif args[i] == "--end-year" and i + 1 < len(args):
-            end_year = int(args[i + 1])
-            i += 2
-        else:
-            i += 1
+    input_file = args.input_file
+    start_year = args.start_year
+    end_year = args.end_year
 
     if start_year is None or end_year is None:
         sy, ey = detect_year_range(input_file.name)
@@ -258,7 +252,7 @@ def main():
 
     csv_content = to_mf_csv(rows)
 
-    output_path = Path.cwd() / "suica_transactions.csv"
+    output_path = args.output
     output_path.write_text(csv_content, encoding="utf-8")
 
     # Summary
