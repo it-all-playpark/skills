@@ -296,6 +296,20 @@ const CI_VERIFY = args?.ci_verify == null
       return v
     })()
 const CI_EXCLUDE = CI_VERIFY ? CI_VERIFY.checks : []
+// prior_devflow: 単体起動の wrapper が pr-iterate-prerun の出力から渡す、PR に載っていた最後の dev-flow サマリー
+// { tier, codes, url }（無ければ null）。tier が HOLD なら終端サマリーに HOLD 理由の回収状況を出す。dev-flow は渡さない。
+// 不正形は明示 throw。
+const PRIOR_DEVFLOW = args?.prior_devflow == null
+  ? null
+  : (() => {
+      const p = args.prior_devflow
+      if (typeof p !== 'object' || typeof p.tier !== 'string' || p.tier === ''
+        || !Array.isArray(p.codes) || !p.codes.every((c) => typeof c === 'string')
+        || (p.url !== null && typeof p.url !== 'string')) {
+        throw new Error(`pr-iterate: args.prior_devflow が不正形です（tier: 非空 string / codes: string[] / url: string | null）: ${JSON.stringify(p)}`)
+      }
+      return p
+    })()
 // 終端サマリーの PR コメント投稿。dev-flow は自分の終端サマリーを投稿するので caller:'dev-flow' のときだけ止め、
 // 単体起動（wrapper 経由の caller:'standalone' / nested 無しの直接起動）は投稿する
 const POST_TERMINAL_SUMMARY = NESTED?.caller !== 'dev-flow'
@@ -619,13 +633,46 @@ function formatConflictAutoresolveLines(list) {
   });
 }
 
-function buildTerminalSummaryBody({ pr, status, iterations, lastDecision, lastSummary, lastVerificationEvidence, history, ciWaitSeconds, ciPollAttempts, ciLastStatus = null, ciLastFailedChecks = [], humanFollowups = [], conflictAutoresolve = [] }) {
+const PRIOR_HOLD_UNRESOLVED = '未解消（pr-iterate は再判定しない — 人が確認する）';
+
+function priorHoldRecovery(codes, { status, ciLastStatus, conflictAutoresolve }) {
+  const attempts = (conflictAutoresolve || []).filter((r) => r != null);
+  const lastConflict = attempts.length > 0 ? attempts[attempts.length - 1].status : null;
+  const rows = (codes || []).map((code) => {
+    if (code === 'iterate_non_lgtm') return { code, resolved: status === 'lgtm', detail: `この run の終了状態: ${status}` };
+    if (code === 'ci_checks_failed' || code === 'ac_ci_pending') {
+      return { code, resolved: ciLastStatus === 'passed', detail: `最終 CI 状態: ${ciLastStatus ?? '未観測'}` };
+    }
+    if (code === 'mergeable_conflicting') {
+      return { code, resolved: lastConflict === 'resolved', detail: `conflict の自動解消: ${lastConflict ?? '試行なし'}` };
+    }
+    return { code, resolved: false, detail: null };
+  });
+  if (rows.length === 0) rows.push({ code: null, resolved: false, detail: 'HOLD 理由の code がサマリーに無い — 元のサマリーで理由を確認する' });
+  return { rows, unresolved: rows.filter((r) => !r.resolved).length };
+}
+
+function buildTerminalSummaryBody({ pr, status, iterations, lastDecision, lastSummary, lastVerificationEvidence, history, ciWaitSeconds, ciPollAttempts, ciLastStatus = null, ciLastFailedChecks = [], humanFollowups = [], conflictAutoresolve = [], priorDevflow = null }) {
   const DECISION_EMOJI = { 'approve': '✅', 'request-changes': '🔴', 'comment': '💬' };
   const lines = [];
+  const priorHold = priorDevflow != null && priorDevflow.tier === 'HOLD'
+    ? priorHoldRecovery(priorDevflow.codes, { status, ciLastStatus, conflictAutoresolve })
+    : null;
+
+  let headline = (STATUS_HEADLINE[status] ?? status).replace('<PR>', String(pr));
+  if (priorHold && status === 'lgtm') {
+    headline = priorHold.unresolved > 0
+      ? `LGTM（review）— dev-flow の HOLD 理由 ${priorHold.unresolved} 件が未解消。merge 前に確認`
+      : `${headline} — dev-flow の HOLD 理由はすべて解消`;
+  }
 
   lines.push(`## PR #${pr} — pr-iterate 終了レポート`);
   lines.push('');
-  lines.push(`### ${(STATUS_HEADLINE[status] ?? status).replace('<PR>', String(pr))}`);
+  if (priorHold) {
+    lines.push(`> dev-flow のサマリー（HOLD）: ${priorDevflow.url ?? '（URL 不明）'} — 下の「dev-flow の HOLD 理由の回収状況」がその後の結論`);
+    lines.push('');
+  }
+  lines.push(`### ${headline}`);
   lines.push('');
 
   lines.push('| 終了状態 | 反復回数 | 最終判定 |');
@@ -639,6 +686,21 @@ function buildTerminalSummaryBody({ pr, status, iterations, lastDecision, lastSu
 
   lines.push('');
   lines.push(formatCiLastStatusLine(ciLastStatus, ciLastFailedChecks, pr));
+
+  if (priorHold) {
+    lines.push('');
+    lines.push('### dev-flow の HOLD 理由の回収状況');
+    lines.push('');
+    for (const r of priorHold.rows) {
+      const label = r.resolved ? '✅ 解消' : `❌ ${PRIOR_HOLD_UNRESOLVED}`;
+      const parts = [r.code != null ? `\`${mdCell(r.code)}\`` : null, label, r.detail].filter((p) => p != null);
+      lines.push(`- ${parts.join(' — ')}`);
+    }
+    lines.push('');
+    lines.push(priorHold.unresolved > 0
+      ? `**dev-flow の HOLD 理由 ${priorHold.unresolved} 件が未解消** — merge 前に人が確認する`
+      : '**dev-flow の HOLD 理由はすべて解消**');
+  }
 
   if (ciWaitSeconds != null || ciPollAttempts != null) {
     lines.push('');
@@ -1972,6 +2034,7 @@ const summaryBody = buildTerminalSummaryBody({
   ciLastFailedChecks,
   humanFollowups,
   conflictAutoresolve: conflictAttempts,
+  priorDevflow: PRIOR_DEVFLOW,
 })
 log(`終端 CI 状態: ${ciLastStatus ?? '未観測'}${ciLastStatus === 'failed' ? `（${ciLastFailedChecks.join(', ')}）` : ''}`)
 log('終端サマリーは comment として投稿する（formal review は投稿しない — issue #524）')

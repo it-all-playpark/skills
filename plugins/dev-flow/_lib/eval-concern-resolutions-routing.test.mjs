@@ -256,7 +256,7 @@ test('[eval-concern-resolutions][#626] CONCERN-2 は triaged として解消済�
     `post-summary の prompt に <!-- dev-flow:REVIEW --> marker が無い:\nprompt(先頭2000):\n${post.prompt.slice(0, 2000)}`,
   );
   assert.ok(
-    !post.prompt.includes('<!-- dev-flow:HOLD -->'),
+    !post.prompt.includes('<!-- dev-flow:HOLD'),
     `CONCERN-2 が triaged advisory のみのため <!-- dev-flow:HOLD --> は出ないはず:\nprompt(先頭2000):\n${post.prompt.slice(0, 2000)}`,
   );
   assert.ok(

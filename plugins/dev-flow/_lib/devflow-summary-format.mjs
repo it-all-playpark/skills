@@ -1083,7 +1083,12 @@ export function buildDevflowSummaryBody({
   lines.push('*このコメントは dev-flow により自動生成されました。*');
   // gate_policy は人間の判断に使わない機構側の情報なので、本文ではなく HTML コメントに残す。
   if (typeof gatePolicy === 'string' && gatePolicy.length > 0) lines.push(`<!-- gate_policy: ${gatePolicy} -->`);
-  lines.push(`<!-- dev-flow:${mergeTier} -->`);
+  // HOLD は理由の code を marker に載せる。単体 /pr-iterate の回収で pr-iterate-prerun がこの marker を読み、
+  // 終了レポートに code ごとの回収状況を出す（本文の文言は変わり得るので code を機械可読で残す）。
+  const holdCodes = mergeTier === 'HOLD'
+    ? ` codes=${(holdReasons || []).map((hr) => hr && hr.code).filter((c) => typeof c === 'string').join(',')}`
+    : '';
+  lines.push(`<!-- dev-flow:${mergeTier}${holdCodes} -->`);
 
   return lines.join('\n');
 }

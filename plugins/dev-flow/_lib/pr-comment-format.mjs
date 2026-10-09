@@ -98,6 +98,32 @@ function formatConflictAutoresolveLines(list) {
   });
 }
 
+const PRIOR_HOLD_UNRESOLVED = '未解消（pr-iterate は再判定しない — 人が確認する）';
+
+/**
+ * 直前の dev-flow サマリーが HOLD のとき、HOLD 理由の code ごとの回収状況を決定論で 1 行ずつ出す（issue #930）。
+ * pr-iterate が自分で確かめられるのは review の LGTM・最終 CI・conflict の自動解消だけで、AC・ledger・security・
+ * 最終 tree のテストは再判定しない — それらの code は常に未解消として人に返す。
+ * code が 1 件も無い HOLD（code を marker に載せる前のサマリー）は理由を確かめられないので未解消 1 件にする。
+ * @returns {{rows: Array<{code: string|null, resolved: boolean, detail: string|null}>, unresolved: number}}
+ */
+function priorHoldRecovery(codes, { status, ciLastStatus, conflictAutoresolve }) {
+  const attempts = (conflictAutoresolve || []).filter((r) => r != null);
+  const lastConflict = attempts.length > 0 ? attempts[attempts.length - 1].status : null;
+  const rows = (codes || []).map((code) => {
+    if (code === 'iterate_non_lgtm') return { code, resolved: status === 'lgtm', detail: `この run の終了状態: ${status}` };
+    if (code === 'ci_checks_failed' || code === 'ac_ci_pending') {
+      return { code, resolved: ciLastStatus === 'passed', detail: `最終 CI 状態: ${ciLastStatus ?? '未観測'}` };
+    }
+    if (code === 'mergeable_conflicting') {
+      return { code, resolved: lastConflict === 'resolved', detail: `conflict の自動解消: ${lastConflict ?? '試行なし'}` };
+    }
+    return { code, resolved: false, detail: null };
+  });
+  if (rows.length === 0) rows.push({ code: null, resolved: false, detail: 'HOLD 理由の code がサマリーに無い — 元のサマリーで理由を確認する' });
+  return { rows, unresolved: rows.filter((r) => !r.resolved).length };
+}
+
 /**
  * 終端サマリー markdown を生成する。
  * @param {object} opts
@@ -114,15 +140,33 @@ function formatConflictAutoresolveLines(list) {
  * @param {string[]} [opts.ciLastFailedChecks] - ciLastStatus が failed のとき列挙する check 名
  * @param {Array} [opts.humanFollowups] - worktree の外を指すとして fix から外した blocking finding（severity, file, line, description, suggestion, iter）
  * @param {Array} [opts.conflictAutoresolve] - base との conflict の自動解消の試行（_lib/conflict-autoresolve.mjs の conflictAutoresolveRecord の配列）
+ * @param {{tier: string, codes: string[], url: string|null}|null} [opts.priorDevflow] - 単体起動の前に PR に載っていた
+ *   dev-flow サマリー（pr-iterate-prerun の prior_devflow）。tier が HOLD のときだけ HOLD 理由の回収状況を出す
  * @returns {string}
  */
-export function buildTerminalSummaryBody({ pr, status, iterations, lastDecision, lastSummary, lastVerificationEvidence, history, ciWaitSeconds, ciPollAttempts, ciLastStatus = null, ciLastFailedChecks = [], humanFollowups = [], conflictAutoresolve = [] }) {
+export function buildTerminalSummaryBody({ pr, status, iterations, lastDecision, lastSummary, lastVerificationEvidence, history, ciWaitSeconds, ciPollAttempts, ciLastStatus = null, ciLastFailedChecks = [], humanFollowups = [], conflictAutoresolve = [], priorDevflow = null }) {
   const DECISION_EMOJI = { 'approve': '✅', 'request-changes': '🔴', 'comment': '💬' };
   const lines = [];
+  const priorHold = priorDevflow != null && priorDevflow.tier === 'HOLD'
+    ? priorHoldRecovery(priorDevflow.codes, { status, ciLastStatus, conflictAutoresolve })
+    : null;
+
+  // dev-flow の HOLD 後の回収では、このレポートが PR の最後のコメント（最新の結論）になる。HOLD 理由が残っているのに
+  // 「🎉 LGTM」を見出しにすると merge 可能に読めるので、見出しを回収状況に合わせる。
+  let headline = (STATUS_HEADLINE[status] ?? status).replace('<PR>', String(pr));
+  if (priorHold && status === 'lgtm') {
+    headline = priorHold.unresolved > 0
+      ? `LGTM（review）— dev-flow の HOLD 理由 ${priorHold.unresolved} 件が未解消。merge 前に確認`
+      : `${headline} — dev-flow の HOLD 理由はすべて解消`;
+  }
 
   lines.push(`## PR #${pr} — pr-iterate 終了レポート`);
   lines.push('');
-  lines.push(`### ${(STATUS_HEADLINE[status] ?? status).replace('<PR>', String(pr))}`);
+  if (priorHold) {
+    lines.push(`> dev-flow のサマリー（HOLD）: ${priorDevflow.url ?? '（URL 不明）'} — 下の「dev-flow の HOLD 理由の回収状況」がその後の結論`);
+    lines.push('');
+  }
+  lines.push(`### ${headline}`);
   lines.push('');
 
   lines.push('| 終了状態 | 反復回数 | 最終判定 |');
@@ -137,6 +181,21 @@ export function buildTerminalSummaryBody({ pr, status, iterations, lastDecision,
   // 全終端で必ず出す（lgtm / stuck / fix_failed / max_reached / ci_error / ci_pending / review_contract_error）
   lines.push('');
   lines.push(formatCiLastStatusLine(ciLastStatus, ciLastFailedChecks, pr));
+
+  if (priorHold) {
+    lines.push('');
+    lines.push('### dev-flow の HOLD 理由の回収状況');
+    lines.push('');
+    for (const r of priorHold.rows) {
+      const label = r.resolved ? '✅ 解消' : `❌ ${PRIOR_HOLD_UNRESOLVED}`;
+      const parts = [r.code != null ? `\`${mdCell(r.code)}\`` : null, label, r.detail].filter((p) => p != null);
+      lines.push(`- ${parts.join(' — ')}`);
+    }
+    lines.push('');
+    lines.push(priorHold.unresolved > 0
+      ? `**dev-flow の HOLD 理由 ${priorHold.unresolved} 件が未解消** — merge 前に人が確認する`
+      : '**dev-flow の HOLD 理由はすべて解消**');
+  }
 
   if (ciWaitSeconds != null || ciPollAttempts != null) {
     lines.push('');

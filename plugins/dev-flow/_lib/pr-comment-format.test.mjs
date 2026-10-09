@@ -578,3 +578,90 @@ test('buildTerminalSummaryBody: humanFollowups 非空なら人間側 follow-up �
   assert.ok(body.includes('### 👤 人間側 follow-up（worktree の外を指す指摘 — 自動修正の対象外・1 件）\n\n1. 🟠 major — `~/dotfiles/settings.json`（反復 1 回目）\n   - 指摘: 許可が無い\n   - 提案: 人間が足す'), body);
   assert.equal(buildTerminalSummaryBody({ ...opts, humanFollowups: [] }), buildTerminalSummaryBody(opts));
 });
+
+// --- dev-flow の HOLD 理由の回収状況（issue #930） -------------------------------
+
+const PRIOR_URL = 'https://github.com/acme/skills/pull/5#issuecomment-1';
+const UNRESOLVED = '❌ 未解消（pr-iterate は再判定しない — 人が確認する）';
+const recoveryLines = (body) => {
+  const lines = body.split('\n');
+  const start = lines.indexOf('### dev-flow の HOLD 理由の回収状況');
+  if (start < 0) return [];
+  const out = [];
+  for (const l of lines.slice(start + 2)) {
+    if (!l.startsWith('- ')) break;
+    out.push(l);
+  }
+  return out;
+};
+const headlineOf = (body) => body.split('\n').find((l) => l.startsWith('### '));
+
+test('buildTerminalSummaryBody: #870 相当（HOLD codes=ac_human_pending + lgtm）は未解消 1 件で、見出しを「🎉 LGTM」にしない', () => {
+  const body = buildTerminalSummaryBody({
+    pr: 870, status: 'lgtm', iterations: 1, lastDecision: 'approve', lastSummary: 'ok', history: [], ciLastStatus: 'passed',
+    priorDevflow: { tier: 'HOLD', codes: ['ac_human_pending'], url: PRIOR_URL },
+  });
+  assert.equal(headlineOf(body), '### LGTM（review）— dev-flow の HOLD 理由 1 件が未解消。merge 前に確認');
+  assert.ok(!body.includes('🎉 LGTM'), body);
+  assert.deepEqual(recoveryLines(body), [`- \`ac_human_pending\` — ${UNRESOLVED}`]);
+  assert.ok(body.includes('**dev-flow の HOLD 理由 1 件が未解消** — merge 前に人が確認する'), body);
+  // 冒頭（見出しより前）に元の dev-flow サマリーへのリンク
+  assert.ok(body.indexOf(PRIOR_URL) >= 0 && body.indexOf(PRIOR_URL) < body.indexOf('### '), body);
+});
+
+test('buildTerminalSummaryBody: #918 相当（HOLD codes=iterate_non_lgtm,ci_checks_failed + lgtm + CI passed）はすべて解消と明記する', () => {
+  const body = buildTerminalSummaryBody({
+    pr: 918, status: 'lgtm', iterations: 2, lastDecision: 'approve', lastSummary: 'ok', history: [], ciLastStatus: 'passed',
+    priorDevflow: { tier: 'HOLD', codes: ['iterate_non_lgtm', 'ci_checks_failed'], url: PRIOR_URL },
+  });
+  assert.equal(headlineOf(body), '### 🎉 LGTM — dev-flow の HOLD 理由はすべて解消');
+  assert.deepEqual(recoveryLines(body), [
+    '- `iterate_non_lgtm` — ✅ 解消 — この run の終了状態: lgtm',
+    '- `ci_checks_failed` — ✅ 解消 — 最終 CI 状態: passed',
+  ]);
+  assert.ok(body.includes('**dev-flow の HOLD 理由はすべて解消**'), body);
+});
+
+test('buildTerminalSummaryBody: 回収状況の写像 — 条件を満たさない確認可能な code と、pr-iterate が再判定しない code は未解消', () => {
+  const opts = { pr: 5, iterations: 3, lastDecision: 'request-changes', lastSummary: 'ng', history: [] };
+  const prior = { tier: 'HOLD', codes: ['iterate_non_lgtm', 'ci_checks_failed', 'ac_ci_pending', 'mergeable_conflicting', 'escalate'], url: PRIOR_URL };
+  const unresolved = buildTerminalSummaryBody({
+    ...opts, status: 'stuck', ciLastStatus: 'failed', ciLastFailedChecks: ['Bats Tests'], priorDevflow: prior,
+    conflictAutoresolve: [{ iteration: 1, status: 'aborted', reason: 'type C', files: [] }],
+  });
+  assert.deepEqual(recoveryLines(unresolved), [
+    `- \`iterate_non_lgtm\` — ${UNRESOLVED} — この run の終了状態: stuck`,
+    `- \`ci_checks_failed\` — ${UNRESOLVED} — 最終 CI 状態: failed`,
+    `- \`ac_ci_pending\` — ${UNRESOLVED} — 最終 CI 状態: failed`,
+    `- \`mergeable_conflicting\` — ${UNRESOLVED} — conflict の自動解消: aborted`,
+    `- \`escalate\` — ${UNRESOLVED}`,
+  ]);
+  // 非 lgtm 終端の見出しは従来どおり
+  assert.equal(headlineOf(unresolved), '### ⚠️ STUCK — 人間レビューへエスカレーション');
+
+  const resolved = buildTerminalSummaryBody({
+    ...opts, status: 'lgtm', ciLastStatus: 'passed', priorDevflow: { ...prior, codes: ['ac_ci_pending', 'mergeable_conflicting'] },
+    conflictAutoresolve: [{ iteration: 1, status: 'resolved', files: [], merge_sha: 'a'.repeat(40) }],
+  });
+  assert.deepEqual(recoveryLines(resolved), [
+    '- `ac_ci_pending` — ✅ 解消 — 最終 CI 状態: passed',
+    '- `mergeable_conflicting` — ✅ 解消 — conflict の自動解消: resolved',
+  ]);
+});
+
+test('buildTerminalSummaryBody: code の無い HOLD marker（codes 空）は理由を確かめられないので未解消 1 件', () => {
+  const body = buildTerminalSummaryBody({
+    pr: 5, status: 'lgtm', iterations: 1, lastDecision: 'approve', lastSummary: 'ok', history: [], ciLastStatus: 'passed',
+    priorDevflow: { tier: 'HOLD', codes: [], url: PRIOR_URL },
+  });
+  assert.equal(headlineOf(body), '### LGTM（review）— dev-flow の HOLD 理由 1 件が未解消。merge 前に確認');
+  assert.equal(recoveryLines(body).length, 1);
+});
+
+test('buildTerminalSummaryBody: priorDevflow が null・HOLD 以外なら終了レポートは priorDevflow 省略時と byte 一致', () => {
+  const opts = { pr: 5, status: 'lgtm', iterations: 1, lastDecision: 'approve', lastSummary: 'ok', history: [], ciLastStatus: 'passed' };
+  const base = buildTerminalSummaryBody(opts);
+  assert.equal(buildTerminalSummaryBody({ ...opts, priorDevflow: null }), base);
+  assert.equal(buildTerminalSummaryBody({ ...opts, priorDevflow: { tier: 'REVIEW', codes: [], url: PRIOR_URL } }), base);
+  assert.equal(buildTerminalSummaryBody({ ...opts, priorDevflow: { tier: 'AUTO', codes: [], url: PRIOR_URL } }), base);
+});

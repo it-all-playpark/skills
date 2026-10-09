@@ -3010,7 +3010,10 @@ function buildDevflowSummaryBody({
   lines.push('---');
   lines.push('*このコメントは dev-flow により自動生成されました。*');
   if (typeof gatePolicy === 'string' && gatePolicy.length > 0) lines.push(`<!-- gate_policy: ${gatePolicy} -->`);
-  lines.push(`<!-- dev-flow:${mergeTier} -->`);
+  const holdCodes = mergeTier === 'HOLD'
+    ? ` codes=${(holdReasons || []).map((hr) => hr && hr.code).filter((c) => typeof c === 'string').join(',')}`
+    : '';
+  lines.push(`<!-- dev-flow:${mergeTier}${holdCodes} -->`);
 
   return lines.join('\n');
 }

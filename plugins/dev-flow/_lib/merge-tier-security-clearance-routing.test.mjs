@@ -242,7 +242,7 @@ test('[merge-tier-sec-clearance] シナリオ1: PR#16 再現 — cleared:true+ev
     `post-summary prompt に '<!-- dev-flow:REVIEW -->' marker が含まれるべき。body:\n${summaryPrompts[0]}`,
   );
   assert.ok(
-    !summaryPrompts[0].includes('<!-- dev-flow:HOLD -->'),
+    !summaryPrompts[0].includes('<!-- dev-flow:HOLD'),
     `post-summary prompt に '<!-- dev-flow:HOLD -->' marker が含まれてはならない。body:\n${summaryPrompts[0]}`,
   );
   assert.ok(

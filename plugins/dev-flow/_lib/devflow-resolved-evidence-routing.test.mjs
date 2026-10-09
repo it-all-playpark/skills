@@ -77,7 +77,7 @@ test('[resolved-evidence-routing] critical 21 件 resolved の run でも post-s
   const post = calls.find((c) => c.label === 'post-summary');
   assert.ok(post, 'post-summary が呼ばれていない');
   const prompt = post.prompt;
-  assert.ok(prompt.includes(`<!-- dev-flow:${result.merge_tier} -->`), `post-summary prompt に merge tier marker が無い`);
+  assert.ok(prompt.includes(`<!-- dev-flow:${result.merge_tier}`), `post-summary prompt に merge tier marker が無い`);
   // 21 件の EVAL-* に、checked になった SEC seed / AC item が加わる
   const resolvedCount = Number(prompt.match(/✅ Goal Ledger 解消済み (\d+) 件/)?.[1] ?? NaN);
   assert.ok(resolvedCount >= 21, `解消済み件数行が無い、または 21 件未満（${resolvedCount}）:\n${prompt.slice(0, 3000)}`);

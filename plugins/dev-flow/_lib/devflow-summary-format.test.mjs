@@ -678,12 +678,25 @@ test('blockingItems に非 SEC item のみ含まれる -> 「Security clearance:
 
 // ─── 末尾マーカー (AC-5) ──────────────────────────────────────────────────────
 
-test('末尾マーカーが /<!-- dev-flow:(HOLD|REVIEW|AUTO) -->$/ で末尾一致', () => {
-  for (const tier of ['HOLD', 'REVIEW', 'AUTO']) {
+test('末尾マーカーが /<!-- dev-flow:(REVIEW|AUTO) -->$/ で末尾一致', () => {
+  for (const tier of ['REVIEW', 'AUTO']) {
     const body = buildDevflowSummaryBody({ ...BASE_INPUT, mergeTier: tier, mergeTierReasons: [] });
     const pattern = new RegExp(`<!-- dev-flow:${tier} -->$`);
     assert.match(body, pattern, `${tier} のマーカーが末尾一致`);
   }
+});
+
+test('issue #930: HOLD の末尾マーカーは merge tier の holdReasons の code を順に並べた <!-- dev-flow:HOLD codes=... -->', () => {
+  const mt = classifyMergeTier({
+    shape: 'standard', converged: true, unresolvedDanger: false, breakingStructured: false, breakingKeyword: false,
+    docsOrTestOnly: false, escalateCount: 0, evalStaleness: 'none', unsatisfiedAgentAc: false,
+    iterateStatus: 'stuck', unsatisfiedHumanAc: true, ciChecks: { ok: true, checks: [{ name: 'Bats Tests', bucket: 'fail' }] },
+  });
+  assert.equal(mt.tier, 'HOLD');
+  const codes = mt.holdReasons.map((hr) => hr.code);
+  assert.deepEqual(codes, ['ac_human_pending', 'iterate_non_lgtm', 'ci_checks_failed'], 'fixture の holdReasons');
+  const body = buildDevflowSummaryBody({ ...BASE_INPUT, mergeTier: mt.tier, mergeTierReasons: mt.reasons, holdReasons: mt.holdReasons, holdKind: mt.holdKind });
+  assert.equal(body.split('\n').at(-1), `<!-- dev-flow:HOLD codes=${codes.join(',')} -->`);
 });
 
 test('末尾に --- 区切り線を含む', () => {
@@ -1753,7 +1766,7 @@ test('AC4 不変性 pin: 再帰 freeze した入力で throw せず、各 tier �
         acResults,
       });
     }, `${tier}: freeze 済み入力で throw しない`);
-    const pattern = new RegExp(`<!-- dev-flow:${tier} -->$`);
+    const pattern = new RegExp(`<!-- dev-flow:${tier}${tier === 'HOLD' ? ' codes=' : ''} -->$`);
     assert.match(body, pattern, `${tier}: 末尾マーカーが一致`);
     assert.ok(body.includes(`**${tier}**`), `${tier}: at-a-glance に tier を含む`);
     assert.deepEqual(blockingItems, snapshot.blockingItems, `${tier}: blockingItems が不変`);
