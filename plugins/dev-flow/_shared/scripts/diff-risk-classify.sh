@@ -280,7 +280,7 @@ while IFS= read -r file; do
     # against these exact case-sensitive patterns. File-deletion detection and assert/expect
     # net-reduction checks are NOT implemented here (spike FP 3-4/25, follow-up only).
     _is_test_file=false
-    if echo "$file" | grep -Eq '\.(test|spec)\.|\.bats$|_test\.'; then
+    if echo "$file" | grep -Eq '\.(test|spec)\.|\.bats$|_test\.|_spec\.rb$|Test\.php$'; then
         _is_test_file=true
     fi
     _is_test_cfg_file=false

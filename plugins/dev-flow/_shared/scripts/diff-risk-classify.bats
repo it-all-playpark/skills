@@ -676,6 +676,28 @@ assert_hit() {
 }
 
 # ---------------------------------------------------------------------------
+# [TW-a2] test-weakening POSITIVE: Ruby / PHP のテストファイル (*_spec.rb /
+# *_test.rb / *Test.php) も test-weakening の対象 (issue #883)。同じ追加行を
+# 本番ファイル (foo.rb / Foo.php) に置いても hit しないことを対照に置く
+# ---------------------------------------------------------------------------
+@test "TW-a2 test-weakening POSITIVE: *_spec.rb / *_test.rb / *Test.php はテストファイルとして hit し、本番 .rb / .php は hit しない" {
+    mkdir -p "$REPO/spec" "$REPO/test" "$REPO/tests/Unit" "$REPO/app" "$REPO/src"
+    printf "  xit(\"returns 1\") do\n    expect(foo).to eq(1)\n  end\n" > "$REPO/spec/foo_spec.rb"
+    printf "  xit(\"returns 1\") do\n    assert_equal 1, foo\n  end\n" > "$REPO/test/foo_test.rb"
+    printf "<?php\n\$this->runSuite(exclude: ['slow']);\n" > "$REPO/tests/Unit/FooTest.php"
+    printf "  xit(\"returns 1\") do\n  end\n" > "$REPO/app/foo.rb"
+    printf "<?php\n\$this->runSuite(exclude: ['slow']);\n" > "$REPO/src/Foo.php"
+    git -C "$REPO" add -A
+    git -C "$REPO" commit -q -m change
+    run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
+    [ "$status" -eq 0 ]
+    assert_hit spec/foo_spec.rb test-weakening skip
+    assert_hit test/foo_test.rb test-weakening skip
+    assert_hit tests/Unit/FooTest.php test-weakening exclude-cfg
+    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "test-weakening" and (.file == "app/foo.rb" or .file == "src/Foo.php"))] | length == 0'
+}
+
+# ---------------------------------------------------------------------------
 # [POS-TABLE] 陽性の表駆動: 1 repo に複数ファイルを 1 回 commit し、1 回の実行で
 # hits[] をファイルごとに照合する。
 #   EXEC-3a..3i: 既存 exec-sink sink 群が引き続き hit する (回帰 pin, issue #616)

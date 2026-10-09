@@ -15,6 +15,10 @@
 #            uv.lock があれば uv run、poetry.lock があれば poetry run を前置
 #   Go     : go.mod → *_test.go をパッケージ単位で go test ./<dir>
 #   Rust   : Cargo.toml → repo 直下 tests/ 直下の <stem>.rs を cargo test --test <stem>(src/ の inline テストは受理しない)
+#   Ruby   : Gemfile.lock に rspec-core → spec/ 配下の *_spec.rb を bundle exec rspec(rspec)。それ以外で bin/rails が
+#            ある → test/ 配下の *_test.rb を bin/rails test(minitest)。bin/rails の無い素の minitest は判定しない
+#   PHP    : composer.json の require / require-dev に pestphp/pest → *Test.php を vendor/bin/pest(pest)。それ以外で
+#            phpunit/phpunit → vendor/bin/phpunit(phpunit)
 #   bats   : *.bats → bats(設定不要。常に受理)
 # どれにも当たらないファイルは runner:null(呼び出し側が「ランナー未検出」で拒否する)。
 #
@@ -22,7 +26,7 @@
 #   {"runners":[{"runner":"vitest","accept":[...],"exclude":[...],"command":"npx vitest run <files>"},...],
 #    "files":[{"file":"a.test.ts","runner":"vitest"},{"file":"x.rb","runner":null},...],
 #    "commands":[{"runner":"vitest","argv":["npx","vitest","run","a.test.ts"]},...]}
-# runners は repo で検出したランナー(順: JS / pytest / go / cargo / bats)。files / commands は引数のテストファイル分
+# runners は repo で検出したランナー(順: JS / pytest / go / cargo / Ruby / PHP / bats)。files / commands は引数のテストファイル分
 # (引数なしなら空配列)。commands は runner:null 以外のファイルを runner ごと(go はパッケージ・cargo は stem ごと)に
 # まとめた <repo> を cwd とする argv。exit: 0 / 引数不正・<repo> に入れない・jq 不在は 2。
 set -uo pipefail
@@ -83,6 +87,27 @@ fi
 GO=false; [ -f go.mod ] && GO=true
 CARGO=false; [ -f Cargo.toml ] && CARGO=true
 
+# --- Ruby(rspec / Rails minitest) ---
+RUBY_RUNNER=""
+RUBY_CMD=()
+if grep -qsE '^[[:space:]]+rspec-core([[:space:]]|$)' Gemfile.lock; then
+  RUBY_RUNNER=rspec; RUBY_CMD=(bundle exec rspec)
+elif [ -f bin/rails ]; then
+  RUBY_RUNNER=minitest; RUBY_CMD=(bin/rails test)
+fi
+
+# --- PHP(pest / phpunit) ---
+PHP_RUNNER=""
+PHP_CMD=()
+if [ -f composer.json ]; then
+  php_deps="$(jq -r '((.require // {}) + (."require-dev" // {})) | keys[]' composer.json 2>/dev/null)"
+  if grep -qx 'pestphp/pest' <<< "$php_deps"; then
+    PHP_RUNNER=pest; PHP_CMD=(vendor/bin/pest)
+  elif grep -qx 'phpunit/phpunit' <<< "$php_deps"; then
+    PHP_RUNNER=phpunit; PHP_CMD=(vendor/bin/phpunit)
+  fi
+fi
+
 JS_EXT='{js,jsx,mjs,cjs,ts,tsx,mts,cts}'
 
 # ファイル 1 件のランナー名(未検出は空)
@@ -104,6 +129,9 @@ runner_of() {
         case "$f" in tests/*/*) : ;; tests/*.rs) echo cargo ;; esac
       fi
       ;;
+    *_spec.rb) [ "$RUBY_RUNNER" = rspec ] && case "$f" in spec/*) echo rspec ;; esac ;;
+    *_test.rb) [ "$RUBY_RUNNER" = minitest ] && case "$f" in test/*) echo minitest ;; esac ;;
+    *Test.php) [ -n "$PHP_RUNNER" ] && echo "$PHP_RUNNER" ;;
     *.bats) echo bats ;;
   esac
   return 0
@@ -124,11 +152,14 @@ fi
 [ "$PYTEST" = true ] && add_runner pytest '["test_*.py","*_test.py"]' '[]' "${PY_CMD[*]} <files>"
 [ "$GO" = true ] && add_runner go '["*_test.go"]' '[]' 'go test ./<dir>'
 [ "$CARGO" = true ] && add_runner cargo '["tests/*.rs"]' '["src/ の inline テスト"]' 'cargo test --test <stem>'
+[ "$RUBY_RUNNER" = rspec ] && add_runner rspec '["spec/**/*_spec.rb"]' '[]' "${RUBY_CMD[*]} <files>"
+[ "$RUBY_RUNNER" = minitest ] && add_runner minitest '["test/**/*_test.rb"]' '[]' "${RUBY_CMD[*]} <files>"
+[ -n "$PHP_RUNNER" ] && add_runner "$PHP_RUNNER" '["*Test.php"]' '[]' "${PHP_CMD[*]} <files>"
 add_runner bats '["*.bats"]' '[]' 'bats <files>'
 
 # --- files / commands ---
 FILES='[]'
-JS_FILES=(); PY_FILES=(); BATS_FILES=(); GO_DIRS=(); CARGO_STEMS=()
+JS_FILES=(); PY_FILES=(); RUBY_FILES=(); PHP_FILES=(); BATS_FILES=(); GO_DIRS=(); CARGO_STEMS=()
 contains() { # needle haystack...
   local n="$1" x; shift
   for x in "$@"; do [ "$x" = "$n" ] && return 0; done
@@ -140,6 +171,8 @@ for f in "$@"; do
   case "$r" in
     vitest|jest|node) JS_FILES+=("$f") ;;
     pytest) PY_FILES+=("$f") ;;
+    rspec|minitest) RUBY_FILES+=("$f") ;;
+    pest|phpunit) PHP_FILES+=("$f") ;;
     bats) BATS_FILES+=("$f") ;;
     go)
       d="$(dirname "$f")"
@@ -163,6 +196,8 @@ add_command() { # runner argv...(argv は 1 行 1 要素で jq に渡す。--arg
 [ "${#PY_FILES[@]}" -gt 0 ] && add_command pytest "${PY_CMD[@]}" "${PY_FILES[@]}"
 for d in ${GO_DIRS[@]+"${GO_DIRS[@]}"}; do add_command go go test "$d"; done
 for s in ${CARGO_STEMS[@]+"${CARGO_STEMS[@]}"}; do add_command cargo cargo test --test "$s"; done
+[ "${#RUBY_FILES[@]}" -gt 0 ] && add_command "$RUBY_RUNNER" "${RUBY_CMD[@]}" "${RUBY_FILES[@]}"
+[ "${#PHP_FILES[@]}" -gt 0 ] && add_command "$PHP_RUNNER" "${PHP_CMD[@]}" "${PHP_FILES[@]}"
 [ "${#BATS_FILES[@]}" -gt 0 ] && add_command bats bats "${BATS_FILES[@]}"
 
 jq -nc --argjson r "$RUNNERS" --argjson f "$FILES" --argjson c "$COMMANDS" '{runners: $r, files: $f, commands: $c}'

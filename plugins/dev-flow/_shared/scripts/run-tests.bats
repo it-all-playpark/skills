@@ -201,6 +201,46 @@ EOF
     echo "$JSON" | jq -e '.status == "error" and .scripts[0].launch_failed == true'
 }
 
+# $1 = stub の絶対パス、$2 = calls.log に残す名前、$3 = exit code。"$PWD <名前> $*" を $TMP_DIR/calls.log に追記する
+make_runner_stub() {
+    mkdir -p "$(dirname "$1")"
+    printf '#!/usr/bin/env bash\necho "$PWD %s" "$@" >> "%s/calls.log"\nexit %s\n' "$2" "$TMP_DIR" "$3" > "$1"
+    chmod +x "$1"
+}
+
+@test "run-*.sh 無し: Gemfile.lock に rspec-core があれば bundle exec rspec、無く bin/rails があれば bin/rails test で全件実行する" {
+    printf 'GEM\n  specs:\n    rspec-core (3.13.0)\n' > "$WT/Gemfile.lock"
+    make_runner_stub "$STUB_DIR/bundle" bundle 0
+    make_runner_stub "$WT/bin/rails" bin/rails 1
+    export PATH="$STUB_DIR:$PATH"
+    run_tests
+    echo "$JSON" | jq -e '.status == "passed" and .green == true'
+    echo "$JSON" | jq -e '.scripts == [{path: "bundle exec rspec", exit: 0, launch_failed: false}]'
+    [ "$(cat "$TMP_DIR/calls.log")" = "$WT bundle exec rspec" ]
+
+    rm "$TMP_DIR/calls.log"
+    printf 'GEM\n  specs:\n    minitest (5.25.1)\n' > "$WT/Gemfile.lock"
+    run_tests
+    echo "$JSON" | jq -e '.status == "failed" and .scripts == [{path: "bin/rails test", exit: 1, launch_failed: false}]'
+    [ "$(cat "$TMP_DIR/calls.log")" = "$WT bin/rails test" ]
+}
+
+@test "run-*.sh 無し: composer.json に pestphp/pest があれば vendor/bin/pest、無く phpunit/phpunit があれば vendor/bin/phpunit で全件実行する" {
+    echo '{"require-dev":{"pestphp/pest":"^3.0","phpunit/phpunit":"^11.0"}}' > "$WT/composer.json"
+    make_runner_stub "$WT/vendor/bin/pest" vendor/bin/pest 0
+    make_runner_stub "$WT/vendor/bin/phpunit" vendor/bin/phpunit 1
+    run_tests
+    echo "$JSON" | jq -e '.status == "passed" and .green == true'
+    echo "$JSON" | jq -e '.scripts == [{path: "vendor/bin/pest", exit: 0, launch_failed: false}]'
+    [ "$(cat "$TMP_DIR/calls.log")" = "$WT vendor/bin/pest" ]
+
+    rm "$TMP_DIR/calls.log"
+    echo '{"require":{"phpunit/phpunit":"^11.0"}}' > "$WT/composer.json"
+    run_tests
+    echo "$JSON" | jq -e '.status == "failed" and .scripts == [{path: "vendor/bin/phpunit", exit: 1, launch_failed: false}]'
+    [ "$(cat "$TMP_DIR/calls.log")" = "$WT vendor/bin/phpunit" ]
+}
+
 @test "run-*.sh もフォールバックも無ければ tests no_tests（scripts 空・green false）" {
     rmdir "$WT/tests"
     run_tests

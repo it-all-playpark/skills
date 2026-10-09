@@ -276,6 +276,18 @@ test('対応する本番ファイルも変えたテスト（*.test.* / *.spec.* 
   assert.equal(result.uncorrected_shape, 'complex');
 });
 
+test('Ruby / PHP のテスト（*_spec.rb / *_test.rb / *Test.php）も対応する本番ファイルを変えていれば数えない', () => {
+  const stats = [
+    stat('app/models/foo.rb', 10, 0), stat('spec/models/foo_spec.rb', 10, 0),
+    stat('lib/bar.rb', 10, 0), stat('test/lib/bar_test.rb', 10, 0),
+    stat('src/Baz.php', 10, 0), stat('tests/Unit/BazTest.php', 10, 0),
+  ];
+  const result = classifyShape(baseReq({ issue_type: 'feat' }), 6, stats);
+  assert.match(result.reason, /weighted 3（docs 0 \/ 対応本番ありの test 3 を除外）/);
+  assert.equal(result.shape, 'standard');
+  assert.equal(result.uncorrected_shape, 'complex');
+});
+
 test('対応する本番ファイルを変えていないテストは数える', () => {
   const stats = [stat('src/foo.ts', 10, 0), stat('src/other.test.ts', 10, 0), stat('src/another.spec.ts', 10, 0)];
   const result = classifyShape(baseReq(), 3, stats);

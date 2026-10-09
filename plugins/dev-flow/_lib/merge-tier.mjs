@@ -107,12 +107,13 @@ export function newlyUncheckedSecClasses(before, after) {
   return result;
 }
 
-// 変更ファイルが docs(.md/.mdx/.txt, docs/) か test(*test*, *spec*, .bats) のみか。
+// 変更ファイルが docs(.md/.mdx/.txt, docs/) か test(*test*, *spec*, .bats, *_spec.rb / *_test.rb, *Test.php) のみか。
 export function isDocsOrTestOnly(files) {
   if (!Array.isArray(files) || files.length === 0) return false;
   return files.every((f) =>
     /\.(md|mdx|txt)$/i.test(f) || /(^|\/)docs\//i.test(f)
-    || /(^|\/|\.)(test|spec)([./]|$)/i.test(f) || /\.bats$/i.test(f));
+    || /(^|\/|\.)(test|spec)([./]|$)/i.test(f) || /\.bats$/i.test(f)
+    || /_(test|spec)\.rb$/.test(f) || /Test\.php$/.test(f));
 }
 
 // Final reconcile（pr-iterate fix 適用後の最終 tree 再検証、issue #320）の finalReconcile enum。

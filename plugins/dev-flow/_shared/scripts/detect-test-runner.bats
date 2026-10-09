@@ -103,6 +103,55 @@ JS_ACCEPT='["*.test.{js,jsx,mjs,cjs,ts,tsx,mts,cts}","*.spec.{js,jsx,mjs,cjs,ts,
   [ "$(detect '[.files[].runner]' src/lib.rs tests/common/mod.rs)" = '[null,null]' ]
 }
 
+@test "rspec: Gemfile.lock に rspec-core がある repo は spec/ 配下の *_spec.rb を bundle exec rspec で起動する(bin/rails があっても rspec)" {
+  printf 'GEM\n  specs:\n    rspec-core (3.13.0)\n      rspec-support (~> 3.13.0)\n' > "$REPO/Gemfile.lock"
+  mkdir -p "$REPO/bin"
+  : > "$REPO/bin/rails"
+
+  [ "$(detect '.runners[0] | [.runner, .accept, .command]')" = '["rspec",["spec/**/*_spec.rb"],"bundle exec rspec <files>"]' ]
+  [ "$(detect '.commands' spec/foo_spec.rb spec/models/bar_spec.rb)" = '[{"runner":"rspec","argv":["bundle","exec","rspec","spec/foo_spec.rb","spec/models/bar_spec.rb"]}]' ]
+  [ "$(detect '[.files[].runner]' lib/foo_spec.rb test/foo_test.rb)" = '[null,null]' ]
+}
+
+@test "minitest: rspec-core の無い repo で bin/rails があれば test/ 配下の *_test.rb を bin/rails test で起動する" {
+  printf 'GEM\n  specs:\n    minitest (5.25.1)\n' > "$REPO/Gemfile.lock"
+  mkdir -p "$REPO/bin"
+  : > "$REPO/bin/rails"
+
+  [ "$(detect '.runners[0] | [.runner, .accept, .command]')" = '["minitest",["test/**/*_test.rb"],"bin/rails test <files>"]' ]
+  [ "$(detect '.commands' test/foo_test.rb test/models/bar_test.rb)" = '[{"runner":"minitest","argv":["bin/rails","test","test/foo_test.rb","test/models/bar_test.rb"]}]' ]
+  [ "$(detect '[.files[].runner]' spec/foo_spec.rb lib/foo_test.rb)" = '[null,null]' ]
+}
+
+@test "pest: composer.json の require-dev に pestphp/pest がある repo は *Test.php を vendor/bin/pest で起動する(phpunit があっても pest)" {
+  echo '{"require":{"php":"^8.2"},"require-dev":{"pestphp/pest":"^3.0","phpunit/phpunit":"^11.0"}}' > "$REPO/composer.json"
+
+  [ "$(detect '.runners[0] | [.runner, .accept, .command]')" = '["pest",["*Test.php"],"vendor/bin/pest <files>"]' ]
+  [ "$(detect '.commands' tests/Unit/FooTest.php tests/Feature/BarTest.php)" = '[{"runner":"pest","argv":["vendor/bin/pest","tests/Unit/FooTest.php","tests/Feature/BarTest.php"]}]' ]
+  [ "$(detect '[.files[].runner]' src/Foo.php)" = '[null]' ]
+}
+
+@test "phpunit: composer.json の require / require-dev に phpunit/phpunit がある repo は *Test.php を vendor/bin/phpunit で起動する" {
+  echo '{"require-dev":{"phpunit/phpunit":"^11.0"}}' > "$REPO/composer.json"
+
+  [ "$(detect '.runners[0] | [.runner, .accept, .command]')" = '["phpunit",["*Test.php"],"vendor/bin/phpunit <files>"]' ]
+  [ "$(detect '.commands' tests/Unit/FooTest.php)" = '[{"runner":"phpunit","argv":["vendor/bin/phpunit","tests/Unit/FooTest.php"]}]' ]
+
+  echo '{"require":{"phpunit/phpunit":"^11.0"}}' > "$REPO/composer.json"
+  [ "$(detect '.runners[0].runner')" = '"phpunit"' ]
+}
+
+@test "Ruby / PHP 判定対象外: bin/rails の無い repo の test/*_test.rb、test 依存の無い composer.json の *Test.php は runner:null" {
+  printf 'GEM\n  specs:\n    minitest (5.25.1)\n' > "$REPO/Gemfile.lock"
+  echo '{"require":{"php":"^8.2","laravel/framework":"^11.0"}}' > "$REPO/composer.json"
+
+  run bash "$SCRIPT" "$REPO" test/foo_test.rb spec/foo_spec.rb tests/Unit/FooTest.php
+  [ "$status" -eq 0 ]
+  [ "$(printf '%s' "$output" | jq -c '[.runners[].runner]')" = '["bats"]' ]
+  [ "$(printf '%s' "$output" | jq -c '[.files[].runner]')" = '[null,null,null]' ]
+  [ "$(printf '%s' "$output" | jq -c '.commands')" = '[]' ]
+}
+
 @test "bats: 設定の無い repo でも *.bats は bats で起動する" {
   [ "$(detect '.runners')" = '[{"runner":"bats","accept":["*.bats"],"exclude":[],"command":"bats <files>"}]' ]
   [ "$(detect '.commands' a.bats scripts/b.bats)" = '[{"runner":"bats","argv":["bats","a.bats","scripts/b.bats"]}]' ]
@@ -121,14 +170,16 @@ JS_ACCEPT='["*.test.{js,jsx,mjs,cjs,ts,tsx,mts,cts}","*.spec.{js,jsx,mjs,cjs,ts,
   [ "$(detect '[.files[].runner]' a.test.js)" = '[null]' ]
 }
 
-@test "複数エコシステムの repo はランナーを JS / pytest / go / cargo / bats の順に並べ、ファイルごとに振り分ける" {
+@test "複数エコシステムの repo はランナーを JS / pytest / go / cargo / Ruby / PHP / bats の順に並べ、ファイルごとに振り分ける" {
   echo '{"devDependencies":{"vitest":"^3.0.0"}}' > "$REPO/package.json"
   printf '[pytest]\n' > "$REPO/pytest.ini"
   printf 'module example.com/fx\n' > "$REPO/go.mod"
   printf '[package]\nname = "fx"\n' > "$REPO/Cargo.toml"
+  printf 'GEM\n  specs:\n    rspec-core (3.13.0)\n' > "$REPO/Gemfile.lock"
+  echo '{"require-dev":{"phpunit/phpunit":"^11.0"}}' > "$REPO/composer.json"
 
-  [ "$(detect '[.runners[].runner]')" = '["vitest","pytest","go","cargo","bats"]' ]
-  [ "$(detect '[.commands[].runner]' x.bats tests/r.rs a_test.go test_p.py a.test.ts)" = '["vitest","pytest","go","cargo","bats"]' ]
+  [ "$(detect '[.runners[].runner]')" = '["vitest","pytest","go","cargo","rspec","phpunit","bats"]' ]
+  [ "$(detect '[.commands[].runner]' x.bats tests/FooTest.php spec/a_spec.rb tests/r.rs a_test.go test_p.py a.test.ts)" = '["vitest","pytest","go","cargo","rspec","phpunit","bats"]' ]
 }
 
 @test "引数不正・repo に入れないときは exit 2" {
