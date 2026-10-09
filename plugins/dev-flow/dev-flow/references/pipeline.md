@@ -289,8 +289,9 @@ hit で `runEval=true` になったケースは lite ゲート条件を満たさ
   / `isolation` / `unknown`）で「isolation 不成立」と「その他の書き込み失敗（前 run の残置物への
   上書き拒否等）」を区別して報告する — fail-closed（throw）自体は全分類で不変。回避手順は
   1. 書き込みに失敗した cwd とは別の worktree を `git worktree add`、2. `EnterWorktree({path})`、
-  3. Workflow 再実行（dev-flow は `dev-flow-prerun --issue <N> --worktree <path>` の stdout JSON を
-  `args.setup` に渡し直す）。probe 自体の失敗（null）は fail-open（警告 log のみ）で扱う。
+  3. Workflow 再実行（dev-flow は `dev-flow-prerun --issue <N> --worktree <path>` の後、別の Bash 呼び出しで
+  `ensure-worktree-deps --setup <path>/.devflow-tmp/prerun-setup.json` を実行し、その stdout JSON を `args.setup` に
+  渡し直す。prerun の生 JSON は `deps` / `epoch_end` を持たず Setup で即 throw する）。probe 自体の失敗（null）は fail-open（警告 log のみ）で扱う。
   canonical は `_lib/isolation-probe.mjs` の `isolationCleanupPrompt` / `isolationProbePrompt`
   （token 引数必須。関数側にデフォルトを置かず呼び出し元が明示的に渡す） / `isolationFailureMessage` を
   dev-flow.js・pr-iterate.js 双方へ inline 生成して流用する（両 workflow で同一の文言・手順を

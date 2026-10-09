@@ -5545,7 +5545,7 @@ if (req.ac_actors.includes('human')) log(`analyze: 人手 AC ${req.ac_actors.fil
 const isoToken = String(PRERUN.epoch)
 const isoProbe = await trackedAgent(isolationProbePrompt(WT, isoToken), { agentType: 'dev-runner-haiku-wo', schema: ISOLATION_PROBE, label: 'isolation-probe', phase: 'Setup' })
 if (isoProbe && isoProbe.written === false) {
-  throw new Error(isolationFailureMessage({ worktree: WT, branch, startRef: `origin/${BASE}`, workflowName: 'dev-flow-run', workflowArgs: `{ issue: ${ISSUE}, setup: <dev-flow-prerun --issue ${ISSUE} --worktree ${WT} の stdout JSON> }`, targetPath: WT, error: isoProbe.error }))
+  throw new Error(isolationFailureMessage({ worktree: WT, branch, startRef: `origin/${BASE}`, workflowName: 'dev-flow-run', workflowArgs: `{ issue: ${ISSUE}, setup: <dev-flow-prerun --issue ${ISSUE} --worktree ${WT} の後、別の Bash 呼び出しで実行した ensure-worktree-deps --setup ${WT}/.devflow-tmp/prerun-setup.json の stdout JSON> }`, targetPath: WT, error: isoProbe.error }))
 }
 if (!isoProbe) log('⚠️ isolation probe 自体が失敗 — 書き込み可否を診断できず（fail-open で続行）')
 

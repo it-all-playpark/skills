@@ -48,6 +48,8 @@ test('[fail-closed] isolation-probe が written:false を返すと throw し、m
   assert.match(error.message, /dev-flow-run/);
   assert.match(error.message, /dev-flow-prerun --issue 1/);
   assert.match(error.message, /EnterWorktree/);
+  // args.setup は deps / epoch_end を必須にするため、prerun の生 JSON ではなく ensure-worktree-deps --setup の stdout を渡させる
+  assert.match(error.message, /setup: <[^>]*ensure-worktree-deps --setup \/tmp\/wt\/\.devflow-tmp\/prerun-setup\.json の stdout JSON>/);
   assert.ok(
     !calls.some((c) => c.label === 'impl:serial:issue-1' || c.agentType === 'dev-flow:dev-implementer'),
     'Setup phase で throw した時点で Implement phase（dev-implementer 呼び出し）に到達してはならない',
