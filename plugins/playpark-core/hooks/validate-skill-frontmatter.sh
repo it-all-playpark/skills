@@ -5,12 +5,17 @@
 #
 # Validation rules:
 #   - name: required
-#   - description: required, max 500 chars
-#   - model: if present, must be haiku|sonnet|opus
+#   - description: required. description + when_to_use combined max 1536 chars
+#     (Claude Code truncates the combined text there; description alone has no limit)
+#   - model: if present, must be inherit, a /model alias, or a full model ID (claude-*)
 #   - effort: if present, must be low|medium|high|xhigh|max
 #   - context: if present, must be fork
+#
+# Spec: https://code.claude.com/docs/en/skills#frontmatter-reference
 
 set -euo pipefail
+
+COMBINED_DESC_LIMIT=1536
 
 INPUT=$(cat)
 
@@ -23,6 +28,22 @@ FRONTMATTER=$(echo "$CONTENT" | sed -n '/^---$/,/^---$/p' | sed '1d;$d')
 
 ERRORS=()
 
+# Value of a top-level key: inline scalar, or the indented lines of a block scalar (| > |- >- ...)
+field_value() {
+  local key=$1 inline block_re='^[|>][-+]?$'
+  inline=$(echo "$FRONTMATTER" | grep -E "^${key}:" | head -1 | sed -E "s/^${key}:[[:space:]]*//")
+  if [[ -z $inline || $inline =~ $block_re ]]; then
+    echo "$FRONTMATTER" | sed -n "/^${key}:/,/^[a-z]/{/^${key}:/d;/^[a-z]/d;p;}" | sed 's/^  //'
+  else
+    echo "$inline"
+  fi
+}
+
+# Character (code point) count independent of the caller's locale
+char_len() {
+  printf '%s' "$1" | jq -Rs 'length'
+}
+
 # --- Required fields ---
 
 NAME=$(echo "$FRONTMATTER" | grep -E '^name:\s*' | head -1 | sed 's/^name:\s*//' | xargs 2>/dev/null || true)
@@ -33,23 +54,21 @@ fi
 if ! echo "$FRONTMATTER" | grep -qE '^description:'; then
   ERRORS+=("Missing required field: description")
 else
-  DESC_LINE=$(echo "$FRONTMATTER" | grep -E '^description:' | head -1)
-  DESC_INLINE=$(echo "$DESC_LINE" | sed 's/^description:\s*//')
+  DESC_VALUE=$(field_value description)
 
-  if [[ $DESC_INLINE == "|" || $DESC_INLINE == ">" || -z $DESC_INLINE ]]; then
-    DESC_VALUE=$(echo "$FRONTMATTER" | sed -n '/^description:/,/^[a-z]/{/^description:/d;/^[a-z]/d;p;}' | sed 's/^  //')
-  else
-    DESC_VALUE="$DESC_INLINE"
-  fi
-
-  DESC_LEN=${#DESC_VALUE}
-  if [[ $DESC_LEN -gt 500 ]]; then
-    ERRORS+=("description exceeds 500 character limit (current: ${DESC_LEN} chars)")
-  fi
-
-  TRIMMED_DESC=$(echo "$DESC_VALUE" | xargs 2>/dev/null || true)
-  if [[ -z $TRIMMED_DESC ]]; then
+  # Not xargs: it rejects unmatched quotes (e.g. "devil's") and would report a non-empty description as empty
+  if [[ -z ${DESC_VALUE//[[:space:]]/} ]]; then
     ERRORS+=("description is empty")
+  fi
+
+  WHEN_VALUE=""
+  if echo "$FRONTMATTER" | grep -qE '^when_to_use:'; then
+    WHEN_VALUE=$(field_value when_to_use)
+  fi
+
+  COMBINED_LEN=$(($(char_len "$DESC_VALUE") + $(char_len "$WHEN_VALUE")))
+  if [[ $COMBINED_LEN -gt $COMBINED_DESC_LIMIT ]]; then
+    ERRORS+=("description + when_to_use exceeds ${COMBINED_DESC_LIMIT} character limit (current: ${COMBINED_LEN} chars)")
   fi
 fi
 
@@ -58,8 +77,9 @@ fi
 MODEL=$(echo "$FRONTMATTER" | grep -E '^model:\s*' | head -1 | sed 's/^model:\s*//' | xargs 2>/dev/null || true)
 if [[ -n $MODEL ]]; then
   case "$MODEL" in
-  haiku | sonnet | opus) ;;
-  *) ERRORS+=("Invalid model: '${MODEL}'. Must be one of: haiku, sonnet, opus") ;;
+  inherit | default | best | fable | sonnet | opus | haiku | 'sonnet[1m]' | 'opus[1m]' | opusplan) ;;
+  claude-[a-z0-9]*) ;;
+  *) ERRORS+=("Invalid model: '${MODEL}'. Must be inherit, an alias (default, best, fable, sonnet, opus, haiku, sonnet[1m], opus[1m], opusplan), or a full model ID (claude-*)") ;;
   esac
 fi
 

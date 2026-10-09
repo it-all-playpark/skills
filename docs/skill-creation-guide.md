@@ -41,14 +41,14 @@ user-invocable: true                # false でメニュー非表示（backgroun
 | Field | Required | Description |
 |-------|----------|-------------|
 | `name` | Yes | 表示名・slash-command 識別子（小文字・数字・ハイフン、最大 64 文字。省略時はディレクトリ名） |
-| `description` | Yes | autocomplete・auto-discovery に使用。**常にコンテキスト消費**するため簡潔に。`when_to_use` と合算して **1,536 文字で truncate** される |
+| `description` | Yes | autocomplete・auto-discovery に使用。**常にコンテキスト消費**するため簡潔に。`when_to_use` と合算して **1,536 文字で truncate** される（`description` 単体の上限は無い） |
 | `when_to_use` | No | `description` の補足。トリガーフレーズや使用例を記載（合算 1,536 文字制限あり） |
 | `argument-hint` | No | autocomplete に表示する引数の型ヒント（例: `[issue-number]`, `<file> [--dry-run]`） |
 | `arguments` | No | named positional 引数の宣言（例: `[issue, branch]`）。skill 本文で `$issue` / `$branch` として参照可能 |
 | `paths` | No | glob リスト。指定パス配下でのみ自動呼び出し有効化（省略時は全パス） |
 | `shell` | No | SKILL.md 本文中の `` !`command` `` 実行ブロックのシェル（`bash`（既定）/ `powershell`） |
 | `allowed-tools` | No | 許可ツールリスト |
-| `model` | No | 実行モデル指定（`haiku` / `sonnet` / `opus` / `inherit`） |
+| `model` | No | 実行モデル指定。`/model` と同じ値か `inherit`: エイリアス（`default` / `best` / `fable` / `sonnet` / `opus` / `haiku` / `sonnet[1m]` / `opus[1m]` / `opusplan`）または完全な model ID（例: `claude-opus-5-5`） |
 | `effort` | No | 推論深度（`low` / `medium` / `high` / `xhigh` / `max`）。session 設定を override |
 | `context` | No | `fork` で分離サブエージェント |
 | `agent` | No | `context:fork` 時のサブエージェントタイプ |
