@@ -4,6 +4,7 @@
 # README は marketplace 利用者が最初に読む文書で、実体とずれると「載っている skill が
 # 無い」「手順どおりに動かない」になる。ここでは実体から導ける事実だけを照合する:
 #   - スキル一覧 = plugin 配下の自作 skill（SKILL.md / skill.md）+ skills-lock.json の外部 skill
+#     （行の削除・架空 skill の追加で落ちることを fixture の README で確かめる。issue #925）
 #   - 件数は書かない（skill / agent / wrapper の数は増減で腐る。manifest の件数は
 #     plugin-manifest.bats が実数と照合する）
 #   - License は LICENSE / plugin.json の license と一致させ、外部 skill は上流 license に従うと書く
@@ -69,15 +70,45 @@ readme_config_keys() {
     done
 }
 
-@test "README のスキル一覧は自作 skill と skills-lock.json の外部 skill に過不足なく一致する" {
+# <readme> のスキル一覧が自作 skill + 外部 skill と過不足なく一致すれば 0。ずれた skill 名を出して 1 を返す。
+# local README で readme_h2_section の読み先を差し替える（fixture の README でも同じ判定を通すため）。
+readme_skill_list_matches() {
+    local README="$1" listed own external actual
     listed="$(readme_h2_section 'スキル一覧' | grep -oE '^\| `[a-z0-9-]+` \|' | grep -oE '[a-z0-9-]+' | sort -u)"
     own="$(git -C "$REPO_ROOT" ls-files -- 'plugins/*' | grep -iE '^plugins/[^/]+/[^/]+/skill\.md$' | cut -d/ -f3)"
     external="$(jq -r '.skills | keys[]' "$LOCK")"
     actual="$(printf '%s\n%s\n' "$own" "$external" | sort -u)"
-    [ -n "$listed" ]
-    echo "listed=[$listed]"
-    echo "actual=[$actual]"
-    [ "$listed" = "$actual" ]
+    [ -n "$listed" ] || { echo "スキル一覧の表が空"; return 1; }
+    [ "$listed" = "$actual" ] && return 0
+    echo "$listed" > "$BATS_TEST_TMPDIR/listed"
+    echo "$actual" > "$BATS_TEST_TMPDIR/actual"
+    grep -vxFf "$BATS_TEST_TMPDIR/actual" "$BATS_TEST_TMPDIR/listed" | sed 's/^/README にだけある: /'
+    grep -vxFf "$BATS_TEST_TMPDIR/listed" "$BATS_TEST_TMPDIR/actual" | sed 's/^/README に無い: /'
+    return 1
+}
+
+@test "README のスキル一覧は自作 skill と skills-lock.json の外部 skill に過不足なく一致する" {
+    run readme_skill_list_matches "$README"
+    echo "$output"
+    [ "$status" -eq 0 ]
+}
+
+@test "fixture: README のスキル一覧から実在 skill を 1 行消すと一致しない" {
+    fixture="$BATS_TEST_TMPDIR/README.md"
+    grep -v '^| `git-commit` |' "$README" > "$fixture"
+    run readme_skill_list_matches "$fixture"
+    echo "$output"
+    [ "$status" -eq 1 ]
+    [ "$output" = "README に無い: git-commit" ]
+}
+
+@test "fixture: README のスキル一覧に実在しない skill を 1 行足すと一致しない" {
+    fixture="$BATS_TEST_TMPDIR/README.md"
+    awk '{print} $0 ~ /^\| `git-commit` \|/ {print "| `no-such-skill` | 実在しない |"}' "$README" > "$fixture"
+    run readme_skill_list_matches "$fixture"
+    echo "$output"
+    [ "$status" -eq 1 ]
+    [ "$output" = "README にだけある: no-such-skill" ]
 }
 
 @test "README のスキル一覧で 🔗（外部 skill）を付けた行は skills-lock.json の skill と一致する" {

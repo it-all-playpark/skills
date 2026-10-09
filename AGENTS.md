@@ -43,6 +43,23 @@ SKILL.md description は third-person 命令形で書く (`Extracts ...`, `Conve
 `Use when:` には具体トリガ語を列挙する。`"I"` / `"this skill"` 等の一人称は禁止。
 控えめに書くと Claude が呼ばない — push 気味に書く。
 
+## Public repo
+
+本 repo は public。第三者が clone して読み、plugin として install する前提で書く。
+
+- **個人の絶対パス・メールアドレス・private org / repo 名・内部 ID を書かない** — 例には `acme/...` と
+  placeholder（`/Users/x/`・`<user>`・`me@example.com` 等）を使う
+- **分析レポート・計測結果・セッションのメモは repo に入れない** — repo root の `claudedocs` は gitignore 済み。
+  経緯は issue に残す
+- **実行時に本 repo・作者のパス・作者の環境（dotfiles、jev-broker など）を前提にしない** — 必要なものは
+  前提条件として書き、可能なら設定や引数で受け取る
+- **plugin の hook は既定で状態を変えない** — プロセスの kill・ファイル削除・外部送信は opt-in にする
+  （lint では判定できないので規約で持つ）
+
+機械的に検出できる部分（ホームディレクトリの絶対パス・メールアドレス・private org の参照・内部メモと
+transcript パス・plugins/ の実行経路での本 repo のハードコード）は `tests/public-repo-hygiene.bats` が
+全追跡ファイルを走査して CI で強制する。placeholder の例外はそのテストの許可リストに理由付きで足す。
+
 ## Testing instructions
 
 決定論的スクリプトには bats (`*.bats`) でユニットテストを書く。テストファイルは実装スクリプトの隣に配置:
