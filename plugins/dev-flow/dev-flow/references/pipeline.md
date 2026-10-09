@@ -65,6 +65,16 @@ enum で必須（欠落・out-of-enum は throw）。終端サマリーの投稿
 （dev-flow は Merge tier の後に自分の終端サマリーを投稿する）。nested 無しで Workflow を直接起動した場合は従来どおり
 pr-meta probe で値を取る。単体起動の worktree は run 後も削除しない（人間が確認してから `worktree-teardown` で片付ける）。
 
+pr-iterate は review と CI gate が通った round で LGTM を確定する直前に base との conflict を読む（`mergeable-check#i`）。
+CONFLICTING / DIRTY のときだけ `conflict-resolve#i` が base を merge し、決定論スクリプト `conflict-autoresolve` が
+衝突ファイルを diff3 で型 A（全 hunk の base 側が空 → PR 側 → base 側の和集合）/ 型 B（`.claude/workflows/*.js` の
+inline 生成区間内だけの衝突で canonical は衝突なし → `sync-inlines --write` で再生成）に分類する。全ファイルが A / B
+なら merge commit を push して次 iteration の review（`git show --remerge-diff` の範囲）→ CI gate を通してから LGTM を
+確定し、merge commit は `fixes_applied` に数える（nested では Final reconcile が最終 tree の test を取り直す）。
+1 ファイルでもそれ以外なら `git merge --abort` で戻して LGTM にし、Merge tier の `mergeable_conflicting` HOLD に任せる
+（判定は変えない）。base の行を両側が書き換えた hunk は LLM に解かせない — どちらを採るかは仕様判断。
+merge base 名は `args.nested.base_ref`（dev-flow は Setup の base、wrapper は `pr-iterate-prerun` の baseRefName）。
+
 Merge tier を pr-iterate の後に置くのは、fix 適用後の最終 tree に対して danger-grep 再実行・danger 再
 reconcile を行い、merge 判定を最新の PR 内容に基づかせるため。pr-iterate が fix を適用した run では
 Final reconcile phase が worktree を PR 最終 HEAD へ同期し test suite を一発再実行する（red / 再検証

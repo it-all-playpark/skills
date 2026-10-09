@@ -36,6 +36,7 @@ ac-lint
 analyze-issue
 check-ci
 ci-wait
+conflict-autoresolve
 cross-repo-artifacts
 detect-and-install
 detect-stack
@@ -81,6 +82,7 @@ EOF
 target_for() {
     case "$1" in
         journal) echo "journal/scripts/journal.sh" ;;
+        conflict-autoresolve) echo "_shared/scripts/conflict-autoresolve.sh" ;;
         cross-repo-artifacts) echo "_shared/scripts/cross-repo-artifacts.sh" ;;
         detect-and-install) echo "_shared/scripts/detect-and-install.sh" ;;
         diff-risk-classify) echo "_shared/scripts/diff-risk-classify.sh" ;;
@@ -136,7 +138,7 @@ skills_target_for() {
     [ "$actual" = "$expected" ]
 }
 
-@test "plugins/dev-flow/bin の entry は対象23本と完全一致する" {
+@test "plugins/dev-flow/bin の entry は対象24本と完全一致する" {
     expected="$(devflow_expected_names)"
     actual="$(/bin/ls -1 "$REPO_ROOT/plugins/dev-flow/bin" | sort)"
     [ "$actual" = "$expected" ]

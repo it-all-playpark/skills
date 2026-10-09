@@ -604,7 +604,22 @@ function formatCiLastStatusLine(ciLastStatus, ciLastFailedChecks, pr) {
   return `**最終 CI 状態**: ${label}`;
 }
 
-function buildTerminalSummaryBody({ pr, status, iterations, lastDecision, lastSummary, lastVerificationEvidence, history, ciWaitSeconds, ciPollAttempts, ciLastStatus = null, ciLastFailedChecks = [], humanFollowups = [] }) {
+function formatConflictAutoresolveLines(list) {
+  const fileCell = (f) => `\`${mdCell(f.path)}\`（${f.type === 'A' || f.type === 'B' ? `型 ${f.type}` : mdCell(f.type)}）`;
+  return (list || []).filter((r) => r != null).map((r) => {
+    const files = Array.isArray(r.files) ? r.files : [];
+    if (r.status === 'resolved') {
+      const sha = r.merge_sha ? `merge commit \`${String(r.merge_sha).slice(0, 7)}\` を push — ` : '';
+      return `- 反復 ${r.iteration}: ✅ 自動解消した（${sha}${files.map(fileCell).join(' / ') || '—'}）`;
+    }
+    const stopped = files.filter((f) => f.type !== 'A' && f.type !== 'B');
+    const shown = stopped.length > 0 ? stopped : files;
+    const reason = r.reason ? `${mdCell(r.reason)}` : mdCell(r.status);
+    return `- 反復 ${r.iteration}: ⚠️ 自動解消しなかった（${reason}${shown.length ? ` — 止めたファイル: ${shown.map(fileCell).join(' / ')}` : ''}）`;
+  });
+}
+
+function buildTerminalSummaryBody({ pr, status, iterations, lastDecision, lastSummary, lastVerificationEvidence, history, ciWaitSeconds, ciPollAttempts, ciLastStatus = null, ciLastFailedChecks = [], humanFollowups = [], conflictAutoresolve = [] }) {
   const DECISION_EMOJI = { 'approve': '✅', 'request-changes': '🔴', 'comment': '💬' };
   const lines = [];
 
@@ -672,6 +687,14 @@ function buildTerminalSummaryBody({ pr, status, iterations, lastDecision, lastSu
     lines.push(`### 👤 人間側 follow-up（worktree の外を指す指摘 — 自動修正の対象外・${followups.length} 件）`);
     lines.push('');
     lines.push(...formatFindingsList(followups, { withIter: followups.every((f) => f.iter != null) }));
+  }
+
+  const conflictLines = formatConflictAutoresolveLines(conflictAutoresolve);
+  if (conflictLines.length > 0) {
+    lines.push('');
+    lines.push('### 🔀 base との conflict の自動解消');
+    lines.push('');
+    lines.push(...conflictLines);
   }
 
   const allMinor = histList.flatMap((r) => (r.minor ?? []).map((f) => ({ iter: r.iteration, ...f })));
@@ -918,6 +941,91 @@ function ciHeadRejectReason({ ci, expectedSha }) {
   return null;
 }
 // ==== END inline: _lib/ci-check.mjs ====
+// ==== BEGIN inline: _lib/conflict-autoresolve.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
+
+const MERGEABLE_STATE = {
+  type: 'object',
+  required: ['mergeable', 'mergeStateStatus'],
+  properties: { mergeable: { type: 'string' }, mergeStateStatus: { type: 'string' } },
+};
+
+const CONFLICT_RESOLVE = {
+  type: 'object',
+  required: ['fetched', 'pushed'],
+  properties: {
+    fetched: { type: 'boolean' },
+    pushed: { type: 'boolean' },
+    result: {
+      type: 'object',
+      properties: {
+        status: { type: 'string' },
+        reason: { type: 'string' },
+        base_ref: { type: 'string' },
+        head_before: { type: 'string' },
+        head_after: { type: 'string' },
+        restored: { type: 'boolean' },
+        files: { type: 'array', items: { type: 'object', properties: { path: { type: 'string' }, type: { type: 'string' } } } },
+      },
+    },
+  },
+};
+
+const CONFLICT_SCRIPT_STATUSES = ['resolved', 'aborted', 'no_conflict', 'error'];
+
+function isConflictingMergeable(meta) {
+  if (meta == null || typeof meta !== 'object') return false;
+  const mg = String(meta.mergeable ?? '').toUpperCase();
+  const ms = String(meta.mergeStateStatus ?? '').toUpperCase();
+  return mg === 'CONFLICTING' || ms === 'DIRTY';
+}
+
+function mergeableCheckPrompt({ pr, repo }) {
+  const repoArg = repo ? ` --repo ${repo}` : '';
+  return `## Objective\nPR #${pr} の base branch との conflict 状態（mergeable / mergeStateStatus）を読む。\n\n`
+    + `## Steps\n\`gh pr view ${pr}${repoArg} --json mergeable,mergeStateStatus\` を先頭トークンが gh の bare 単文で 1 回だけ実行せよ`
+    + `（cd 前置・\`bash\` 前置・環境変数代入前置・&& 連結・パイプ・リダイレクトは禁止）。`
+    + `stdout の mergeable と mergeStateStatus の値を一字一句そのまま返す。コマンドが失敗したら両方を空文字で返す。\n\n`
+    + `## Output format\n{ "mergeable": string, "mergeStateStatus": string }\nprose 禁止。JSON のみ返せ。\n\n`
+    + `## Tools\n使用可: Bash のみ\n\n`
+    + `## Boundary\n読み取り専用。ファイル変更・git 操作禁止。\n\n`
+    + `## Token cap\nJSON のみ。1 行以内。`;
+}
+
+function conflictResolvePrompt({ pr, wt, base, pushRule }) {
+  return `## Objective\nPR #${pr} の branch に base branch（\`${base}\`）を merge し、conflict が機械的に解ける型だけなら決定論スクリプトで解消して push する。\n\n`
+    + `## Steps\n以下を順に bare 単文（先頭トークンが git または conflict-autoresolve。cd 前置・bash 前置・環境変数代入前置・&& 連結禁止）で実行せよ:\n`
+    + `1. \`git fetch origin ${base}\` を実行する。失敗したら fetched:false, pushed:false として手順 2・3 を実行せずに返す。\n`
+    + `2. \`conflict-autoresolve --worktree ${wt} --base-ref origin/${base}\` を実行し、stdout の JSON 1 行を一字一句そのまま result に入れる（要約・整形・フィールドの追加と削除は禁止）。\n`
+    + `3. result.status が "resolved" のときだけ \`git push origin HEAD\` を実行する。${pushRule}`
+    + `push が成功したら pushed:true、失敗・timeout なら pushed:false。resolved 以外は push せず pushed:false。\n`
+    + `merge・衝突の解消・\`git merge --abort\` を自分で行わない（スクリプトが行う）。ファイルを編集しない。\n\n`
+    + `## Output format\n{ "fetched": boolean, "result": <手順 2 の stdout JSON>, "pushed": boolean }\nprose 禁止。JSON のみ返せ。\n\n`
+    + `## Tools\n使用可: Bash, Read\n\n`
+    + `## Boundary\n上記コマンド以外のファイル変更・git 操作禁止。\n\n`
+    + `## Token cap\nJSON のみ。`;
+}
+
+function conflictAutoresolveRecord(res, iteration) {
+  const base = { iteration, status: 'error', reason: '', files: [], merge_sha: null };
+  if (res == null || typeof res !== 'object') return { ...base, reason: 'proxy_failed' };
+  if (res.fetched !== true) return { ...base, reason: 'fetch_failed' };
+  const r = res.result;
+  if (r == null || typeof r !== 'object' || !CONFLICT_SCRIPT_STATUSES.includes(r.status)) return { ...base, reason: 'invalid_result' };
+  const files = Array.isArray(r.files)
+    ? r.files.filter((f) => f != null && typeof f.path === 'string').map((f) => ({ path: f.path, type: String(f.type ?? '') }))
+    : [];
+  const reason = typeof r.reason === 'string' ? r.reason : '';
+  if (r.status !== 'resolved') return { ...base, status: r.status, reason, files };
+  const sha = typeof r.head_after === 'string' && /^[0-9a-f]{40}$/i.test(r.head_after.trim()) ? r.head_after.trim() : null;
+  return { ...base, status: res.pushed === true ? 'resolved' : 'push_failed', reason, files, merge_sha: sha };
+}
+
+function remergeReviewPrompt({ pr, mergeSha }) {
+  return `PR #${pr} の base 取り込み merge commit ${mergeSha} をレビューせよ。conflict の自動解消で入った行だけが対象で、`
+    + `読む diff は \`git show --remerge-diff ${mergeSha}\` の出力に限定する。解消で行が欠落・重複していないか、`
+    + `両側の変更が意味的に両立しているかを確かめ、その範囲の新規 critical/major のみ報告せよ。PR 全 diff の再読は不要。\n`;
+}
+// ==== END inline: _lib/conflict-autoresolve.mjs ====
 
 const REVIEW = {
   type: 'object',
@@ -1304,6 +1412,53 @@ async function applyCiFix({ round, objective, issuesText, guidance }) {
   fixesApplied++
   return true
 }
+// base との conflict の自動解消の試行記録（返り値 conflict_autoresolve。要素は conflictAutoresolveRecord の形）。
+const conflictAttempts = []
+// 自動解消の merge commit を push した直後だけ値を持つ。次 round の review を `git show --remerge-diff` の範囲に絞る。
+let remergeSha = null
+// LGTM 確定前の base conflict の確認と自動解消（canonical は _lib/conflict-autoresolve.mjs）。mergeable は
+// dev-runner-haiku-ro が読み、CONFLICTING / DIRTY のときだけ conflict-resolve を起動する。UNKNOWN・取得失敗は何もしない。
+// 返り値: 'pushed'（merge commit を push した。呼び出し側は次 iteration へ continue）/ 'push_failed'（merge commit を
+// push できなかった。terminal='fix_failed' を立てた）/ null（conflict なし・不明・自動解消しなかった。そのまま LGTM へ）。
+// 自動解消の merge commit は fixesApplied に数える — nested 起動の dev-flow が Final reconcile で最終 tree の test を取り直す。
+async function autoResolveConflict(iteration) {
+  const base = prMeta?.base_ref || ''
+  if (!base) {
+    log(`⚠️ iteration ${iteration}: base branch 名が不明 — base との conflict の確認と自動解消を skip`)
+    return null
+  }
+  const mergeable = await failOpenAgent(
+    mergeableCheckPrompt({ pr: PR, repo: REPO }),
+    { agentType: 'dev-runner-haiku-ro', schema: MERGEABLE_STATE, label: `mergeable-check#${iteration}`, phase: 'Iterate' },
+  )
+  if (!isConflictingMergeable(mergeable)) {
+    if (mergeable == null) log(`⚠️ iteration ${iteration}: mergeable-check#${iteration} が結果を返さず — conflict の自動解消は試みない（fail-open）`)
+    return null
+  }
+  const res = await failOpenAgent(
+    conflictResolvePrompt({ pr: PR, wt: isoWt, base, pushRule: PUSH_RULE }),
+    { agentType: 'dev-runner-haiku', schema: CONFLICT_RESOLVE, label: `conflict-resolve#${iteration}`, phase: 'Iterate' },
+  )
+  const rec = conflictAutoresolveRecord(res, iteration)
+  conflictAttempts.push(rec)
+  const fileList = rec.files.map((f) => `${f.path}（${f.type}）`).join(' / ') || '—'
+  if (rec.status === 'resolved') {
+    fixesApplied++
+    shaNow = rec.merge_sha
+    remergeSha = rec.merge_sha
+    pendingDeltaLines = null
+    log(`iteration ${iteration}: base（${base}）との conflict を自動解消して push した（${fileList}）— 次 iteration で解消行を review し CI gate を通してから LGTM を確定する`)
+    return 'pushed'
+  }
+  if (rec.status === 'push_failed') {
+    fixTerminalReason = 'commit_unensured'
+    terminal = 'fix_failed'
+    log(`⚠️ iteration ${iteration}: conflict 自動解消の merge commit を push できず — 未 push の commit を残したまま LGTM にせず人間へエスカレーション`)
+    return 'push_failed'
+  }
+  log(`iteration ${iteration}: base との conflict を自動解消しない（status=${rec.status}${rec.reason ? ` / ${rec.reason}` : ''}: ${fileList}）— LGTM で終え Merge tier の判断に任せる`)
+  return null
+}
 const reviewSeen = makeSeenTracker(REVIEW_STUCK)  // findings 累積 & stuck 検出（_lib/stuck-detector.mjs）
 const history = []               // ラウンド履歴 [{iteration, decision, summary, blocking, minor, scope, delta_lines}]
 // worktree の外を指す blocking finding（_lib/review-normalize.mjs の excludeOutsideWorktree）。fix には渡さず、
@@ -1437,22 +1592,29 @@ for (i = 1; i <= MAX; i++) {
   const prior = reviewSeen.prior()   // 前 iteration までの累積 findings
   // review scope: i ≥ 2 で sha_prev..sha_now が確定していれば delta、確定できなければ full（fail-open。
   // delta を空扱いにして approve へ倒さない）。scope / delta_lines は round の history に載せる。
-  const reviewScope = resolveReviewScope({ iteration: i, shaPrev, shaNow })
+  // 直前 round で conflict 自動解消の merge commit を push した round は、解消で入った行（remerge-diff）だけを読む。
+  const reviewScope = remergeSha != null
+    ? { scope: 'remerge', range: null, reason: null }
+    : resolveReviewScope({ iteration: i, shaPrev, shaNow })
   const roundScope = reviewScope.scope
   const roundDeltaLines = roundScope === 'delta' ? pendingDeltaLines : null
   if (reviewScope.reason) log(`⚠️ review#${i}: ${reviewScope.reason} — fix delta を確定できず full review にフォールバック（fail-open）`)
-  const reviewPrompt = (roundScope === 'delta'
+  const reviewPrompt = (roundScope === 'remerge'
+      ? remergeReviewPrompt({ pr: PR, mergeSha: remergeSha })
+      : roundScope === 'delta'
       ? `PR #${PR} の fix delta を批判的にレビューせよ。gh pr view で宣言意図を確認し、読む diff は下記 delta_range に限定する。\n`
         + reviewDeltaBlock({ shaPrev, shaNow })
       : `PR #${PR} を批判的にレビューせよ。gh pr view / gh pr diff で実 diff を確認し、宣言意図に照合する。\n`)
     + `summary は結論 1-2 文に留めよ。検証した根拠（テスト実行・diff 照合・edge case 確認等）は verification_evidence に 1 項目 1 文の配列で列挙せよ。\n`
-    + acceptanceCriteriaBlock(ACCEPTANCE_CRITERIA, { scope: roundScope })
+    // remerge round も読む範囲が PR 全体ではないので、AC は delta round と同じく既出 findings の解消確認にだけ使わせる
+    + acceptanceCriteriaBlock(ACCEPTANCE_CRITERIA, { scope: roundScope === 'full' ? 'full' : 'delta' })
     + (prior.length
         ? `既出 findings（前ラウンドまでに指摘済み。author は対応済みのはず）:\n${JSON.stringify(prior)}\n`
           + `**新規の critical/major のみ報告**せよ。前ラウンドで対応済み・却下済みの論点の蒸し返し、`
           + `別観点の上乗せ（moving target）は禁止。既出問題を再提起する場合は既出と同じ topic 文字列を`
           + `必ず再利用せよ（orchestrator が topic で stuck を突合する）。`
         : '')
+  remergeSha = null
   // review#i と ci-check#i を parallel() で同時に起動する。ci-check は review の結果に依存しないので、
   // review の待ち時間に隠す（1 round の spawn は review + ci-check の 2 本のまま）。両 thunk は throw
   // しない（callReviewAgent / failOpenAgent が null に落とす）ので、片方の失敗でもう片方の結果を失わない。
@@ -1630,6 +1792,15 @@ for (i = 1; i <= MAX; i++) {
           continue
         }
       }
+      // base との conflict: LGTM を確定する前に mergeable を読み、機械的に解ける型だけ自動解消して push する。
+      // push した round は LGTM にせず、次 iteration の review（remerge-diff の範囲）→ CI gate を通してから確定する。
+      // 自動解消しなかった conflict はこの round で LGTM にし、dev-flow の Merge tier が mergeable_conflicting で HOLD にする。
+      const conflict = await autoResolveConflict(i)
+      if (conflict === 'push_failed') break
+      if (conflict === 'pushed') {
+        history.push({ iteration: i, decision: effReview.decision, summary: effReview.summary, blocking: [], minor: outcome.minor, scope: roundScope, delta_lines: roundDeltaLines })
+        continue
+      }
       lgtm = true
       log(`iteration ${i}: LGTM（CI status=${ciEff.status}）`)
 
@@ -1800,6 +1971,7 @@ const summaryBody = buildTerminalSummaryBody({
   ciLastStatus,
   ciLastFailedChecks,
   humanFollowups,
+  conflictAutoresolve: conflictAttempts,
 })
 log(`終端 CI 状態: ${ciLastStatus ?? '未観測'}${ciLastStatus === 'failed' ? `（${ciLastFailedChecks.join(', ')}）` : ''}`)
 log('終端サマリーは comment として投稿する（formal review は投稿しない — issue #524）')
@@ -1879,6 +2051,8 @@ return {
   fix_terminal_reason: fixTerminalReason,
   history,
   human_followups: humanFollowups,  // worktree の外を指すとして fix から外した blocking finding（nested では dev-flow の終端サマリーが表示する）
+  // base との conflict の自動解消の試行（_lib/conflict-autoresolve.mjs の conflictAutoresolveRecord。nested では dev-flow の終端サマリーが表示する）
+  conflict_autoresolve: conflictAttempts,
   // LGTM 後の CI_VERIFY.checks の待ち結果（args.ci_verify を受けた run だけ）。dev-flow が ci の AC の判定に使う
   ...(CI_VERIFY ? {
     ci_verify: {

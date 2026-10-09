@@ -35,6 +35,9 @@ LGTM 判定（approve で終了）が決まる。**レビューコメント・su
   review 時点の head から現在 HEAD までの fix delta。これが渡された round は**読む diff を
   `git diff <sha_prev>..<sha_now>` に限定する**（下記「反復レビュー」）。渡されない round は
   full review（PR 全 diff）
+- `base 取り込み merge commit <sha>`（前 round で pr-iterate が base との conflict を自動解消して push した
+  round のみ）: 読む diff を `git show --remerge-diff <sha>`（conflict の解消で入った行）に限定する。
+  base 側・PR 側それぞれの変更は前 round までに review / CI を通っている
 
 ## ワークフロー
 
@@ -46,6 +49,7 @@ LGTM 判定（approve で終了）が決まる。**レビューコメント・su
 gh pr view <pr> --json title,body,files,additions,deletions
 gh pr diff <pr>                       # full review（iteration 1 / delta_range 無し）
 git diff <sha_prev>..<sha_now>        # delta review（delta_range が渡された round はこちらのみ）
+git show --remerge-diff <sha>         # conflict 自動解消の merge commit が渡された round はこちらのみ
 ```
 
 PR の宣言意図（title/body）と実 diff を突き合わせる。stack を検出し、関連する best-practice 観点を
