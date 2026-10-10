@@ -1,12 +1,13 @@
 #!/usr/bin/env bats
-# plugin-manifest.bats - Regression tests for the 3-plugin marketplace layout
-# (playpark-core / dev-flow / playpark-skills, issue #571).
+# plugin-manifest.bats - Regression tests for the marketplace layout
+# (playpark-core / dev-flow / playpark-skills / host-exec, issue #571).
 #
 # Invariants pinned here:
-#   - marketplace.json lists exactly the 3 plugins, each sourced from
+#   - marketplace.json lists exactly the 4 plugins, each sourced from
 #     ./plugins/<name>, so they can be installed independently.
 #   - Each plugin.json is valid, its name matches its directory, skills
-#     is ["./"], and there is no "agents" key (plugin subagents are only ever loaded from
+#     is ["./"] for the skill-shipping plugins and absent for host-exec
+#     (a hooks-module plugin with no skills), and there is no "agents" key (plugin subagents are only ever loaded from
 #     plugin-root agents/, never from a plugin.json "agents" key -
 #     measured: Agents (0)).
 #   - dev-flow is the only plugin that ships workflows (the 5 dynamic
@@ -31,7 +32,8 @@ REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
 MARKETPLACE_JSON="$REPO_ROOT/.claude-plugin/marketplace.json"
 ROOT_PLUGIN_JSON="$REPO_ROOT/.claude-plugin/plugin.json"
 
-PLUGIN_NAMES=(playpark-core dev-flow playpark-skills)
+PLUGIN_NAMES=(playpark-core dev-flow playpark-skills host-exec)
+SKILL_PLUGIN_NAMES=(playpark-core dev-flow playpark-skills)
 
 plugin_json_path() {
     echo "$REPO_ROOT/plugins/$1/.claude-plugin/plugin.json"
@@ -50,16 +52,16 @@ plugin_json_path() {
     [ ! -f "$ROOT_PLUGIN_JSON" ]
 }
 
-@test "marketplace.json の plugins は 3 件である" {
+@test "marketplace.json の plugins は 4 件である" {
     run jq -r '.plugins | length' "$MARKETPLACE_JSON"
     [ "$status" -eq 0 ]
-    [ "$output" = "3" ]
+    [ "$output" = "4" ]
 }
 
-@test "marketplace.json の plugins[].name が playpark-core/dev-flow/playpark-skills に完全一致する" {
+@test "marketplace.json の plugins[].name が playpark-core/dev-flow/playpark-skills/host-exec に完全一致する" {
     run jq -r '[.plugins[].name] | sort | join(",")' "$MARKETPLACE_JSON"
     [ "$status" -eq 0 ]
-    [ "$output" = "dev-flow,playpark-core,playpark-skills" ]
+    [ "$output" = "dev-flow,host-exec,playpark-core,playpark-skills" ]
 }
 
 @test "marketplace.json の各 plugins[].source が ./plugins/<name> である" {
@@ -88,8 +90,8 @@ plugin_json_path() {
     done
 }
 
-@test "各 plugin.json の skills は [\"./\"] に完全一致する" {
-    for name in "${PLUGIN_NAMES[@]}"; do
+@test "skill を持つ plugin の plugin.json の skills は [\"./\"] に完全一致する" {
+    for name in "${SKILL_PLUGIN_NAMES[@]}"; do
         pj="$(plugin_json_path "$name")"
         run jq -c '.skills' "$pj"
         [ "$status" -eq 0 ]
@@ -119,6 +121,17 @@ plugin_json_path() {
     run jq -r '[.plugins[] | has("version")] | any' "$MARKETPLACE_JSON"
     [ "$status" -eq 0 ]
     [ "$output" = "false" ]
+}
+
+@test "host-exec は skill を持たず、hooks.json の modules で register.ts を読み込む" {
+    pj="$(plugin_json_path host-exec)"
+    run jq -r 'has("skills")' "$pj"
+    [ "$status" -eq 0 ]
+    [ "$output" = "false" ]
+    run jq -c '.modules' "$REPO_ROOT/plugins/host-exec/hooks/hooks.json"
+    [ "$status" -eq 0 ]
+    [ "$output" = '["./register.ts"]' ]
+    [ -f "$REPO_ROOT/plugins/host-exec/hooks/register.ts" ]
 }
 
 @test "dev-flow の plugin.json の workflows は [\"./.claude/workflows\"] に完全一致する" {
@@ -151,8 +164,8 @@ plugin_json_path() {
     [ "$output" = '["playpark-core"]' ]
 }
 
-@test "playpark-core / playpark-skills の plugin.json に workflows キーが存在しない" {
-    for name in playpark-core playpark-skills; do
+@test "dev-flow 以外の plugin.json に workflows キーが存在しない" {
+    for name in playpark-core playpark-skills host-exec; do
         pj="$(plugin_json_path "$name")"
         run jq -r 'has("workflows")' "$pj"
         [ "$status" -eq 0 ]
