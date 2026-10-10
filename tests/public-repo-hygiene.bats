@@ -151,19 +151,19 @@ add_violation() {
 
 @test "fixture: plugins/ の SKILL.md・scripts に --repo it-all-playpark/ を足すと fail し、テストと fixture は対象外" {
     make_fixture_repo
-    add_violation plugins/demo/scripts/fixtures/case.json 'gh pr list --repo it-all-playpark/skills'
-    add_violation plugins/demo/scripts/run.bats 'gh pr list --repo it-all-playpark/skills'
+    add_violation plugins/demo/scripts/fixtures/case.json 'gh pr list --repo it-all-playpark/claude-plugins'
+    add_violation plugins/demo/scripts/run.bats 'gh pr list --repo it-all-playpark/claude-plugins'
     run hygiene_scan "$FIXTURE"
     echo "$output"
     [ "$status" -eq 0 ]
 
-    add_violation plugins/demo/SKILL.md 'gh issue list --repo it-all-playpark/skills'
-    add_violation plugins/demo/scripts/run.sh 'gh pr view --repo=it-all-playpark/skills 1'
+    add_violation plugins/demo/SKILL.md 'gh issue list --repo it-all-playpark/claude-plugins'
+    add_violation plugins/demo/scripts/run.sh 'gh pr view --repo=it-all-playpark/claude-plugins 1'
     run hygiene_scan "$FIXTURE"
     echo "$output"
     [ "$status" -eq 1 ]
-    [[ "$output" == *"plugins/demo/SKILL.md:2: repo: --repo it-all-playpark/skills"* ]]
-    [[ "$output" == *"plugins/demo/scripts/run.sh:2: repo: --repo=it-all-playpark/skills"* ]]
+    [[ "$output" == *"plugins/demo/SKILL.md:2: repo: --repo it-all-playpark/claude-plugins"* ]]
+    [[ "$output" == *"plugins/demo/scripts/run.sh:2: repo: --repo=it-all-playpark/claude-plugins"* ]]
 }
 
 @test "AGENTS.md の Public repo 節はこのテストを参照する" {
