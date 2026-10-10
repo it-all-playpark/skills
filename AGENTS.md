@@ -1,6 +1,6 @@
 # Project overview
 
-Skills Repository — Claude Code Skills のモノレポ。cross-vendor の coding agent
+claude-plugins — Claude Code plugin（`playpark` marketplace）のモノレポ。cross-vendor の coding agent
 で共通の project context を提供する。
 
 This file follows the [agents.md](https://agents.md) standard (Linux Foundation AAIF, 2025-12).

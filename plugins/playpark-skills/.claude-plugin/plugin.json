@@ -2,7 +2,7 @@
   "name": "playpark-skills",
   "description": "playpark LLC personal skills: blog / sns / seo / media / ops utilities (requires playpark-core)",
   "author": { "name": "playpark LLC", "url": "https://www.playpark.co.jp/" },
-  "repository": "https://github.com/it-all-playpark/skills",
+  "repository": "https://github.com/it-all-playpark/claude-plugins",
   "license": "MIT",
   "skills": ["./"],
   "dependencies": ["playpark-core"]

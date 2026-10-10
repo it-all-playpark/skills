@@ -2,7 +2,7 @@
   "name": "playpark-core",
   "description": "Shared base for playpark plugins: _lib/common.sh, journal telemetry (journal/scripts/journal.sh), bin/journal",
   "author": { "name": "playpark LLC", "url": "https://www.playpark.co.jp/" },
-  "repository": "https://github.com/it-all-playpark/skills",
+  "repository": "https://github.com/it-all-playpark/claude-plugins",
   "license": "MIT",
   "skills": ["./"]
 }

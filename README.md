@@ -1,6 +1,6 @@
-# Agent Skills Collection
+# playpark Claude Code plugins
 
-**Production-ready skills** for Claude Code, distributed as Claude Code plugins.
+**Production-ready Claude Code plugins** — workflows, agents, hooks and skills — distributed through the `playpark` marketplace.
 Codex などほかの agent からも、前提（[ほかの agent から使う](#ほかの-agentcodex-等から使う)）を満たせば `playpark-skills` を使えます。
 
 Dev workflow automation, SEO/marketing analytics, blog operations, Git workflow, image/video processing, Google Workspace integration — all in one repo.
@@ -21,7 +21,7 @@ Marketplaces で auto-update を有効化。`DISABLE_AUTOUPDATER=1` 環境では
 も必要）。
 
 ```
-/plugin marketplace add it-all-playpark/skills
+/plugin marketplace add it-all-playpark/claude-plugins
 /plugin install playpark-core@playpark    # 共有基盤（_lib/common.sh, bin/journal）
 /plugin install dev-flow@playpark         # issue-to-LGTM ワークフロー（playpark-core は dependencies で自動解決）
 /plugin install playpark-skills@playpark  # 個人用スキル一式（任意）
@@ -551,7 +551,7 @@ dev-flow の redgreen 判定フックにdogfooding導入している。`package.
 
 - **運用ルール**: vdelta の摩擦・バグ・欲しい機能に気づいたら
   [veridelta repo](https://github.com/it-all-playpark/veridelta) に issue を起票し、
-  本 repo の issue [#356](https://github.com/it-all-playpark/skills/issues/356) にリンクを残すこと。
+  本 repo の issue [#356](https://github.com/it-all-playpark/claude-plugins/issues/356) にリンクを残すこと。
 - **移行時実測値**（node --test → vitest 移行、2026-07-16）: `node --test` 1007 tests /
   `vitest` 1007 tests passed（総件数一致を確認済み）。
 - **記録範囲**: vdelta の verdict（`vdelta compare --report json` の出力）は dev-flow
