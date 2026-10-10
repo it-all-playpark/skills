@@ -17,13 +17,22 @@ import type { Register } from 'claude-code'
 // どのゲートも「判断できない・答えがない」ときは渡さない側に倒す（fail closed）。
 // ─────────────────────────────────────────────────────────────
 
-/** 渡されたファイルやモジュールの中身を実行するインタプリタ。`-e` 等のインライン実行は argv に見えるので警告しない。 */
-const INTERPRETERS = new Set([
-  'node', 'deno', 'bun', 'tsx', 'ts-node',
-  'python', 'python3', 'ruby', 'perl', 'php',
-  'bash', 'sh', 'zsh', 'fish',
+/**
+ * 渡されたファイルやモジュールの中身を実行するインタプリタと、そのインライン実行フラグ。
+ * インライン実行は argv に見えるので警告しない。同じ文字でも意味はインタプリタごとに違う
+ * （bash の -e は errexit、perl の -p はループ）ので、インタプリタ単位で持つ。
+ */
+const NODE_INLINE = ['-e', '-p', '--eval', '--print']
+const SHELL_INLINE = ['-c']
+const INLINE_CODE_FLAGS = new Map<string, ReadonlySet<string>>([
+  ...(['node', 'deno', 'bun', 'tsx', 'ts-node'].map(b => [b, new Set(NODE_INLINE)] as const)),
+  ['python', new Set(['-c'])],
+  ['python3', new Set(['-c'])],
+  ['ruby', new Set(['-e', '-E'])],
+  ['perl', new Set(['-e', '-E'])],
+  ['php', new Set(['-r'])],
+  ...(['bash', 'sh', 'zsh', 'fish'].map(b => [b, new Set(SHELL_INLINE)] as const)),
 ])
-const INLINE_CODE_FLAGS = new Set(['-e', '-c', '-p', '--eval', '--print', '-E'])
 
 /** npm で package.json のスクリプトや依存の install スクリプトを動かすサブコマンド。 */
 const NPM_SCRIPT_SUBCOMMANDS = new Set([
@@ -137,10 +146,11 @@ const NOT_SHOWN = 'この画面には中身が出ないので、確認してい�
 function codeRunWarnings(bin: string, args: readonly string[]): string[] {
   const positional = args.filter(a => !a.startsWith('-'))
   const sub = positional[0]
-  if (INTERPRETERS.has(bin)) {
+  const inlineFlags = INLINE_CODE_FLAGS.get(bin)
+  if (inlineFlags) {
     for (let i = 0; i < args.length; i++) {
       const a = args[i] ?? ''
-      if (INLINE_CODE_FLAGS.has(a)) return []
+      if (inlineFlags.has(a)) return []
       if (a === '-m') return [`モジュール ${shellish(args[i + 1] ?? '')} の中身が実行されます。${NOT_SHOWN}`]
       if (!a.startsWith('-')) return [`${shellish(a)} の中身が実行されます。${NOT_SHOWN}`]
     }

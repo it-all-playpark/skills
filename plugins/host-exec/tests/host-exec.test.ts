@@ -42,6 +42,8 @@ const FILES: Record<string, string> = {
   '/opt/homebrew/bin/node': '/opt/homebrew/bin/node',
   '/opt/homebrew/bin/pnpm': '/opt/homebrew/bin/pnpm',
   '/usr/bin/printf': '/usr/bin/printf',
+  '/opt/homebrew/bin/bash': '/opt/homebrew/bin/bash',
+  '/usr/bin/perl': '/usr/bin/perl',
   '/var/folders/xx/T/x/git': '/private/var/folders/xx/T/x/git',
 }
 
@@ -158,15 +160,21 @@ describe('host-exec', () => {
   test('ファイルやスクリプトの中身を実行するコマンドには警告、中身が argv に見えるインライン実行には出さない', async ($, on) => {
     const asked: string[] = []
     host(on)
-    answer(on, ['拒否', '拒否', '拒否', '拒否'], asked)
+    answer(on, ['拒否', '拒否', '拒否', '拒否', '拒否', '拒否', '拒否'], asked)
     await $.tool.call({ tool: TOOL, argv: ['node', '--no-warnings', 'scripts/deploy.js'], reason: 'x' } as any)
     await $.tool.call({ tool: TOOL, argv: ['pnpm', 'dev'], reason: 'x' } as any)
     await $.tool.call({ tool: TOOL, argv: ['pnpm', 'outdated'], reason: 'x' } as any)
     await $.tool.call({ tool: TOOL, argv: ['node', '-e', 'console.log(1)'], reason: 'x' } as any)
+    await $.tool.call({ tool: TOOL, argv: ['bash', '-e', './deploy.sh'], reason: 'x' } as any)
+    await $.tool.call({ tool: TOOL, argv: ['perl', '-p', 'x.pl'], reason: 'x' } as any)
+    await $.tool.call({ tool: TOOL, argv: ['bash', '-c', 'echo 1'], reason: 'x' } as any)
     expect(asked[0]).toContain('scripts/deploy.js の中身が実行されます。この画面には中身が出ない')
     expect(asked[1]).toContain('package.json の scripts や、依存パッケージの install スクリプトが実行されます')
     expect(asked[2]).not.toContain('⚠')
     expect(asked[3]).not.toContain('⚠')
+    expect(asked[4]).toContain('./deploy.sh の中身が実行されます。この画面には中身が出ない')
+    expect(asked[5]).toContain('x.pl の中身が実行されます。この画面には中身が出ない')
+    expect(asked[6]).not.toContain('⚠')
   })
 
   test('機密を含む出力は止めて、マスクを選べばマスク済みで返す', async ($, on) => {
