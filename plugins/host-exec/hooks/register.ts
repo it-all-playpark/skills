@@ -5,34 +5,43 @@ import type { Register } from 'claude-code'
 // sandbox で動かないコマンドを、Claude が人間に「これ実行して」と
 // 頼む代わりに呼べるツール `mcp__host-exec__run` を追加する。
 //
-//   ゲート1: 許可リスト / 拒否パターン（静的チェック）
+//   ゲート1: 拒否パターン（静的チェック）
 //   ゲート2: 毎回の実行承認（ダイアログ）
 //   ゲート3: 出力の機密チェック → 引っかかったら Claude に渡す前に停止
 //
+// 比べる相手は sandbox ではなく「人間がコピペして実行する」運用。実行ファイルを
+// 許可リストで絞らないのは、コピペでも動くものを止めると結局コピペに戻るから。
+// その代わり、承認が人間の判断として成り立つように
+//   - 実行されるもの（解決した実行ファイル・argv・cwd）をエスケープして正確に見せる
+//   - Claude が書き換えられるコードを動かす兆候があれば、止めずに警告を添える
 // どのゲートも「判断できない・答えがない」ときは渡さない側に倒す（fail closed）。
 // ─────────────────────────────────────────────────────────────
 
-/** 実行してよいコマンド（argv[0] のベース名）。必要に応じて増減してください。 */
-const ALLOWED_BINARIES = new Set([
-  'gcloud',
-  'gsutil',
-  'docker',
-  'gh',
-  'git',
-  'npm',
-  'pnpm',
-  'npx',
-  'node',
-  'cargo',
-  'rustup',
-  'mise',
-  'nix',
-  'home-manager',
-  'prisma',
-  'curl',
+/** 渡されたファイルやモジュールの中身を実行するインタプリタ。`-e` 等のインライン実行は argv に見えるので警告しない。 */
+const INTERPRETERS = new Set([
+  'node', 'deno', 'bun', 'tsx', 'ts-node',
+  'python', 'python3', 'ruby', 'perl', 'php',
+  'bash', 'sh', 'zsh', 'fish',
 ])
+const INLINE_CODE_FLAGS = new Set(['-e', '-c', '-p', '--eval', '--print', '-E'])
 
-/** 許可リスト内でも実行前に拒否するもの（argv を空白で連結した文字列に当てる）。 */
+/** npm で package.json のスクリプトや依存の install スクリプトを動かすサブコマンド。 */
+const NPM_SCRIPT_SUBCOMMANDS = new Set([
+  'run', 'run-script', 'rum', 'urn', 'test', 't', 'tst', 'start', 'restart', 'stop',
+  'install', 'i', 'in', 'add', 'ci', 'install-test', 'it', 'rebuild', 'rb', 'exec', 'x', 'create', 'init',
+])
+/** pnpm / yarn / bun は未知のサブコマンドをスクリプト名として実行するので、スクリプトを動かさないものを列挙する。 */
+const PM_NO_SCRIPT_SUBCOMMANDS = new Set([
+  'list', 'ls', 'll', 'outdated', 'why', 'view', 'info', 'config', 'audit', 'licenses',
+  'store', 'whoami', 'root', 'bin', 'help', 'pm', 'cache', 'search', 'publish', 'pack',
+  'login', 'logout', 'version', '--version', '-v', '--help', '-h',
+])
+/** レシピファイルの中身を実行するタスクランナー。 */
+const TASK_RUNNERS: Readonly<Record<string, string>> = {
+  make: 'Makefile', just: 'justfile', task: 'Taskfile',
+}
+
+/** 実行前に拒否するもの（argv を空白で連結した文字列に当てる）。正当な用途がほぼ無いものだけを置く。 */
 const DENY_PATTERNS: ReadonlyArray<[RegExp, string]> = [
   [/\brm\s+-[a-z]*r[a-z]*f|\brm\s+-[a-z]*f[a-z]*r/i, '再帰的な強制削除'],
   [/\bgit\s+push\b.*(\s--force\b|\s-f\b|\s--force-with-lease\b)/, 'force push'],
@@ -94,6 +103,57 @@ function basename(p: string): string {
   return p.split('/').pop() ?? p
 }
 
+/** 改行・制御文字・不可視文字・双方向制御をエスケープして、ダイアログで見えたとおりに読めるようにする。 */
+function visible(s: string): string {
+  return JSON.stringify(s).replace(
+    /[\u007f-\u009f\u00ad\u061c\u180e\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff]/g,
+    c => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`,
+  )
+}
+
+function isUnder(path: string, dirs: readonly string[]): boolean {
+  return dirs.some(d => path === d || path.startsWith(d.endsWith('/') ? d : `${d}/`))
+}
+
+function joinPath(base: string, p: string): string {
+  return p.startsWith('/') ? p : `${base.replace(/\/+$/, '')}/${p}`
+}
+
+type Stat = { kind: string; realPath?: string }
+
+/** argv（[0] を除く）から、渡されたファイル・スクリプトの中身を実行する兆候を拾う。 */
+function codeRunWarnings(bin: string, args: readonly string[]): string[] {
+  const positional = args.filter(a => !a.startsWith('-'))
+  const sub = positional[0]
+  if (INTERPRETERS.has(bin)) {
+    for (let i = 0; i < args.length; i++) {
+      const a = args[i] ?? ''
+      if (INLINE_CODE_FLAGS.has(a)) return []
+      if (a === '-m') return [`モジュール ${visible(args[i + 1] ?? '')} を実行します`]
+      if (!a.startsWith('-')) return [`${visible(a)} の中身を実行します（argv には出ません）`]
+    }
+    return []
+  }
+  if (bin === 'npx' || bin === 'bunx' || bin === 'pnpx') return ['パッケージを取得して、そのコードを実行します']
+  if (bin === 'npm' && sub !== undefined && NPM_SCRIPT_SUBCOMMANDS.has(sub)) {
+    return ['package.json のスクリプトや依存の install スクリプトを実行します']
+  }
+  if ((bin === 'pnpm' || bin === 'yarn' || bin === 'bun') && !(sub !== undefined && PM_NO_SCRIPT_SUBCOMMANDS.has(sub))) {
+    return [bin === 'pnpm' && sub === 'dlx'
+      ? 'パッケージを取得して、そのコードを実行します'
+      : 'package.json のスクリプトや依存の install スクリプトを実行します']
+  }
+  const recipe = TASK_RUNNERS[bin]
+  if (recipe) return [`${recipe} の中身を実行します`]
+  if (bin === 'cargo' && sub !== undefined && ['run', 'build', 'b', 'test', 't', 'bench', 'install', 'check', 'c'].includes(sub)) {
+    return ['build.rs やビルド時に動くコードを実行します']
+  }
+  if (bin === 'go' && sub !== undefined && ['run', 'generate', 'test'].includes(sub)) {
+    return ['repo の Go コード（go:generate を含む）を実行します']
+  }
+  return []
+}
+
 function format(argv: readonly string[], r: { exitCode: number; stdout: string; stderr: string }): string {
   return [
     `$ ${argv.join(' ')}`,
@@ -114,7 +174,7 @@ export const register: Register = on => {
         'Use this instead of asking the user to run a command themselves and paste the output back,',
         'whenever a command fails or cannot run because of the sandbox (network, gcloud/docker auth, sockets, etc.).',
         'Pass the command as an argument vector (no shell: no pipes, redirects, globs, && or env-var expansion).',
-        `Only these executables are allowed: ${[...ALLOWED_BINARIES].join(', ')}.`,
+        'argv[0] is resolved on the user\'s PATH and shown to the user with the full argv and cwd before anything runs.',
         'Destructive commands and commands that print credentials are refused.',
         'If the output contains secrets, the user may mask or withhold it; do not try to obtain the secret another way.',
       ].join(' '),
@@ -145,25 +205,75 @@ export const register: Register = on => {
     const line = argv.join(' ')
 
     // ── ゲート1: 静的チェック ──
-    const bin = basename(argv[0] ?? '')
-    if (!ALLOWED_BINARIES.has(bin)) {
-      return {
-        deny: `host-exec: "${bin}" is not on the allow list. Do not retry with a shell wrapper. Ask the user to run it themselves, or to add it to the allow list.`,
-      }
-    }
     for (const [re, why] of DENY_PATTERNS) {
       if (re.test(line)) {
         return { deny: `host-exec: refused (${why}). Do not retry this command another way; explain to the user what you wanted to do and let them decide.` }
       }
     }
 
+    // ── 実行されるものを確定する（ダイアログに出すものと実際に動かすものを一致させる） ──
+    const stat = (p: string): Promise<Stat | undefined> =>
+      $.fs.stat(p, { resolve: true }).catch(() => undefined)
+    const realOf = async (p: string) => (await stat(p))?.realPath ?? p
+
+    const cwdAbs = joinPath(await $.session.cwd(), cwd ?? '.')
+    const cwdStat = await stat(cwdAbs)
+    if (cwdStat?.kind !== 'dir' || !cwdStat.realPath) {
+      return { deny: `host-exec: cwd ${visible(cwdAbs)} is not a directory.` }
+    }
+    const cwdReal = cwdStat.realPath
+
+    const argv0 = argv[0] ?? ''
+    let exe: string | undefined
+    let exeStat: Stat | undefined
+    if (argv0.includes('/')) {
+      exe = joinPath(cwdReal, argv0)
+      exeStat = await stat(exe)
+    } else {
+      const dirs = ((await $.env.get('PATH')) ?? '').split(':').filter(d => d.startsWith('/'))
+      for (const d of dirs) {
+        const candidate = joinPath(d, argv0)
+        const s = await stat(candidate)
+        if (s?.kind === 'file') {
+          exe = candidate
+          exeStat = s
+          break
+        }
+      }
+    }
+    if (exe === undefined || exeStat?.kind !== 'file') {
+      return { deny: `host-exec: executable ${visible(argv0)} was not found${argv0.includes('/') ? '' : ' on PATH'}.` }
+    }
+    const exeReal = exeStat.realPath ?? exe
+
+    // ── 危険の兆候（止めずにダイアログで目を引く） ──
+    const tmpDir = await $.env.get('TMPDIR')
+    const tempDirs = await Promise.all(['/tmp', '/var/folders', ...(tmpDir ? [tmpDir] : [])].map(realOf))
+    const root = await realOf(await $.session.root())
+    const warnings: string[] = []
+    if (isUnder(exeReal, [...tempDirs, root])) {
+      warnings.push(`実行ファイル ${visible(exeReal)} は Claude が書き換えられる場所にあります`)
+    }
+    if (isUnder(cwdReal, tempDirs)) {
+      warnings.push('cwd が一時ディレクトリです（repo の設定やスクリプトを Claude が仕込める場所）')
+    } else if (!isUnder(cwdReal, [root])) {
+      warnings.push('cwd がプロジェクトの外です')
+    }
+    warnings.push(...codeRunWarnings(basename(argv0), argv.slice(1)))
+
     // ── ゲート2: 実行承認 ──
+    const shown = [
+      'sandbox 外で実行しますか？',
+      '',
+      `実行ファイル: ${visible(exe)}${exeReal !== exe ? ` → ${visible(exeReal)}` : ''}`,
+      `argv: [${argv.map(visible).join(', ')}]`,
+      `cwd: ${visible(cwdReal)}`,
+      `理由: ${visible(reason).slice(1, -1)}`,
+      ...(warnings.length > 0 ? ['', '⚠ 確認してください:', ...warnings.map(w => `・${w}`)] : []),
+    ].join('\n')
     let approval = ''
     try {
-      approval = await $.ui.ask(
-        `sandbox 外で実行しますか？\n\n$ ${line}\ncwd: ${cwd ?? '(セッションの作業ディレクトリ)'}\n理由: ${reason}`,
-        { options: [RUN, '拒否'], header: 'host-exec' },
-      )
+      approval = await $.ui.ask(shown, { options: [RUN, '拒否'], header: 'host-exec' })
     } catch {
       return { deny: 'host-exec: nobody approved the command (dialog dismissed or unavailable). Wait for the user.' }
     }
@@ -176,7 +286,7 @@ export const register: Register = on => {
     // ── 実行 ──
     let r: { exitCode: number; stdout: string; stderr: string }
     try {
-      r = await $.process.run(argv, { cwd, timeoutMs: timeoutSec * 1000 })
+      r = await $.process.run([exe, ...argv.slice(1)], { cwd: cwdReal, timeoutMs: timeoutSec * 1000 })
     } catch (err) {
       return { result: `host-exec: the command could not start or timed out after ${timeoutSec}s: ${String(err)}` }
     }

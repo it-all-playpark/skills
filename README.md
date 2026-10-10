@@ -29,8 +29,11 @@ Marketplaces で auto-update を有効化。`DISABLE_AUTOUPDATER=1` 環境では
 ```
 
 `host-exec` は hooks module（`plugins/host-exec/hooks/register.ts`）で `mcp__host-exec__run` ツールを
-追加します。sandbox で動かないコマンドを、許可リスト・拒否パターンの静的チェックと毎回の実行承認を経て
-ホスト上で実行し、出力に秘密情報らしきものがあれば Claude に渡す前に止めてマスク / 非開示を選ばせます。
+追加します。sandbox で動かないコマンドを、拒否パターン（破壊的操作・資格情報の出力）の静的チェックと
+毎回の実行承認を経てホスト上で実行し、出力に秘密情報らしきものがあれば Claude に渡す前に止めてマスク / 非開示を
+選ばせます。実行ファイルは許可リストで絞らず、承認ダイアログに PATH で解決した実体・argv・cwd をエスケープして
+見せ、Claude が書き換えられる場所の実行ファイルや一時ディレクトリの cwd、スクリプトの中身を動かすコマンドには
+警告を添えます。
 
 `playpark-skills` は SessionStart hook（`plugins/playpark-skills/hooks/hooks.json`）を持ちます。
 起動（`startup`）ごとに `ps aux` の行に `claude` を含み 48 時間超経過したプロセス（自身と
