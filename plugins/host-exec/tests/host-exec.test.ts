@@ -37,6 +37,7 @@ const FILES: Record<string, string> = {
   '/opt/homebrew/bin/terraform': '/opt/homebrew/Cellar/terraform/1.9.0/bin/terraform',
   '/opt/homebrew/bin/node': '/opt/homebrew/bin/node',
   '/opt/homebrew/bin/pnpm': '/opt/homebrew/bin/pnpm',
+  '/usr/bin/printf': '/usr/bin/printf',
   '/var/folders/xx/T/x/git': '/private/var/folders/xx/T/x/git',
 }
 
@@ -173,6 +174,20 @@ describe('host-exec', () => {
     expect(asked.length).toBe(2)
     expect(s).not.toContain('s3cretPass')
     expect(s).toContain('REDACTED')
+  })
+
+  test('機密の質問と Claude に返す結果でも argv はエスケープして見せる', async ($, on) => {
+    const asked: string[] = []
+    const ran: string[][] = []
+    host(on)
+    answer(on, ['実行する', 'マスクして渡す'], asked)
+    stubProcess(on, { stdout: 'AKIAABCDEFGHIJKLMNOP' }, ran)
+    const r: any = await $.tool.call({ tool: TOOL, argv: ['printf', '%s%s\n', 'AKIA', 'ABCDEFGHIJKLMNOP'], reason: 'x' } as any)
+    const shown = 'argv: ["printf", "%s%s\\n", "AKIA", "ABCDEFGHIJKLMNOP"]'
+    expect(asked[1]).toContain(shown)
+    expect(asked[1]).not.toContain('%s%s\n')
+    expect(JSON.stringify(r)).toContain(JSON.stringify(shown).slice(1, -1))
+    expect(JSON.stringify(r)).not.toContain('AKIAABCDEFGHIJKLMNOP')
   })
 
   test('機密を含む出力で「渡さない」なら値を一切返さない', async ($, on) => {

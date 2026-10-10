@@ -154,9 +154,14 @@ function codeRunWarnings(bin: string, args: readonly string[]): string[] {
   return []
 }
 
+/** argv を区切りと中身が誤読されない形で見せる（空白の join では改行や空白入りの引数が崩れる）。 */
+function shownArgv(argv: readonly string[]): string {
+  return `[${argv.map(visible).join(', ')}]`
+}
+
 function format(argv: readonly string[], r: { exitCode: number; stdout: string; stderr: string }): string {
   return [
-    `$ ${argv.join(' ')}`,
+    `argv: ${shownArgv(argv)}`,
     `exit code: ${r.exitCode}`,
     '--- stdout ---',
     r.stdout || '(empty)',
@@ -266,7 +271,7 @@ export const register: Register = on => {
       'sandbox 外で実行しますか？',
       '',
       `実行ファイル: ${visible(exe)}${exeReal !== exe ? ` → ${visible(exeReal)}` : ''}`,
-      `argv: [${argv.map(visible).join(', ')}]`,
+      `argv: ${shownArgv(argv)}`,
       `cwd: ${visible(cwdReal)}`,
       `理由: ${visible(reason).slice(1, -1)}`,
       ...(warnings.length > 0 ? ['', '⚠ 確認してください:', ...warnings.map(w => `・${w}`)] : []),
@@ -300,7 +305,7 @@ export const register: Register = on => {
     let choice = ''
     try {
       choice = await $.ui.ask(
-        `出力に秘密情報らしきものがあります。Claude に渡す前に止めました。\n\n$ ${line}\n${summary}\n\nどうしますか？`,
+        `出力に秘密情報らしきものがあります。Claude に渡す前に止めました。\n\nargv: ${shownArgv(argv)}\n${summary}\n\nどうしますか？`,
         { options: [PASS_MASKED, WITHHOLD, PASS_RAW], header: 'secrets' },
       )
     } catch {
