@@ -9,7 +9,7 @@ Built and maintained by [playpark LLC](https://www.playpark.co.jp/) — an AI de
 
 ## Quick Start
 
-本 repo は 3 つの Claude Code plugin（`playpark-core` / `dev-flow` / `playpark-skills`）に
+本 repo は 4 つの Claude Code plugin（`playpark-core` / `dev-flow` / `playpark-skills` / `host-exec`）に
 分かれています。導入方法は用途によって 2 通りあります。
 
 ### 配布側インストール（copy mode）
@@ -25,7 +25,15 @@ Marketplaces で auto-update を有効化。`DISABLE_AUTOUPDATER=1` 環境では
 /plugin install playpark-core@playpark    # 共有基盤（_lib/common.sh, bin/journal）
 /plugin install dev-flow@playpark         # issue-to-LGTM ワークフロー（playpark-core は dependencies で自動解決）
 /plugin install playpark-skills@playpark  # 個人用スキル一式（任意）
+/plugin install host-exec@playpark        # sandbox 外での承認付き実行ツール（任意）
 ```
+
+`host-exec` は hooks module（`plugins/host-exec/hooks/register.ts`）で `mcp__host-exec__run` ツールを
+追加します。sandbox で動かないコマンドを、拒否パターン（破壊的操作・資格情報の出力）の静的チェックと
+毎回の実行承認を経てホスト上で実行し、出力に秘密情報らしきものがあれば Claude に渡す前に止めてマスク / 非開示を
+選ばせます。実行ファイルは許可リストで絞らず、承認ダイアログに PATH で解決した実体・argv・cwd をエスケープして
+見せ、Claude が書き換えられる場所の実行ファイルや一時ディレクトリの cwd、スクリプトの中身を動かすコマンドには
+警告を添えます。
 
 `playpark-skills` は SessionStart hook（`plugins/playpark-skills/hooks/hooks.json`）を持ちます。
 起動（`startup`）ごとに `ps aux` の行に `claude` を含み 48 時間超経過したプロセス（自身と
@@ -461,7 +469,7 @@ Claude Code内で `/スキル名` を実行:
 
 ## 構造
 
-本 repo は 3 plugin 構成です（`.claude-plugin/marketplace.json` に登録）。
+本 repo は 4 plugin 構成です（`.claude-plugin/marketplace.json` に登録）。
 
 ```
 skills/
@@ -487,23 +495,26 @@ skills/
 │   │   └── dev-flow/, dev-flow-health/, dev-issue-analyze/,
 │   │       git-commit/, git-pr/, github-issue-orchestrator/,
 │   │       pr-iterate/（各 SKILL.md）
-│   └── playpark-skills/                  # 個人用スキル plugin（dependencies: playpark-core）
-│       ├── bin/                          # playpark-skills bare 名 wrapper（<skill>-<action> 命名）
-│       ├── _lib/config.py                # Python共通設定ローダー
-│       ├── _shared/                      # スキル共通ユーティリティ・schemas・templates
-│       ├── <skill-name>/                 # 各スキル（自作）
-│       │   ├── SKILL.md                  # スキル定義（必須）
-│       │   ├── scripts/                  # 実行スクリプト
-│       │   ├── references/               # 参照ドキュメント
-│       │   └── assets/                   # アセット
-│       ├── <skill-name> -> .agents/skills/<name>  # 外部スキル（symlink・gitignored）
-│       ├── .agents/skills/               # 外部スキル実体（gitignored）
-│       └── skills-lock.json              # 外部スキルの lockfile（tracked）
+│   ├── playpark-skills/                  # 個人用スキル plugin（dependencies: playpark-core）
+│   │   ├── bin/                          # playpark-skills bare 名 wrapper（<skill>-<action> 命名）
+│   │   ├── _lib/config.py                # Python共通設定ローダー
+│   │   ├── _shared/                      # スキル共通ユーティリティ・schemas・templates
+│   │   ├── <skill-name>/                 # 各スキル（自作）
+│   │   │   ├── SKILL.md                  # スキル定義（必須）
+│   │   │   ├── scripts/                  # 実行スクリプト
+│   │   │   ├── references/               # 参照ドキュメント
+│   │   │   └── assets/                   # アセット
+│   │   ├── <skill-name> -> .agents/skills/<name>  # 外部スキル（symlink・gitignored）
+│   │   ├── .agents/skills/               # 外部スキル実体（gitignored）
+│   │   └── skills-lock.json              # 外部スキルの lockfile（tracked）
+│   └── host-exec/                        # sandbox 外の承認付き実行ツール plugin（skill なし）
+│       ├── hooks/register.ts             # ツール登録と 3 段のゲート
+│       └── tests/host-exec.test.ts       # claude plugin test で実行
 ├── tools/                                 # sync-inlines.mjs 等 repo 全体ツール
 ├── tests/                                 # bats / vitest ランナーと横断テスト
 ├── docs/                                  # dev-flow-atlas.md 等ドキュメント
 ├── .claude/rules/                         # dev-flow.md（正典）
-├── .claude-plugin/marketplace.json        # 3 plugin の登録
+├── .claude-plugin/marketplace.json        # 4 plugin の登録
 ├── .gitignore                             # 外部スキルsymlink・実体を自動管理
 └── README.md
 ```
