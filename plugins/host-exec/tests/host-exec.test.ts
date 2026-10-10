@@ -2,11 +2,15 @@ import { describe, expect, mock, test } from 'claude-code/testing'
 
 const TOOL = 'mcp__host-exec__run'
 
+/** 各質問で先頭（カーソルが乗る既定）に置かれた選択肢 */
+let firstOptions: string[] = []
+
 /** AskUserQuestion への回答を、質問ごとに順番に返すスタブ */
 function answer(on: any, labels: string[], asked: string[]) {
   on('tool.call', { tool: 'AskUserQuestion' }, async ($: any, e: any) => {
     const q = e.questions[0].question as string
     asked.push(q)
+    firstOptions.push(e.questions[0].options[0].label)
     const label = labels.shift() ?? '拒否'
     return { result: { questions: e.questions, answers: { [q]: label } } }
   })
@@ -74,7 +78,7 @@ describe('host-exec', () => {
     const asked: string[] = []
     host(on)
     answer(on, [], asked)
-    for (const argv of [['gcloud', 'auth', 'print-access-token'], ['rm', '-rf', '/w/repo']]) {
+    for (const argv of [['gcloud', 'auth', 'print-access-token'], ['rm', '-rf', '/w/repo'], ['gh', 'auth', 'status', '--show-token']]) {
       const r: any = await $.tool.call({ tool: TOOL, argv, reason: 'x' } as any)
       expect(String(r.deny ?? r.text)).toContain('refused')
     }
@@ -165,6 +169,7 @@ describe('host-exec', () => {
 
   test('機密を含む出力は止めて、マスクを選べばマスク済みで返す', async ($, on) => {
     const asked: string[] = []
+    firstOptions = []
     const ran: string[][] = []
     host(on)
     answer(on, ['実行する', 'マスクして渡す'], asked)
@@ -172,6 +177,7 @@ describe('host-exec', () => {
     const r: any = await $.tool.call({ tool: TOOL, argv: ['gcloud', 'run', 'services', 'describe', 'api'], reason: 'x' } as any)
     const s = JSON.stringify(r)
     expect(asked.length).toBe(2)
+    expect(firstOptions).toEqual(['拒否', '渡さない'])
     expect(s).not.toContain('s3cretPass')
     expect(s).toContain('REDACTED')
   })

@@ -55,6 +55,7 @@ const DENY_PATTERNS: ReadonlyArray<[RegExp, string]> = [
   [/\bgcloud\s+secrets\s+versions\s+access\b/, 'Secret Manager の値の出力'],
   [/\bgcloud\s+iam\s+service-accounts\s+keys\s+create\b/, 'サービスアカウント鍵の発行'],
   [/\bgh\s+auth\s+token\b/, 'GitHub トークンの出力'],
+  [/\bgh\s+auth\s+status\b.*\s(--show-token|-t)\b/, 'GitHub トークンの出力'],
   [/\bcurl\b.*\s(-d|--data|--data-binary|-F|--form|-T|--upload-file)\b/, 'curl でのデータ送信'],
 ]
 
@@ -278,7 +279,8 @@ export const register: Register = on => {
     ].join('\n')
     let approval = ''
     try {
-      approval = await $.ui.ask(shown, { options: [RUN, '拒否'], header: 'host-exec' })
+      // 先頭の選択肢にカーソルが乗るので、Enter の押し間違いで実行・開示されない側を先頭に置く
+      approval = await $.ui.ask(shown, { options: ['拒否', RUN], header: 'host-exec' })
     } catch {
       return { deny: 'host-exec: nobody approved the command (dialog dismissed or unavailable). Wait for the user.' }
     }
@@ -306,7 +308,7 @@ export const register: Register = on => {
     try {
       choice = await $.ui.ask(
         `出力に秘密情報らしきものがあります。Claude に渡す前に止めました。\n\nargv: ${shownArgv(argv)}\n${summary}\n\nどうしますか？`,
-        { options: [PASS_MASKED, WITHHOLD, PASS_RAW], header: 'secrets' },
+        { options: [WITHHOLD, PASS_MASKED, PASS_RAW], header: 'secrets' },
       )
     } catch {
       choice = WITHHOLD
