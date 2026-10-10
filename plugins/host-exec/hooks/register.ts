@@ -122,7 +122,18 @@ function joinPath(base: string, p: string): string {
 
 type Stat = { kind: string; realPath?: string }
 
-/** argv（[0] を除く）から、渡されたファイル・スクリプトの中身を実行する兆候を拾う。 */
+/** 引数をシェルで打つ形で見せる。空白・引用符・制御文字などを含む引数だけ "…" で囲んでエスケープするので、区切りは誤読できない。 */
+function shellish(arg: string): string {
+  return /^[A-Za-z0-9_./:=@%+,-]+$/.test(arg) ? arg : visible(arg)
+}
+
+function shownCommand(argv: readonly string[]): string {
+  return argv.map(shellish).join(' ')
+}
+
+const NOT_SHOWN = 'この画面には中身が出ないので、確認していなければ「拒否」して内容を見せてもらってください'
+
+/** argv（[0] を除く）から、この画面に中身が出ないコードを実行する兆候を拾い、何が起きるかとどうすればいいかを返す。 */
 function codeRunWarnings(bin: string, args: readonly string[]): string[] {
   const positional = args.filter(a => !a.startsWith('-'))
   const sub = positional[0]
@@ -130,39 +141,32 @@ function codeRunWarnings(bin: string, args: readonly string[]): string[] {
     for (let i = 0; i < args.length; i++) {
       const a = args[i] ?? ''
       if (INLINE_CODE_FLAGS.has(a)) return []
-      if (a === '-m') return [`モジュール ${visible(args[i + 1] ?? '')} を実行します`]
-      if (!a.startsWith('-')) return [`${visible(a)} の中身を実行します（argv には出ません）`]
+      if (a === '-m') return [`モジュール ${shellish(args[i + 1] ?? '')} の中身が実行されます。${NOT_SHOWN}`]
+      if (!a.startsWith('-')) return [`${shellish(a)} の中身が実行されます。${NOT_SHOWN}`]
     }
     return []
   }
-  if (bin === 'npx' || bin === 'bunx' || bin === 'pnpx') return ['パッケージを取得して、そのコードを実行します']
-  if (bin === 'npm' && sub !== undefined && NPM_SCRIPT_SUBCOMMANDS.has(sub)) {
-    return ['package.json のスクリプトや依存の install スクリプトを実行します']
-  }
+  const fetchAndRun = 'npm レジストリからパッケージを取得して、そのコードを実行します。名前が意図したパッケージか確認してください'
+  const pkgScripts = `package.json の scripts や、依存パッケージの install スクリプトが実行されます。${NOT_SHOWN}`
+  if (bin === 'npx' || bin === 'bunx' || bin === 'pnpx') return [fetchAndRun]
+  if (bin === 'npm' && sub !== undefined && NPM_SCRIPT_SUBCOMMANDS.has(sub)) return [pkgScripts]
   if ((bin === 'pnpm' || bin === 'yarn' || bin === 'bun') && !(sub !== undefined && PM_NO_SCRIPT_SUBCOMMANDS.has(sub))) {
-    return [bin === 'pnpm' && sub === 'dlx'
-      ? 'パッケージを取得して、そのコードを実行します'
-      : 'package.json のスクリプトや依存の install スクリプトを実行します']
+    return [bin === 'pnpm' && sub === 'dlx' ? fetchAndRun : pkgScripts]
   }
   const recipe = TASK_RUNNERS[bin]
-  if (recipe) return [`${recipe} の中身を実行します`]
+  if (recipe) return [`${recipe} に書かれたコマンドが実行されます。${NOT_SHOWN}`]
   if (bin === 'cargo' && sub !== undefined && ['run', 'build', 'b', 'test', 't', 'bench', 'install', 'check', 'c'].includes(sub)) {
-    return ['build.rs やビルド時に動くコードを実行します']
+    return ['build.rs など、ビルド時に動くコードが実行されます（依存クレートの build.rs も含みます）']
   }
   if (bin === 'go' && sub !== undefined && ['run', 'generate', 'test'].includes(sub)) {
-    return ['repo の Go コード（go:generate を含む）を実行します']
+    return ['repo の Go コード（go:generate の指示を含む）が実行されます']
   }
   return []
 }
 
-/** argv を区切りと中身が誤読されない形で見せる（空白の join では改行や空白入りの引数が崩れる）。 */
-function shownArgv(argv: readonly string[]): string {
-  return `[${argv.map(visible).join(', ')}]`
-}
-
 function format(argv: readonly string[], r: { exitCode: number; stdout: string; stderr: string }): string {
   return [
-    `argv: ${shownArgv(argv)}`,
+    `$ ${shownCommand(argv)}`,
     `exit code: ${r.exitCode}`,
     '--- stdout ---',
     r.stdout || '(empty)',
@@ -252,30 +256,41 @@ export const register: Register = on => {
     }
     const exeReal = exeStat.realPath ?? exe
 
-    // ── 危険の兆候（止めずにダイアログで目を引く） ──
+    // ── 危険の兆候（止めずにダイアログで目を引く。何が起きるかと、どうすればいいかを書く） ──
     const tmpDir = await $.env.get('TMPDIR')
     const tempDirs = await Promise.all(['/tmp', '/var/folders', ...(tmpDir ? [tmpDir] : [])].map(realOf))
     const root = await realOf(await $.session.root())
     const warnings: string[] = []
-    if (isUnder(exeReal, [...tempDirs, root])) {
-      warnings.push(`実行ファイル ${visible(exeReal)} は Claude が書き換えられる場所にあります`)
+    if (isUnder(exeReal, tempDirs)) {
+      warnings.push('この実行ファイルは一時ディレクトリにあり、Claude が作ったものかもしれません。普段使っているツールのパスか確認してください')
+    } else if (isUnder(exeReal, [root])) {
+      warnings.push('この実行ファイルはプロジェクト内にあり、Claude が書き換えられます。中身を確認していなければ「拒否」してください')
     }
     if (isUnder(cwdReal, tempDirs)) {
-      warnings.push('cwd が一時ディレクトリです（repo の設定やスクリプトを Claude が仕込める場所）')
+      warnings.push('一時ディレクトリで実行します。Claude が置いた設定ファイル（.git/config など）が読み込まれる可能性があります')
     } else if (!isUnder(cwdReal, [root])) {
-      warnings.push('cwd がプロジェクトの外です')
+      warnings.push('プロジェクトの外で実行します。この場所で実行してよいか確認してください')
     }
     warnings.push(...codeRunWarnings(basename(argv0), argv.slice(1)))
 
     // ── ゲート2: 実行承認 ──
+    const home = await $.env.get('HOME')
+    const shownPath = (p: string) => {
+      const s = shellish(p)
+      return home && s.startsWith(`${home}/`) ? `~${s.slice(home.length)}` : s
+    }
     const shown = [
-      'sandbox 外で実行しますか？',
+      'Claude が sandbox の外でコマンドを実行しようとしています。',
+      'あなたと同じ権限で動くので、ファイル・ネットワーク・ログイン中の認証情報（gh / gcloud など）を使えます。',
       '',
-      `実行ファイル: ${visible(exe)}${exeReal !== exe ? ` → ${visible(exeReal)}` : ''}`,
-      `argv: ${shownArgv(argv)}`,
-      `cwd: ${visible(cwdReal)}`,
-      `理由: ${visible(reason).slice(1, -1)}`,
-      ...(warnings.length > 0 ? ['', '⚠ 確認してください:', ...warnings.map(w => `・${w}`)] : []),
+      `  $ ${shownCommand(argv)}`,
+      '',
+      `  実行ファイル   ${shownPath(exe)}${exeReal !== exe ? ` → ${shownPath(exeReal)}` : ''}`,
+      `  場所           ${shownPath(cwdReal)}`,
+      `  Claude の説明  ${visible(reason).slice(1, -1)}`,
+      ...(warnings.length > 0 ? ['', `⚠ 注意（${warnings.length} 件）`, ...warnings.map(w => `・${w}`)] : []),
+      '',
+      '実行しますか？',
     ].join('\n')
     let approval = ''
     try {
@@ -303,11 +318,24 @@ export const register: Register = on => {
     const findings = scan(text)
     if (findings.length === 0) return { result: text }
 
-    const summary = findings.map(f => `・${f.kind} ×${f.count}`).join('\n')
+    const detected = findings.map(f => `${f.kind} ×${f.count}`).join('、')
     let choice = ''
     try {
+      // $.ui.ask の選択肢には説明を付けられないので、各選択肢で何が起きるかは質問文に書く
       choice = await $.ui.ask(
-        `出力に秘密情報らしきものがあります。Claude に渡す前に止めました。\n\nargv: ${shownArgv(argv)}\n${summary}\n\nどうしますか？`,
+        [
+          '出力に秘密情報らしきものがあったので、Claude に渡す前に止めました。',
+          '',
+          `  $ ${shownCommand(argv)}`,
+          `  検出: ${detected}`,
+          '',
+          'Claude に渡すと会話の記録に残り、その後の作業に使われる可能性があります。',
+          `・${WITHHOLD}        実行できたことと終了コードだけを伝えます`,
+          `・${PASS_MASKED}  該当部分を [REDACTED] に置き換えて渡します`,
+          `・${PASS_RAW}    秘密情報を含む全文を渡します`,
+          '',
+          'どうしますか？',
+        ].join('\n'),
         { options: [WITHHOLD, PASS_MASKED, PASS_RAW], header: 'secrets' },
       )
     } catch {

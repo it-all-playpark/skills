@@ -46,7 +46,7 @@ const FILES: Record<string, string> = {
 }
 
 function host(on: any) {
-  mock.env(on, { PATH: '/usr/bin:/opt/homebrew/bin', TMPDIR: '/var/folders/xx/T' })
+  mock.env(on, { PATH: '/usr/bin:/opt/homebrew/bin', TMPDIR: '/var/folders/xx/T', HOME: '/w' })
   on('session.cwd', async () => ({ value: '/w/repo' }))
   on('session.root', async () => ({ value: '/w/repo' }))
   on('fs.stat', async ($: any, e: any) => {
@@ -66,9 +66,10 @@ describe('host-exec', () => {
     stubProcess(on, { stdout: 'No changes.' }, ran)
     const r: any = await $.tool.call({ tool: TOOL, argv: ['terraform', 'plan'], reason: 'x' } as any)
     expect(asked.length).toBe(1)
-    expect(asked[0]).toContain('実行ファイル: "/opt/homebrew/bin/terraform" → "/opt/homebrew/Cellar/terraform/1.9.0/bin/terraform"')
-    expect(asked[0]).toContain('argv: ["terraform", "plan"]')
-    expect(asked[0]).toContain('cwd: "/w/repo"')
+    expect(asked[0]).toContain('あなたと同じ権限で動くので')
+    expect(asked[0]).toContain('  $ terraform plan\n')
+    expect(asked[0]).toContain('実行ファイル   /opt/homebrew/bin/terraform → /opt/homebrew/Cellar/terraform/1.9.0/bin/terraform')
+    expect(asked[0]).toContain('場所           ~/repo')
     expect(asked[0]).not.toContain('⚠')
     expect(ran).toEqual([['/opt/homebrew/bin/terraform', 'plan']])
     expect(JSON.stringify(r)).toContain('No changes.')
@@ -128,7 +129,8 @@ describe('host-exec', () => {
     expect(asked[0]).toContain('"line1\\nline2\\u202eevil"')
     expect(asked[0]).not.toContain('line1\nline2')
     expect(asked[0]).not.toContain('\u202e')
-    expect(asked[0]).toContain('理由: a\\nb')
+    expect(asked[0]).toContain('$ gh pr comment 1 --body "line1')
+    expect(asked[0]).toContain('Claude の説明  a\\nb')
     expect(ran[0]?.[5]).toBe(body)
   })
 
@@ -141,11 +143,11 @@ describe('host-exec', () => {
     await $.tool.call({ tool: TOOL, argv: ['/var/folders/xx/T/x/git', 'status'], reason: 'x' } as any)
     await $.tool.call({ tool: TOOL, argv: ['gh', 'repo', 'view'], cwd: '/tmp/evil', reason: 'x' } as any)
     await $.tool.call({ tool: TOOL, argv: ['gh', 'repo', 'view'], cwd: '/w/other', reason: 'x' } as any)
-    expect(asked[0]).toContain('⚠')
-    expect(asked[0]).toContain('"/private/var/folders/xx/T/x/git" は Claude が書き換えられる場所にあります')
-    expect(asked[1]).toContain('cwd が一時ディレクトリです')
-    expect(asked[1]).toContain('cwd: "/private/tmp/evil"')
-    expect(asked[2]).toContain('cwd がプロジェクトの外です')
+    expect(asked[0]).toContain('⚠ 注意（1 件）')
+    expect(asked[0]).toContain('この実行ファイルは一時ディレクトリにあり、Claude が作ったものかもしれません')
+    expect(asked[1]).toContain('一時ディレクトリで実行します。Claude が置いた設定ファイル')
+    expect(asked[1]).toContain('場所           /private/tmp/evil')
+    expect(asked[2]).toContain('プロジェクトの外で実行します')
     expect(ran).toEqual([
       ['/var/folders/xx/T/x/git', 'status'],
       ['/opt/homebrew/bin/gh', 'repo', 'view'],
@@ -161,8 +163,8 @@ describe('host-exec', () => {
     await $.tool.call({ tool: TOOL, argv: ['pnpm', 'dev'], reason: 'x' } as any)
     await $.tool.call({ tool: TOOL, argv: ['pnpm', 'outdated'], reason: 'x' } as any)
     await $.tool.call({ tool: TOOL, argv: ['node', '-e', 'console.log(1)'], reason: 'x' } as any)
-    expect(asked[0]).toContain('"scripts/deploy.js" の中身を実行します')
-    expect(asked[1]).toContain('package.json のスクリプト')
+    expect(asked[0]).toContain('scripts/deploy.js の中身が実行されます。この画面には中身が出ない')
+    expect(asked[1]).toContain('package.json の scripts や、依存パッケージの install スクリプトが実行されます')
     expect(asked[2]).not.toContain('⚠')
     expect(asked[3]).not.toContain('⚠')
   })
@@ -178,6 +180,9 @@ describe('host-exec', () => {
     const s = JSON.stringify(r)
     expect(asked.length).toBe(2)
     expect(firstOptions).toEqual(['拒否', '渡さない'])
+    expect(asked[1]).toContain('検出: パスワード入り接続文字列 ×1')
+    expect(asked[1]).toContain('・渡さない        実行できたことと終了コードだけを伝えます')
+    expect(asked[1]).toContain('・マスクして渡す  該当部分を [REDACTED] に置き換えて渡します')
     expect(s).not.toContain('s3cretPass')
     expect(s).toContain('REDACTED')
   })
@@ -189,7 +194,7 @@ describe('host-exec', () => {
     answer(on, ['実行する', 'マスクして渡す'], asked)
     stubProcess(on, { stdout: 'AKIAABCDEFGHIJKLMNOP' }, ran)
     const r: any = await $.tool.call({ tool: TOOL, argv: ['printf', '%s%s\n', 'AKIA', 'ABCDEFGHIJKLMNOP'], reason: 'x' } as any)
-    const shown = 'argv: ["printf", "%s%s\\n", "AKIA", "ABCDEFGHIJKLMNOP"]'
+    const shown = '$ printf "%s%s\\n" AKIA ABCDEFGHIJKLMNOP'
     expect(asked[1]).toContain(shown)
     expect(asked[1]).not.toContain('%s%s\n')
     expect(JSON.stringify(r)).toContain(JSON.stringify(shown).slice(1, -1))
